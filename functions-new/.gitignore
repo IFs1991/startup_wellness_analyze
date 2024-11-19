@@ -1,0 +1,5 @@
+# .gitignoreファイルを作成または編集
+echo "venv/" >> .gitignore
+echo "*.pyc" >> .gitignore
+echo "__pycache__/" >> .gitignore
+echo "*.log" >> .gitignore
