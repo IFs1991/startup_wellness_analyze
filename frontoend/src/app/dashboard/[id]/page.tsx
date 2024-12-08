@@ -1,13 +1,13 @@
 import { Suspense } from "react"
-import { DashboardHeader } from "../components/dashboard/dashboard-header"
-import { DashboardGrid } from "../components/dashboard/dashboard-grid"
-import { CreateDashboardButton } from "../components/dashboard/create-dashboard-button"
-import { Skeleton } from "../components/ui/skeleton"
+import { DashboardHeader } from "@/components/dashboard/dashboard-header"
+import { DashboardGrid } from "@/components/dashboard/dashboard-grid"
+import { CreateDashboardButton } from "@/components/dashboard/create-dashboard-button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   PageHeader,
   PageHeaderDescription,
   PageHeaderHeading,
-} from "../components/shared/page-header"
+} from "@/components/shared/page-header"
 
 export default async function DashboardPage() {
   return (
