@@ -6,25 +6,41 @@ API リクエストやレスポンスのデータ構造を定義する Pydantic 
 
 """
 
-from pydantic import BaseModel, EmailStr
+from datetime import datetime
+from typing import Dict, List, Optional
+from pydantic import BaseModel
 
 
-class UserBase(BaseModel):
-    username: str
-    email: EmailStr
+class DashboardConfig(BaseModel):
+    """ダッシュボード設定モデル"""
+    title: str
+    description: Optional[str] = None
+    widgets: List[Dict]
+    layout: Dict
 
 
-class UserCreate(UserBase):
-    password: str
+class GraphConfig(BaseModel):
+    """グラフ設定モデル"""
+    type: str
+    title: str
+    data_source: str
+    settings: Dict
+    filters: Optional[List[Dict]] = None
 
 
-class User(UserBase):
-    id: int
-    hashed_password: str
+class VisualizationResponse(BaseModel):
+    """可視化レスポンスモデル"""
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    config: Dict
+    data: Dict
+    created_by: str
 
-    class Config:
-        orm_mode = True
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+class ReportBase(BaseModel):
+    """レポートベースモデル"""
+    title: str
+    description: Optional[str] = None
+    report_type: str
+    parameters: Optional[Dict] = None

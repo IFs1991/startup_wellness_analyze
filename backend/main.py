@@ -1,71 +1,30 @@
-# -*- coding: utf-8 -*-
-
 """
 Startup Wellness データ分析システム バックエンド API
 
 要件定義書と requirements.txt を元に作成された FastAPI アプリケーションです。
 """
 
-import asyncio
 import logging
-from typing import Dict, List, Any, Optional
-from io import BytesIO
 from datetime import datetime
 
 import uvicorn
-import pandas as pd
-import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request, BackgroundTasks, Body
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 # Firebase Admin SDK
 import firebase_admin
-from firebase_admin import credentials, initialize_app, auth
-from google.cloud import firestore
+from firebase_admin import credentials, initialize_app
 
 # Import routers and dependencies
-from api.routers import (
+from backend.api.routers import (
     auth, data_input, analysis, visualization,
     data_processing, prediction, report_generation
 )
-from service.firestore.client import FirestoreService, StorageError, ValidationError
-from database.database import get_db
-
-# Models
-class DashboardConfig(BaseModel):
-    """ダッシュボード設定モデル"""
-    title: str
-    description: Optional[str] = None
-    widgets: List[Dict]
-    layout: Dict
-
-class GraphConfig(BaseModel):
-    """グラフ設定モデル"""
-    type: str
-    title: str
-    data_source: str
-    settings: Dict
-    filters: Optional[List[Dict]] = None
-
-class VisualizationResponse(BaseModel):
-    """可視化レスポンスモデル"""
-    id: str
-    created_at: datetime
-    updated_at: datetime
-    config: Dict
-    data: Dict
-    created_by: str
-
-class ReportBase(BaseModel):
-    """レポートベースモデル"""
-    title: str
-    description: Optional[str] = None
-    report_type: str
-    parameters: Optional[Dict] = None
+from backend.service.firestore.client import FirestoreService, StorageError, ValidationError
+from backend.service.tasks import process_visualization_data
+from backend.schemas import DashboardConfig, GraphConfig, VisualizationResponse
 
 # Initialize logging
 logging.basicConfig(
@@ -86,7 +45,7 @@ firestore_service = FirestoreService()
 
 # Error handling middleware
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request, call_next):
         try:
             return await call_next(request)
         except ValidationError as e:
@@ -125,88 +84,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Background tasks
-async def process_visualization_data(
-    visualization_id: str,
-    config: Dict,
-    user_id: str
-) -> None:
-    """バックグラウンドで可視化データを処理"""
-    try:
-        # データソースからデータを取得
-        data_source_conditions = []
-        if config.get('filters'):
-            data_source_conditions = [
-                {'field': f['field'], 'operator': f['operator'], 'value': f['value']}
-                for f in config['filters']
-            ]
-
-        source_data = await firestore_service.fetch_documents(
-            collection_name=config['data_source'],
-            conditions=data_source_conditions
-        )
-
-        # データ処理と更新
-        processed_data = {
-            'id': visualization_id,
-            'data': {
-                'source': source_data,
-                'processed': {},  # 実際のデータ処理ロジックを実装
-                'last_updated': datetime.now()
-            },
-            'status': 'completed'
-        }
-
-        await firestore_service.save_results(
-            results=[processed_data],
-            collection_name='visualizations'
-        )
-
-    except Exception as e:
-        logger.error(f"Error processing visualization data: {str(e)}")
-        error_data = {
-            'id': visualization_id,
-            'status': 'error',
-            'error': str(e),
-            'last_updated': datetime.now()
-        }
-        await firestore_service.save_results(
-            results=[error_data],
-            collection_name='visualizations'
-        )
-
 # Include routers with prefix and tags
 app.include_router(auth.router)
-app.include_router(
-    analysis.router,
-    prefix="/api/analysis",
-    tags=["analysis"],
-)
-app.include_router(
-    data_input.router,
-    prefix="/data_input",
-    tags=["data_input"],
-)
-app.include_router(
-    data_processing.router,
-    prefix="/data_processing",
-    tags=["data_processing"],
-)
-app.include_router(
-    prediction.router,
-    prefix="/prediction",
-    tags=["prediction"],
-)
-app.include_router(
-    report_generation.router,
-    prefix="/report_generation",
-    tags=["report_generation"],
-)
-app.include_router(
-    visualization.router,
-    prefix="/visualization",
-    tags=["visualization"],
-)
+app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
+app.include_router(data_input.router, prefix="/data_input", tags=["data_input"])
+app.include_router(data_processing.router, prefix="/data_processing", tags=["data_processing"])
+app.include_router(prediction.router, prefix="/prediction", tags=["prediction"])
+app.include_router(report_generation.router, prefix="/report_generation", tags=["report_generation"])
+app.include_router(visualization.router, prefix="/visualization", tags=["visualization"])
 
 # API Endpoints
 @app.post("/dashboard/create", response_model=VisualizationResponse)
@@ -228,13 +113,11 @@ async def create_dashboard(
             'status': 'processing'
         }
 
-        # Firestoreにダッシュボード設定を保存
         await firestore_service.save_results(
             results=[dashboard_data],
             collection_name='visualizations'
         )
 
-        # バックグラウンドでデータ処理を実行
         background_tasks.add_task(
             process_visualization_data,
             dashboard_data['id'],
@@ -270,13 +153,11 @@ async def create_graph(
             'status': 'processing'
         }
 
-        # Firestoreにグラフ設定を保存
         await firestore_service.save_results(
             results=[graph_data],
             collection_name='visualizations'
         )
 
-        # バックグラウンドでデータ処理を実行
         background_tasks.add_task(
             process_visualization_data,
             graph_data['id'],

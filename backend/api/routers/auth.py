@@ -9,7 +9,7 @@ from typing import Optional, Dict
 from pydantic import BaseModel, EmailStr
 from firebase_admin import auth
 from datetime import datetime
-from ...service.firestore.client import FirestoreService
+from backend.service.firestore.client import FirestoreService
 
 router = APIRouter(
     prefix="/auth",
@@ -94,7 +94,7 @@ async def register_user(user: UserCreate):
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """ユーザー認証とIDトークン発行"""
+    """���ーザー認証とIDトークン発行"""
     try:
         # Firebase Auth で認証
         user = auth.get_user_by_email(form_data.username)
