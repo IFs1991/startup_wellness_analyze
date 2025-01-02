@@ -3,7 +3,8 @@ import { ThemeProvider } from '@/components/theme/ThemeProvider';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { HomePage } from '@/pages/HomePage';
-import { AnalysisPage } from '@/pages/AnalysisPage';
+import { CompaniesPage } from '@/pages/CompaniesPage';
+import { CompanyDetailPage } from '@/pages/CompanyDetailPage';
 import { ReportsPage } from '@/pages/ReportsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
@@ -18,7 +19,8 @@ function App() {
           <main className="ml-64 pt-16 p-6">
             <Routes>
               <Route path="/" element={<HomePage />} />
-              <Route path="/analysis" element={<AnalysisPage />} />
+              <Route path="/companies" element={<CompaniesPage />} />
+              <Route path="/companies/:id" element={<CompanyDetailPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>

@@ -1,54 +1,49 @@
-version: "3.9"
-services:
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    ports:
-      - "8000:8000"
-    env_file:
-      - ./backend/.env
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/wellness
-    depends_on:
-      - db
-    networks:
-      - app-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+version: '3.8'
 
+services:
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "5173:5173"
-    env_file:
-      - ./frontend/.env.local
-    environment:
-      - VITE_API_URL=http://localhost:8000
     depends_on:
       - backend
-    networks:
-      - app-network
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        - ENVIRONMENT=development
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/wellness_db
+      - JWT_SECRET=your_jwt_secret_key
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:8000
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
-    image: postgres:13
+    image: postgres:15
     ports:
       - "5432:5432"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=wellness
+      - POSTGRES_DB=wellness_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - app-network
-
-networks:
-  app-network:
-    driver: bridge
 
 volumes:
   postgres_data:

@@ -1,0 +1,348 @@
+# structure.yaml
+frontend:
+  # アプリケーションのフロントエンドに関する設定
+  dashboard:
+    # ダッシュボードのパスと設定
+    path: "/dashboard"
+    components:
+      # 企業選択コンポーネント
+      companySelector:
+        type: "dropdown"
+        label: "企業を選択"
+        # データ取得エンドポイント（バックエンド）
+        data_endpoint: "/api/companies"
+        # 選択した企業のIDをバックエンドに渡すキー
+        selected_id_key: "company_id"
+        # 選択された際にトリガーされるアクション
+        onSelect: "updateAnalysisView"
+
+      # 分析シナリオ選択コンポーネント
+      analysisScenarioSelector:
+        type: "dropdown"
+        label: "分析シナリオを選択"
+        # データ取得エンドポイント（バックエンド）
+        data_endpoint: "/api/analysis_scenarios"
+        # 選択された際にトリガーされるアクション
+        onSelect: "updateAnalysisView"
+
+      # データ表示コンポーネント
+      analysisView:
+        type: "container"
+        # データを表示するためのコンポーネント
+        components:
+          # VASスケールデータ表示コンポーネント
+          vasData:
+            type: "chart"
+            chart_type: "line"
+            # データ取得エンドポイント（バックエンド）
+            data_endpoint: "/api/analysis/vas_data"
+            # バックエンドに渡すパラメータ (選択された企業のID)
+            param_key: "company_id"
+            # データ項目 (バックエンドから受け取るデータに対応)
+            data_keys: ["timestamp", "pain_level", "stress_level", "sleep_quality"]
+            # X軸のキー
+            x_axis_key: "timestamp"
+            # Y軸のキーとラベル
+            y_axis_keys:
+              - key: "pain_level"
+                label: "痛みレベル"
+              - key: "stress_level"
+                label: "ストレスレベル"
+              - key: "sleep_quality"
+                label: "睡眠の質"
+          # 損益計算書データ表示コンポーネント
+          profitLossData:
+            type: "table"
+            # データ取得エンドポイント（バックエンド）
+            data_endpoint: "/api/analysis/profit_loss_data"
+            # バックエンドに渡すパラメータ (選択された企業のID)
+            param_key: "company_id"
+            # データ項目 (バックエンドから受け取るデータに対応)
+            data_keys: ["date", "revenue", "cost_of_goods_sold", "gross_profit"]
+            # 各列のラベル
+            column_labels:
+              - label: "日付"
+              - label: "売上高"
+              - label: "売上原価"
+              - label: "粗利益"
+          # 記述統計量表示コンポーネント
+          descriptiveStats:
+            type: "container"
+            label: "記述統計量"
+            # データを表示するためのコンポーネント
+            components:
+              - type: "text"
+                data_endpoint: "/api/analysis/descriptive_stats"
+                param_key: "company_id"
+                display_keys: ["mean", "median", "std"]
+          # 相関分析結果表示コンポーネント
+          correlationAnalysis:
+            type: "text"
+            label: "相関分析"
+            data_endpoint: "/api/analysis/correlation_analysis"
+            param_key: "company_id"
+            display_key: "correlation_matrix"
+          # テキスト分析結果表示コンポーネント
+          textAnalysis:
+            type: "container"
+            label: "テキスト分析結果"
+            components:
+              - type: "text"
+                data_endpoint: "/api/analysis/text_analysis"
+                param_key: "company_id"
+                display_key: "keywords"
+              - type: "text"
+                data_endpoint: "/api/analysis/text_analysis"
+                param_key: "company_id"
+                display_key: "sentiment_scores"
+          # 生成AIによる分析結果の要約コンポーネント
+          aiSummary:
+            type: "text"
+            label: "生成AIによる分析要約"
+            data_endpoint: "/api/analysis/ai_summary"
+            param_key: "company_id"
+  # 分析設定画面に関する設定
+  analysisSettings:
+    path: "/settings"
+    components:
+      # Google Formアンケート設定コンポーネント
+      googleFormSettings:
+        type: "form"
+        label: "Google Form アンケート設定"
+        fields:
+          - name: "vas_questions"
+            type: "multiselect"
+            label: "VASスケール項目"
+            options_endpoint: "/api/settings/vas_questions"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_vas_questions"
+          - name: "free_text_items"
+            type: "multiselect"
+            label: "自由記述項目"
+            options_endpoint: "/api/settings/free_text_items"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_free_text_items"
+      # 損益計算書データ項目設定コンポーネント
+      profitLossSettings:
+        type: "form"
+        label: "損益計算書データ項目設定"
+        fields:
+          - name: "profit_loss_items"
+            type: "multiselect"
+            label: "損益計算書項目"
+            options_endpoint: "/api/settings/profit_loss_items"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_profit_loss_items"
+      # 分析手法選択コンポーネント
+      analysisMethodSettings:
+        type: "form"
+        label: "分析手法選択"
+        fields:
+          - name: "analysis_methods"
+            type: "multiselect"
+            label: "分析手法"
+            options:
+              - "相関分析"
+              - "時系列分析"
+              - "クラスタ分析"
+              - "主成分分析"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_analysis_methods"
+      # 可視化方法選択コンポーネント
+      visualizationMethodSettings:
+          type: "form"
+          label: "可視化方法選択"
+          fields:
+            - name: "visualization_types"
+              type: "multiselect"
+              label: "グラフの種類"
+              options:
+                - "線グラフ"
+                - "棒グラフ"
+                - "散布図"
+                - "テーブル"
+              # 保存用エンドポイント（バックエンド）
+              save_endpoint: "/api/settings/save_visualization_types"
+      # 生成AI API設定コンポーネント
+      generativeAISettings:
+        type: "form"
+        label: "生成AI設定"
+        fields:
+          - name: "api_key"
+            type: "text"
+            label: "APIキー"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_api_key"
+          - name: "ai_models"
+            type: "select"
+            label: "使用モデル"
+            options_endpoint: "/api/settings/ai_models"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_ai_model"
+          - name: "usage_settings"
+            type: "checkbox"
+            label: "利用用途"
+            options:
+              - label: "データ入力支援"
+                value: "data_input"
+              - label: "データ処理"
+                value: "data_processing"
+              - label: "分析"
+                value: "analysis"
+              - label: "可視化"
+                value: "visualization"
+              - label: "レポート生成"
+                value: "report_generation"
+              - label: "予測モデル"
+                value: "prediction_model"
+            # 保存用エンドポイント（バックエンド）
+            save_endpoint: "/api/settings/save_usage_settings"
+
+
+backend:
+  # バックエンドのAPIエンドポイントに関する設定
+  api_endpoints:
+    # 企業リスト取得エンドポイント
+    companies:
+      path: "/api/companies"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/data_input.py:get_companies"
+    # 分析シナリオリスト取得エンドポイント
+    analysis_scenarios:
+      path: "/api/analysis_scenarios"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:get_analysis_scenarios"
+    # VASデータ取得エンドポイント
+    vas_data:
+      path: "/api/analysis/vas_data"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:get_vas_data"
+      params:
+        - key: "company_id"
+          type: "int"
+          required: true
+    # 損益計算書データ取得エンドポイント
+    profit_loss_data:
+      path: "/api/analysis/profit_loss_data"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:get_profit_loss_data"
+      params:
+        - key: "company_id"
+          type: "int"
+          required: true
+    # 記述統計量取得エンドポイント
+    descriptive_stats:
+      path: "/api/analysis/descriptive_stats"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:calculate_descriptive_stats"
+      params:
+        - key: "company_id"
+          type: "int"
+          required: true
+    # 相関分析結果取得エンドポイント
+    correlation_analysis:
+      path: "/api/analysis/correlation_analysis"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:correlation_analysis"
+      params:
+        - key: "company_id"
+          type: "int"
+          required: true
+    # テキスト分析結果取得エンドポイント
+    text_analysis:
+      path: "/api/analysis/text_analysis"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:text_analysis"
+      params:
+        - key: "company_id"
+          type: "int"
+          required: true
+    # 生成AIによる分析要約取得エンドポイント
+    ai_summary:
+      path: "/api/analysis/ai_summary"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/analysis.py:ai_summary"
+      params:
+        - key: "company_id"
+          type: "int"
+          required: true
+    # VASスケール項目オプション取得エンドポイント
+    vas_questions_options:
+      path: "/api/settings/vas_questions"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/settings.py:get_vas_questions_options"
+    # 自由記述項目オプション取得エンドポイント
+    free_text_items_options:
+      path: "/api/settings/free_text_items"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/settings.py:get_free_text_items_options"
+    # 損益計算書項目オプション取得エンドポイント
+    profit_loss_items_options:
+      path: "/api/settings/profit_loss_items"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/settings.py:get_profit_loss_items_options"
+    # 生成AIモデルオプション取得エンドポイント
+    ai_models_options:
+      path: "/api/settings/ai_models"
+      method: "GET"
+      response_format: "json"
+      handler: "backend/settings.py:get_ai_models_options"
+    # VASスケール項目保存エンドポイント
+    save_vas_questions:
+      path: "/api/settings/save_vas_questions"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_vas_questions"
+    # 自由記述項目保存エンドポイント
+    save_free_text_items:
+      path: "/api/settings/save_free_text_items"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_free_text_items"
+    # 損益計算書項目保存エンドポイント
+    save_profit_loss_items:
+      path: "/api/settings/save_profit_loss_items"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_profit_loss_items"
+    # 分析手法保存エンドポイント
+    save_analysis_methods:
+      path: "/api/settings/save_analysis_methods"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_analysis_methods"
+    # 可視化方法保存エンドポイント
+    save_visualization_types:
+      path: "/api/settings/save_visualization_types"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_visualization_types"
+    # 生成AI APIキー保存エンドポイント
+    save_api_key:
+      path: "/api/settings/save_api_key"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_api_key"
+    # 生成AI モデル保存エンドポイント
+    save_ai_model:
+      path: "/api/settings/save_ai_model"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_ai_model"
+    # 生成AI 利用用途保存エンドポイント
+    save_usage_settings:
+      path: "/api/settings/save_usage_settings"
+      method: "POST"
+      request_format: "json"
+      handler: "backend/settings.py:save_usage_settings"

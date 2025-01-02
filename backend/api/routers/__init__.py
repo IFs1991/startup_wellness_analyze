@@ -1,5 +1,5 @@
 """
-Startup Wellness API Routers Package
+API ルーターモジュール
 """
 
 from .auth import router as auth_router
@@ -10,6 +10,7 @@ from .data_processing import router as data_processing_router
 from .prediction import router as prediction_router
 from .report_generation import router as report_generation_router
 
+# エクスポートするルーター
 auth = auth_router
 data_input = data_input_router
 analysis = analysis_router

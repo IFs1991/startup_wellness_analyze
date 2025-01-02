@@ -22,24 +22,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-# Firebase Admin SDK
-import firebase_admin
-from firebase_admin import credentials, initialize_app, auth
-from google.cloud import firestore
-
 # Initialize logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Initialize Firebase Admin SDK (temporarily disabled)
-# try:
-#     firebase_app = firebase_admin.get_app()
-# except ValueError:
-#     cred = credentials.Certificate("path/to/your/serviceAccount.json")
-#     firebase_app = initialize_app(cred)
 
 # FastAPI application
 app = FastAPI(
@@ -57,15 +45,102 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Health check endpoint
+# APIのレスポンスモデル
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+    timestamp: str
+
+class VASDataResponse(BaseModel):
+    startup_id: str
+    timestamp: datetime
+    score: float
+
+class FinancialDataResponse(BaseModel):
+    startup_id: str
+    timestamp: datetime
+    revenue: float
+
+class AnalysisResponse(BaseModel):
+    startup_id: str
+    vas_trend: List[float]
+    financial_trend: List[float]
+    correlation: float
+
+@app.get("/")
+def read_root():
+    """ルートエンドポイント"""
+    return {
+        "message": "Welcome to Startup Wellness API",
+        "version": "1.0.0",
+        "docs_url": "/docs"
+    }
+
 @app.get("/health")
-async def health_check():
-    """APIの稼働状態を確認"""
+def health_check():
+    """ヘルスチェックエンドポイント"""
     return {
         "status": "healthy",
-        "version": app.version,
+        "version": "1.0.0",
         "timestamp": datetime.now().isoformat()
     }
 
+@app.get("/api/vas/{startup_id}")
+def get_vas_data(startup_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """VASデータ取得エンドポイント"""
+    try:
+        logger.info(f"Fetching VAS data for startup_id: {startup_id}")
+        return [
+            {
+                "startup_id": startup_id,
+                "timestamp": datetime.now(),
+                "score": 7.5
+            },
+            {
+                "startup_id": startup_id,
+                "timestamp": datetime.now(),
+                "score": 8.0
+            }
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching VAS data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/financial/{startup_id}")
+def get_financial_data(startup_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """財務データ取得エンドポイント"""
+    try:
+        logger.info(f"Fetching financial data for startup_id: {startup_id}")
+        return [
+            {
+                "startup_id": startup_id,
+                "timestamp": datetime.now(),
+                "revenue": 1000000
+            },
+            {
+                "startup_id": startup_id,
+                "timestamp": datetime.now(),
+                "revenue": 1200000
+            }
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching financial data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analysis/{startup_id}")
+def analyze_startup_data(startup_id: str):
+    """データ分析エンドポイント"""
+    try:
+        logger.info(f"Analyzing data for startup_id: {startup_id}")
+        return {
+            "startup_id": startup_id,
+            "vas_trend": [7.0, 7.5, 8.0],
+            "financial_trend": [900000, 1000000, 1100000],
+            "correlation": 0.85
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

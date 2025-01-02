@@ -18,13 +18,13 @@ import firebase_admin
 from firebase_admin import credentials, initialize_app
 
 # Import routers and dependencies
-from backend.api.routers import (
+from .api.routers import (
     auth, data_input, analysis, visualization,
     data_processing, prediction, report_generation
 )
-from backend.service.firestore.client import FirestoreService, StorageError, ValidationError
-from backend.service.tasks import process_visualization_data
-from backend.schemas import DashboardConfig, GraphConfig, VisualizationResponse
+from .service.firestore.client import FirestoreService, StorageError, ValidationError
+from .service.tasks import process_visualization_data
+from .schemas import DashboardConfig, GraphConfig, VisualizationResponse
 
 # Initialize logging
 logging.basicConfig(
