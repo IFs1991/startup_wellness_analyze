@@ -6,31 +6,31 @@ import { CompanyFilters } from '@/components/companies/CompanyFilters';
 import type { Company } from '@/types/company';
 
 const mockCompanies: Company[] = [
-  { 
-    id: '1', 
-    name: 'テックスタート株式会社', 
-    industry: 'SaaS', 
-    stage: 'シリーズA', 
+  {
+    id: '1',
+    name: 'テックスタート株式会社',
+    industry: 'SaaS',
+    stage: 'シリーズA',
     score: 85,
     employees: 45,
     location: '東京',
     foundedYear: 2020
   },
-  { 
-    id: '2', 
-    name: 'ヘルスケアイノベーション', 
-    industry: 'ヘルスケア', 
-    stage: 'シリーズB', 
+  {
+    id: '2',
+    name: 'ヘルスケアイノベーション',
+    industry: 'ヘルスケア',
+    stage: 'シリーズB',
     score: 92,
     employees: 120,
     location: '大阪',
     foundedYear: 2018
   },
-  { 
-    id: '3', 
-    name: 'グリーンテック', 
-    industry: 'クリーンテック', 
-    stage: 'シード', 
+  {
+    id: '3',
+    name: 'グリーンテック',
+    industry: 'クリーンテック',
+    stage: 'シード',
     score: 78,
     employees: 15,
     location: '福岡',
@@ -60,7 +60,7 @@ export function CompaniesPage() {
                          company.industry.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesIndustry = industry === 'すべて' || company.industry === industry;
     const matchesStage = stage === 'すべて' || company.stage === stage;
-    
+
     let matchesScore = true;
     if (scoreRange !== 'all') {
       const [min, max] = scoreRange.split('-').map(Number);
@@ -82,7 +82,7 @@ export function CompaniesPage() {
       <div className="space-y-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-          <Input 
+          <Input
             className="pl-10"
             placeholder="企業名、業界で検索..."
             value={searchTerm}
@@ -106,7 +106,7 @@ export function CompaniesPage() {
           <CompanyCard
             key={company.id}
             company={company}
-            onClick={handleCompanyClick}
+            onClick={() => handleCompanyClick(company)}
           />
         ))}
       </div>

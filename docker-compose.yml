@@ -1,49 +1,12 @@
-version: '3.8'
+version: "3.9"
 
 services:
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "5173:5173"
-    depends_on:
-      - backend
-    environment:
-      - VITE_API_BASE_URL=http://localhost:8000
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-
   backend:
-    build:
-      context: ./backend
-      args:
-        - ENVIRONMENT=development
+    build: ./backend
     ports:
       - "8000:8000"
-    depends_on:
-      - db
-    environment:
-      - ENVIRONMENT=development
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/wellness_db
-      - JWT_SECRET=your_jwt_secret_key
-      - CORS_ORIGINS=http://localhost:5173,http://localhost:8000
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-  db:
-    image: postgres:15
+  frontoend:
+    build: ./frontoend
     ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=wellness_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-volumes:
-  postgres_data:
+      - "3000:3000"

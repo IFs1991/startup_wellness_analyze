@@ -7,11 +7,24 @@ import { WellnessAnalysis } from '@/components/companies/CompanyDetail/WellnessA
 import { FinancialDataUpload } from '@/components/companies/CompanyDetail/FinancialDataUpload';
 import { InvestmentSummary } from '@/components/companies/CompanyDetail/InvestmentSummary';
 import { CompanyNotes } from '@/components/companies/CompanyDetail/CompanyNotes';
-import { Skeleton } from '@/components/ui/skeleton';
+import { CompanyDetailSkeleton } from '@/components/companies/CompanyDetail/CompanyDetailSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Pencil } from 'lucide-react';
 import type { CompanyDetail } from '@/types/company';
+
+interface WellnessScore {
+  score: number;
+  engagement: number;
+  satisfaction: number;
+  workLife: number;
+  stress: number;
+  overall: number;
+  trends: Array<{
+    date: string;
+    score: number;
+  }>;
+}
 
 export function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,6 +63,11 @@ export function CompanyDetailPage() {
     return <div>企業情報が見つかりませんでした。</div>;
   }
 
+  const wellnessScores: WellnessScore = {
+    ...company.wellness,
+    overall: company.wellness.score
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-start">
@@ -67,20 +85,20 @@ export function CompanyDetailPage() {
       </div>
 
       <CompanyOverview
-        foundedYear={company.foundedYear}
+        foundedYear={company.foundedYear || 0}
         employees={company.employees}
-        location={company.location}
+        location={company.location || '未設定'}
         growth={company.financials.growth}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <InvestmentSummary investments={company.investments} />
+        <InvestmentSummary investments={company.investments || []} />
         <CompanyNotes companyId={company.id} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <FinancialMetrics data={company.financials.history} />
-        <WellnessAnalysis scores={company.wellness} />
+        <WellnessAnalysis scores={wellnessScores} />
       </div>
 
       <FinancialDataUpload
@@ -90,5 +108,3 @@ export function CompanyDetailPage() {
     </div>
   );
 }
-
-// ... (既存のCompanyDetailSkeletonコンポーネント)

@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS companies (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    industry VARCHAR(255) NOT NULL,
+    stage VARCHAR(50) NOT NULL,
+    employees INTEGER,
+    founded_year INTEGER,
+    location VARCHAR(255),
+    ceo VARCHAR(255),
+    investment FLOAT,
+    score FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

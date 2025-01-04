@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple, Any, Dict
 import pandas as pd
 from service.bigquery.client import BigQueryService
 from service.firestore.client import FirestoreService
+from datetime import datetime
 
 class CorrelationAnalyzer:
     def __init__(self, bq_service: BigQueryService):
@@ -62,51 +63,44 @@ class CorrelationAnalyzer:
                      dataset_id: Optional[str] = None,
                      table_id: Optional[str] = None) -> Tuple[pd.DataFrame, Dict]:
         """
-        VASデータと損益計算書データの相関関係を分析する
+        VASデータと財務データの相関分析を実行
 
         Args:
-            query (str): BigQueryクエリ
-            vas_variables (List[str]): VASデータの変数名リスト
-            financial_variables (List[str]): 損益計算書データの変数名リスト
-            save_results (bool): 結果を保存するかどうか
-            dataset_id (Optional[str]): 保存先データセットID
-            table_id (Optional[str]): 保存先テーブルID
+            query: データ取得用のクエリ
+            vas_variables: VASデータの変数リスト (例: ['pain_level', 'stress_level'])
+            financial_variables: 財務データの変数リスト (例: ['revenue', 'gross_profit'])
+            save_results: 結果を保存するかどうか
+            dataset_id: 保存先のデータセットID
+            table_id: 保存先のテーブルID
 
         Returns:
-            Tuple[pd.DataFrame, Dict]: (相関行列, メタデータ)
-
-        Raises:
-            ValueError: データのバリデーションエラー
-            RuntimeError: 分析実行時のエラー
+            相関行列とメタデータ
         """
         try:
-            # データ取得
-            data = await self.bq_service.fetch_data(query)
+            # データのバリデーション
+            valid, error_msg = self._validate_data(data, vas_variables, financial_variables)
+            if not valid:
+                raise ValueError(error_msg)
 
-            # データバリデーション
-            is_valid, error_message = self._validate_data(data, vas_variables, financial_variables)
-            if not is_valid:
-                raise ValueError(error_message)
+            # 相関行列の計算
+            correlation_matrix = data[vas_variables + financial_variables].corr()
 
-            # 相関分析の実行
-            selected_data = data[vas_variables + financial_variables]
-            correlation_matrix = selected_data.corr()
+            # メタデータの生成
+            metadata = {
+                'timestamp': datetime.now().isoformat(),
+                'vas_variables': vas_variables,
+                'financial_variables': financial_variables,
+                'sample_size': len(data),
+                'analysis_type': 'correlation'
+            }
 
-            # 結果の保存
+            # 結果の保存（オプション）
             if save_results and dataset_id and table_id:
                 await self.bq_service.save_results(
                     correlation_matrix,
-                    dataset_id=dataset_id,
-                    table_id=table_id
+                    dataset_id,
+                    table_id
                 )
-
-            # メタデータの作成
-            metadata = {
-                'row_count': len(data),
-                'vas_variables': vas_variables,
-                'financial_variables': financial_variables,
-                'correlation_pairs': len(vas_variables) * len(financial_variables)
-            }
 
             return correlation_matrix, metadata
 

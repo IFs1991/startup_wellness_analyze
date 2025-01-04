@@ -3,6 +3,8 @@ from typing import Optional, List, Dict, Any, Tuple, TypeVar, Type
 from pydantic import BaseModel, Field
 from google.cloud import firestore
 from enum import Enum
+from sqlalchemy import Column, String, Integer, Float, DateTime, func
+from sqlalchemy.ext.declarative import declarative_base
 
 T = TypeVar('T', bound='FirestoreModel')
 
@@ -136,3 +138,21 @@ class FirestoreRepository:
             'vas_data': vas_data,
             'financial_data': financial_data
         }
+
+Base = declarative_base()
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    industry = Column(String, nullable=False)
+    stage = Column(String, nullable=False)
+    employees = Column(Integer)
+    founded_year = Column(Integer)
+    location = Column(String)
+    ceo = Column(String)
+    investment = Column(Float)
+    score = Column(Float)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

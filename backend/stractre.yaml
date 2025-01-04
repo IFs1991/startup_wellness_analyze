@@ -1,0 +1,164 @@
+backend:
+  name: Startup Wellness Data Analysis System Backend
+  description: Back-end services for the Startup Wellness Data Analysis System, responsible for data processing, analysis, reporting, and system management.
+  technologies:
+    - Python 3.9+
+    - FastAPI
+    - PostgreSQL (Cloud SQL)
+    - Firestore
+    - Google Cloud Services (Cloud Run, Cloud Functions, Cloud Storage, Cloud Pub/Sub, Cloud Load Balancing, Cloud CDN, Cloud IAM)
+    - Docker
+    - Libraries: pandas, ReportLab, scikit-learn, etc.
+  modules:
+    - name: Data Input Module (data_input.py)
+      description: Responsible for ingesting data from various sources, including Google Forms, CSV files, external APIs, and file uploads.
+      functions:
+        - GoogleFormsConnector (API integration with Google Forms)
+        - read_csv_data (CSV file reading)
+        - ExternalDataFetcher (integration with external data sources)
+        - upload_files (handling file uploads)
+      interfaces:
+        - Google Forms API
+        - External database APIs
+      data_storage:
+        - Firestore for survey data
+        - Cloud SQL for financial and employee data
+        - Cloud Storage for uploaded files.
+    - name: Data Processing Module (data_processing.py)
+      description: Handles data pre-processing, cleaning, feature engineering, and data quality checks.
+      classes:
+        - DataPreprocessor: Handles data cleaning and transformations (missing values, outliers).
+            - handle_missing_values
+            - detect_outliers
+        - FeatureEngineer: Creates new features for analysis.
+        - DataQualityChecker: Monitors data integrity and consistency.
+      data_access:
+        - Firestore (VAS, Survey Data)
+        - Cloud SQL (Financial, Employee Data)
+      data_flow:
+        - Receives data from data_input.py
+        - Outputs cleaned and processed data.
+    - name: Analysis Module (analysis.py)
+      description: Provides functionality for various data analysis techniques.
+      classes:
+        - DescriptiveStatsCalculator: calculates descriptive statistics.
+            - calculate_descriptive_stats
+        - CorrelationAnalyzer: performs correlation analysis.
+            - correlation_analysis
+        - TimeSeriesAnalyzer: performs time series analysis.
+        - ClusterAnalyzer: Performs clustering analysis
+        - PCAAnalyzer: Performs principal component analysis.
+        - SurvivalAnalyzer: Performs survival analysis.
+        - AssociationAnalyzer: Performs association analysis.
+        - TextMiner: Handles text data mining with NLP techniques.
+      data_flow:
+        - Receives processed data from data_processing.py
+        - Outputs analysis results.
+      algorithms:
+        - Descriptive Statistics
+        - Correlation Analysis
+        - Time Series Analysis
+        - Clustering
+        - Principal Component Analysis
+        - Survival Analysis
+        - Association Analysis
+        - NLP-based Text Mining
+    - name: Visualization Module (visualization.py)
+      description: Provides functions for generating dashboards, charts, and interactive visualizations.
+      classes:
+        - DashboardCreator: Creates interactive dashboards.
+        - GraphGenerator: Generates various chart types.
+        - InteractiveVisualizer: Creates interactive visualizations.
+      data_flow:
+        - Receives analysis results from analysis.py
+        - Outputs visualizations.
+      output_formats:
+        - Dash by Plotly components
+        - Various chart types (line, bar, scatter, etc.)
+    - name: Report Generation Module (report_generation.py)
+      description: Generates customized reports in PDF, Excel, Google Sheets, and CSV formats.
+      classes:
+        - PDFReportGenerator: Generates PDF reports.
+        - CustomReportBuilder: Creates customized reports for different stakeholders.
+      libraries:
+          - ReportLab (PDF generation)
+      data_flow:
+        - Receives analysis results from analysis.py
+        - Outputs reports in specified formats.
+      output_formats:
+        - PDF
+        - Excel
+        - Google Sheets
+        - CSV
+    - name: Prediction Module (prediction.py)
+      description: Builds, trains, and evaluates predictive machine learning models.
+      classes:
+        - PerformancePredictor: Builds and runs predictive models.
+        - ModelEvaluator: Monitors and retrains models.
+      algorithms:
+        - Machine Learning models for startup performance prediction
+      data_flow:
+        - Receives processed data from data_processing.py
+        - Outputs model performance and predictions
+    - name: Authentication Module (auth.py)
+      description: Handles user authentication, registration, and session management.
+      functions:
+        - authenticate_user (logs in users)
+        - logout_user (logs out users)
+        - register_user (registers new users)
+        - reset_password (handles password reset requests)
+      data_storage:
+        - Cloud SQL (users table)
+    - name: Generative AI Module (generative_ai.py)
+      description: Manages Generative AI API keys, interacts with the API, and selects the appropriate AI models.
+      functions:
+        - manage_api_key (stores, retrieves, and checks if API keys are present)
+        - call_generative_ai_api (calls the selected generative AI model)
+        - select_generative_ai_model (selects appropriate AI model based on need)
+      data_flow:
+        - Receives user requests and configuration information
+        - Calls Generative AI APIs
+        - Returns the Generative AI output
+      data_storage:
+        - Firestore (settings, user preferences)
+    - name: Security Module (security.py)
+      description: Handles data encryption, access control, and data anonymization processes.
+      classes:
+        - DataEncryptor: Encrypts data using AES-256
+        - OAuthHandler: Implements OAuth2.0 authentication and authorization.
+        - DataAnonymizer: Anonymizes sensitive data using k-anonymity, l-diversity, and t-closeness.
+      algorithms:
+         - AES-256 Encryption
+         - OAuth2.0
+         - k-Anonymity, l-Diversity, t-Closeness
+  data_storage:
+    - Firestore (NoSQL for real-time data, large datasets, analysis results, reports, user settings, memos)
+    - Cloud SQL (PostgreSQL for user, company, employee, financial, transactional data, audit logs)
+    - Cloud Storage (file storage, backups)
+  services:
+    - Cloud Run (microservice deployment)
+    - Cloud Functions (serverless functions for event-driven tasks)
+    - Cloud Pub/Sub (messaging service)
+    - Cloud Load Balancing (load balancing for traffic)
+    - Cloud CDN (content delivery)
+    - Cloud IAM (access control)
+  scalability:
+    - Horizontal scaling via Cloud Run autoscaling
+    - Vertical scaling by upgrading Cloud SQL instances
+    - Database scaling using Cloud SQL Read Replicas
+    - Load balancing with Cloud Load Balancing
+    - Distributed processing frameworks (Apache Spark) - for high data volumes if needed
+    - Multi-tenancy architecture
+  monitoring:
+      - Cloud Monitoring for resource usage
+      - Cloud Logging for log collection
+      - Cloud Logging and Elasticsearch for log analysis
+      - Alerting on threshold breaches
+  data_flow:
+    - Data from Google Forms/CSV/External APIs/File Uploads → data_input.py → data_processing.py
+    - Processed data → analysis.py → visualization.py
+    - Analysis results → report_generation.py → PDF/Excel/Google Sheets/CSV output
+    - Processed data → prediction.py → predictive results
+    - Data (including survey, financial data) and analysis results passed to Generative AI Module
+    - User requests (login, logout, etc.) → auth.py
+    - User settings and API keys → Generative AI API module

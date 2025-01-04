@@ -1,26 +1,34 @@
 import { Home, Building2, FileText, Settings } from 'lucide-react';
+import { LucideIcon } from 'lucide-react';
 
-export const routes = [
-  { 
-    path: '/', 
-    label: 'ダッシュボード', 
-    icon: Home 
+interface Route {
+  path: string;
+  label: string;
+  icon: LucideIcon;
+  badge?: string;
+}
+
+export const routes: Route[] = [
+  {
+    path: '/',
+    label: 'ダッシュボード',
+    icon: Home
   },
-  { 
-    path: '/companies', 
-    label: '企業一覧', 
+  {
+    path: '/companies',
+    label: '企業一覧',
     icon: Building2,
     badge: '23'
   },
-  { 
-    path: '/reports', 
-    label: 'レポート', 
+  {
+    path: '/reports',
+    label: 'レポート',
     icon: FileText,
     badge: '新規'
   },
-  { 
-    path: '/settings', 
-    label: '設定', 
-    icon: Settings 
+  {
+    path: '/settings',
+    label: '設定',
+    icon: Settings
   },
-] as const;
+];

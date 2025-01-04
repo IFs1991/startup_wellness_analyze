@@ -291,6 +291,46 @@ class CustomReportBuilder:
             'learning_objectives': data.get('learning_objectives')
         }
 
+    async def build_correlation_report(
+        self,
+        correlation_data: Dict[str, Any],
+        target_audience: str
+    ) -> Dict[str, Any]:
+        """
+        相関分析レポートを生成します
+
+        Args:
+            correlation_data: 相関分析の結果
+            target_audience: レポートの対象読者 ('VC', '経営陣', '従業員')
+
+        Returns:
+            カスタマイズされたレポート
+        """
+        try:
+            # 基本的な相関情報の抽出
+            significant_correlations = self._extract_significant_correlations(
+                correlation_data['correlation_matrix'],
+                threshold=0.3
+            )
+
+            # 対象読者に応じたレポートの構築
+            report = {
+                'summary': self._generate_correlation_summary(significant_correlations),
+                'key_findings': self._extract_key_findings(significant_correlations),
+                'recommendations': self._generate_recommendations(
+                    significant_correlations,
+                    target_audience
+                ),
+                'visualizations': self._create_correlation_visualizations(
+                    correlation_data['correlation_matrix']
+                )
+            }
+
+            return report
+
+        except Exception as e:
+            raise ReportError(f"レポート生成中にエラーが発生: {str(e)}")
+
 def get_custom_report_builder() -> CustomReportBuilder:
     """
     CustomReportBuilderのインスタンスを取得します。

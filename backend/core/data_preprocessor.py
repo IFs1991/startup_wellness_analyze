@@ -235,7 +235,7 @@ class DataPreprocessor:
         Args:
             vas_df: VASデータ
             financial_df: 財務データ
-            merge_on: 結合キーのリスト
+            merge_on: 結合キーのリスト (デフォルト: ['startup_id', 'timestamp'])
 
         Returns:
             結合されたデータフレーム
@@ -244,6 +244,7 @@ class DataPreprocessor:
             if merge_on is None:
                 merge_on = ['startup_id', 'timestamp']
 
+            # データの結合
             result_df = pd.merge(
                 vas_df,
                 financial_df,
@@ -252,10 +253,7 @@ class DataPreprocessor:
                 suffixes=('_vas', '_fin')
             )
 
-            logger.info(f"Successfully merged datasets with {len(result_df)} records")
-            return cast(DataFrame, result_df)
+            return result_df
 
         except Exception as e:
-            error_msg = f"Error merging datasets: {str(e)}"
-            logger.error(error_msg)
-            raise DataPreprocessingError(error_msg) from e
+            raise DataPreprocessingError(f"データの結合中にエラーが発生: {str(e)}")

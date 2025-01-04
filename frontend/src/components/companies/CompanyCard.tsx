@@ -8,16 +8,17 @@ import type { Company } from '@/types/company';
 
 interface CompanyCardProps {
   company: Company;
+  onClick: () => void;
 }
 
-export function CompanyCard({ company }: CompanyCardProps) {
+export function CompanyCard({ company, onClick }: CompanyCardProps) {
   const navigate = useNavigate();
   const scoreColor = getScoreColor(company.score);
 
   return (
-    <Card 
+    <Card
       className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-      onClick={() => navigate(`/companies/${company.id}`)}
+      onClick={onClick}
     >
       <div className="flex justify-between items-start">
         <div className="space-y-2">
@@ -25,7 +26,7 @@ export function CompanyCard({ company }: CompanyCardProps) {
             <h3 className="font-semibold text-lg">{company.name}</h3>
             <Badge variant="outline">{company.stage}</Badge>
           </div>
-          
+
           <div className="flex space-x-2 text-sm text-muted-foreground">
             <span>{company.industry}</span>
             <span>•</span>
@@ -46,7 +47,7 @@ export function CompanyCard({ company }: CompanyCardProps) {
               {company.score}
             </div>
           </div>
-          
+
           <Button variant="ghost" size="icon">
             <ChevronRight className="h-4 w-4" />
           </Button>

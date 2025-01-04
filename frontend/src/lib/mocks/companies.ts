@@ -11,6 +11,22 @@ export const mockCompanyDetails: Record<string, CompanyDetail> = {
     location: '東京',
     foundedYear: 2020,
     description: 'クラウドベースの業務効率化ソリューションを提供するSaaS企業',
+    investments: [
+      {
+        id: 'inv1',
+        date: '2023-06',
+        amount: 100000000,
+        round: 'シリーズA',
+        investors: ['テックベンチャーキャピタル', 'イノベーションパートナーズ']
+      },
+      {
+        id: 'inv2',
+        date: '2022-12',
+        amount: 30000000,
+        round: 'シード',
+        investors: ['エンジェル投資家グループ', 'スタートアップファンド']
+      }
+    ],
     financials: {
       revenue: 250000000,
       growth: 156,

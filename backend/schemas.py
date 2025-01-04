@@ -44,3 +44,28 @@ class ReportBase(BaseModel):
     description: Optional[str] = None
     report_type: str
     parameters: Optional[Dict] = None
+
+
+class CompanyBase(BaseModel):
+    name: str
+    industry: str
+    stage: str
+    employees: Optional[int] = None
+    founded_year: Optional[int] = None
+    location: Optional[str] = None
+    ceo: Optional[str] = None
+    investment: Optional[float] = None
+    score: Optional[float] = None
+
+
+class CompanyCreate(CompanyBase):
+    pass
+
+
+class Company(CompanyBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True

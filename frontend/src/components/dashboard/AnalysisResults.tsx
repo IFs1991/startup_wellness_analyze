@@ -28,6 +28,11 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({ companyId }) =
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message={error.message} />;
 
+  // データが存在しない場合のチェック
+  if (!vasData || !profitLossData || !descriptiveStats || !correlationAnalysis || !textAnalysis || !aiSummary) {
+    return <ErrorMessage message="データの取得に失敗しました。" />;
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
       {/* VASデータチャート */}

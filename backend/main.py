@@ -8,10 +8,12 @@ import logging
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from typing import List
+import uuid
 
 # Firebase Admin SDK
 import firebase_admin
@@ -24,7 +26,10 @@ from .api.routers import (
 )
 from .service.firestore.client import FirestoreService, StorageError, ValidationError
 from .service.tasks import process_visualization_data
-from .schemas import DashboardConfig, GraphConfig, VisualizationResponse
+from .schemas import DashboardConfig, GraphConfig, VisualizationResponse, CompanyCreate, Company
+from .database.models import Company as CompanyModel
+from sqlalchemy.orm import Session
+from .database import get_db
 
 # Initialize logging
 logging.basicConfig(
@@ -207,6 +212,35 @@ async def health_check():
         "version": app.version,
         "timestamp": datetime.now().isoformat()
     }
+
+router = APIRouter()
+
+@router.post("/companies", response_model=Company)
+async def create_company(company: CompanyCreate, db: Session = Depends(get_db)):
+    db_company = CompanyModel(
+        id=str(uuid.uuid4()),
+        **company.dict()
+    )
+    try:
+        db.add(db_company)
+        db.commit()
+        db.refresh(db_company)
+        return db_company
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/companies", response_model=List[Company])
+async def list_companies(db: Session = Depends(get_db)):
+    companies = db.query(CompanyModel).all()
+    return companies
+
+@router.get("/companies/{company_id}", response_model=Company)
+async def get_company(company_id: str, db: Session = Depends(get_db)):
+    company = db.query(CompanyModel).filter(CompanyModel.id == company_id).first()
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
