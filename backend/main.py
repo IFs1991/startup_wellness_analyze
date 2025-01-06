@@ -5,6 +5,7 @@ Startup Wellness データ分析システム バックエンド API
 """
 
 import logging
+import os
 from datetime import datetime
 
 import uvicorn
@@ -14,22 +15,22 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List
 import uuid
+from sqlalchemy.orm import Session
 
 # Firebase Admin SDK
 import firebase_admin
 from firebase_admin import credentials, initialize_app
 
 # Import routers and dependencies
-from .api.routers import (
-    auth, data_input, analysis, visualization,
-    data_processing, prediction, report_generation
-)
-from .service.firestore.client import FirestoreService, StorageError, ValidationError
-from .service.tasks import process_visualization_data
-from .schemas import DashboardConfig, GraphConfig, VisualizationResponse, CompanyCreate, Company
-from .database.models import Company as CompanyModel
-from sqlalchemy.orm import Session
-from .database import get_db
+from api.routers import auth, data_input, analysis, visualization, data_processing, prediction, report_generation
+from service.firestore.client import FirestoreService, StorageError, ValidationError
+from service.tasks import process_visualization_data
+from schemas import DashboardConfig, GraphConfig, VisualizationResponse, CompanyCreate, Company
+from database.models import Company as CompanyModel
+from database import get_db, Base, engine
+
+# Initialize database
+Base.metadata.create_all(bind=engine)
 
 # Initialize logging
 logging.basicConfig(
@@ -42,11 +43,26 @@ logger = logging.getLogger(__name__)
 try:
     firebase_app = firebase_admin.get_app()
 except ValueError:
-    cred = credentials.Certificate("path/to/your/serviceAccount.json")
-    firebase_app = initialize_app(cred)
+    cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if not cred_path or not os.path.exists(cred_path):
+        logger.error(f"Firebase credentials file not found at {cred_path}")
+        raise FileNotFoundError(f"Firebase credentials file not found at {cred_path}")
+
+    try:
+        cred = credentials.Certificate(cred_path)
+        firebase_app = initialize_app(cred)
+        logger.info("Firebase initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase: {str(e)}")
+        raise
 
 # Initialize services
-firestore_service = FirestoreService()
+try:
+    firestore_service = FirestoreService()
+    logger.info("Firestore service initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Firestore service: {str(e)}")
+    raise
 
 # Error handling middleware
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):

@@ -33,6 +33,7 @@ export function FinancialDataUpload({ companyId, onUploadComplete }: FinancialDa
     const formData = new FormData();
     formData.append('file', file);
     formData.append('type', documentType);
+    formData.append('companyId', companyId);
 
     try {
       // Simulate upload progress
@@ -41,7 +42,11 @@ export function FinancialDataUpload({ companyId, onUploadComplete }: FinancialDa
       }, 500);
 
       // TODO: Implement actual file upload
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await fetch(`/api/companies/${companyId}/upload-financial-data`, {
+        method: 'POST',
+        body: formData,
+      });
+
       clearInterval(interval);
       setProgress(100);
 
@@ -49,7 +54,7 @@ export function FinancialDataUpload({ companyId, onUploadComplete }: FinancialDa
         title: 'アップロード完了',
         description: `${file.name}のアップロードが完了しました。`,
       });
-      
+
       onUploadComplete();
     } catch (error) {
       toast({
@@ -67,7 +72,7 @@ export function FinancialDataUpload({ companyId, onUploadComplete }: FinancialDa
   return (
     <Card className="p-6">
       <h3 className="text-lg font-semibold mb-4">財務データアップロード</h3>
-      
+
       <div className="space-y-4">
         <Select value={documentType} onValueChange={setDocumentType}>
           <SelectTrigger>

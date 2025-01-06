@@ -7,9 +7,9 @@ from fastapi import HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer
 from firebase_admin import firestore
 from contextlib import asynccontextmanager
-from ..service.firestore.client import FirestoreService
-from ..database.models import User
-from ..auth import get_current_user
+from service.firestore.client import FirestoreService
+from database.models import User
+from auth import get_current_user
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 

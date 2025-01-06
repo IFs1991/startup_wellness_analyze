@@ -4,6 +4,7 @@
 Google Forms、CSV、外部データソースからのデータ入力、
 およびファイルアップロード機能を提供します。
 """
+# 1. APIRouter import
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
 from typing import List, Dict, Optional
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from datetime import datetime
 from ..dependencies import get_current_user
 from ...service.firestore.client import FirestoreService, StorageError, ValidationError
 
+# 2. Router object definition with prefix and tags
 router = APIRouter(
     prefix="/data_input",
     tags=["data_input"],

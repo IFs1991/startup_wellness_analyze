@@ -8,7 +8,36 @@ API リクエストやレスポンスのデータ構造を定義する Pydantic 
 
 from datetime import datetime
 from typing import Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
+
+
+class Token(BaseModel):
+    """トークンモデル"""
+    access_token: str
+    token_type: str
+
+
+class UserBase(BaseModel):
+    """ユーザーベースモデル"""
+    email: EmailStr
+    username: str
+    is_active: bool = True
+    is_vc: bool = False
+
+
+class UserCreate(UserBase):
+    """ユーザー作成モデル"""
+    password: str
+
+
+class User(UserBase):
+    """ユーザーモデル"""
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class DashboardConfig(BaseModel):
@@ -68,4 +97,4 @@ class Company(CompanyBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True

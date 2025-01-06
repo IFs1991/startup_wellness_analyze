@@ -11,15 +11,17 @@ from datetime import datetime
 from ...service.firestore.client import FirestoreService
 from firebase_admin import auth
 
+# APIRouterの初期化
 router = APIRouter(
     prefix="/report_generation",
     tags=["report_generation"],
     responses={404: {"description": "Not found"}}
 )
 
-# FirestoreServiceのインスタンスを作成
+# サービスの初期化
 firestore_service = FirestoreService()
 
+# ベースモデルの定義
 class ReportBase(BaseModel):
     title: str
     description: Optional[str] = None

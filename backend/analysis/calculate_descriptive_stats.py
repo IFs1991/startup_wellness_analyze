@@ -38,12 +38,12 @@ class DescriptiveStatsCalculator:
         """
         self.bq_service = bq_service
 
-    def _validate_data(self, data: pd.DataFrame, target_variable: str) -> Tuple[bool, Optional[str]]:
+    def _validate_data(self, data: pd.DataFrame | pd.Series, target_variable: str) -> Tuple[bool, Optional[str]]:
         """
         データのバリデーションを行います。
 
         Args:
-            data (pd.DataFrame): 検証対象のデータ
+            data (pd.DataFrame | pd.Series): 検証対象のデータ
             target_variable (str): 分析対象の変数名
 
         Returns:
@@ -66,12 +66,12 @@ class DescriptiveStatsCalculator:
 
         return True, None
 
-    def _calculate_descriptive_stats(self, data: pd.DataFrame, target_variable: str) -> Dict[str, Any]:
+    def _calculate_descriptive_stats(self, data: pd.DataFrame | pd.Series, target_variable: str) -> Dict[str, Any]:
         """
         データの記述統計量を計算します。
 
         Args:
-            data (pd.DataFrame): 分析対象のデータ
+            data (pd.DataFrame | pd.Series): 分析対象のデータ
             target_variable (str): 分析対象の変数名
 
         Returns:
@@ -87,12 +87,12 @@ class DescriptiveStatsCalculator:
             "kurtosis": data[target_variable].kurt()
         }
 
-    def _calculate_arima_metrics(self, data: pd.DataFrame, target_variable: str, arima_order: Tuple[int, int, int]) -> Dict[str, Any]:
+    def _calculate_arima_metrics(self, data: pd.DataFrame | pd.Series, target_variable: str, arima_order: Tuple[int, int, int]) -> Dict[str, Any]:
         """
         ARIMA モデルの評価指標を計算します。
 
         Args:
-            data (pd.DataFrame): 分析対象のデータ
+            data (pd.DataFrame | pd.Series): 分析対象のデータ
             target_variable (str): 分析対象の変数名
             arima_order (Tuple[int, int, int]): ARIMA モデルのオーダー
 

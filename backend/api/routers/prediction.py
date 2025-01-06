@@ -8,6 +8,12 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 
+# APIRouterの初期化
+router = APIRouter(
+    prefix="/prediction",
+    tags=["prediction"]
+)
+
 # 基本的な機械学習モデルのインポート
 from sklearn.ensemble import RandomForestRegressor
 
@@ -89,13 +95,6 @@ class PredictionInput(BaseModel):
                 "target_variable": "target"
             }
         }
-
-# ルーターの設定
-router = APIRouter(
-    prefix="/prediction",
-    tags=["prediction"],
-    responses={404: {"description": "Not found"}}
-)
 
 @router.post("/performance/")
 async def predict_performance(

@@ -24,7 +24,7 @@ async def create_dashboard(
     """新しいダッシュボードを作成"""
     try:
         return await visualization_service.create_visualization(
-            config=config,
+            config=config.model_dump(),
             visualization_type="dashboard",
             user_id=current_user['uid']
         )
@@ -45,7 +45,7 @@ async def create_graph(
     """新しいグラフを作成"""
     try:
         return await visualization_service.create_visualization(
-            config=config,
+            config=config.model_dump(),
             visualization_type="graph",
             user_id=current_user['uid']
         )

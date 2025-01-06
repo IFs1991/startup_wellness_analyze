@@ -2,7 +2,21 @@
 requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
-[tool.pytest.ini_options]
-pythonpath = [
-  "."
-]
+[project]
+name = "startup_wellness_analyze"
+version = "1.0.0"
+description = "Startup Wellness Analysis Backend"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["api", "service", "database"]
+
+[tool.pyright]
+include = ["backend"]
+extraPaths = ["backend"]
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+
+[tool.pylance]
+python.analysis.extraPaths = ["backend"]
+python.analysis.typeCheckingMode = "basic"

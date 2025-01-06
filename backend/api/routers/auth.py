@@ -3,23 +3,26 @@
 認証 API ルーター
 Firebase AuthenticationとCloud Firestoreを使用した認証機能を提供します。
 """
+# 1. APIRouterのインポート
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from typing import Optional, Dict
 from pydantic import BaseModel, EmailStr
 from firebase_admin import auth
 from datetime import datetime
-from backend.service.firestore.client import FirestoreService
+from service.firestore.client import FirestoreService
 
+# 2. routerオブジェクトの定義
 router = APIRouter(
     prefix="/auth",
     tags=["auth"],
     responses={404: {"description": "Not found"}}
 )
 
-# FirestoreServiceのインスタンスを作成
+# 3. 必要なサービスの初期化
 firestore_service = FirestoreService()
 
+# データモデルの定義
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -94,7 +97,7 @@ async def register_user(user: UserCreate):
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """���ーザー認証とIDトークン発行"""
+    """ユーザー認証とIDトークン発行"""
     try:
         # Firebase Auth で認証
         user = auth.get_user_by_email(form_data.username)

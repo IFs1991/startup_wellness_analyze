@@ -4,6 +4,7 @@
 Firestoreを使用したダッシュボード生成、グラフ作成、
 インタラクティブな可視化機能を提供します。
 """
+# 1. APIRouterのインポート
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Optional
 from pydantic import BaseModel
@@ -12,13 +13,14 @@ from ...service.firestore.client import FirestoreService
 from firebase_admin import auth
 from .auth import get_current_user
 
+# 2. routerオブジェクトの定義
 router = APIRouter(
     prefix="/visualization",
     tags=["visualization"],
     responses={404: {"description": "Not found"}}
 )
 
-# FirestoreServiceのインスタンスを作成
+# 3. サービスの初期化
 firestore_service = FirestoreService()
 
 class DashboardConfig(BaseModel):

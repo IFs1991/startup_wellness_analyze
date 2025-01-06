@@ -77,6 +77,9 @@ class CorrelationAnalyzer:
             相関行列とメタデータ
         """
         try:
+            # BigQueryからデータを取得
+            data = await self.bq_service.fetch_data(query)
+
             # データのバリデーション
             valid, error_msg = self._validate_data(data, vas_variables, financial_variables)
             if not valid:

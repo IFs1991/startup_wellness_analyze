@@ -5,6 +5,7 @@ Startup Wellness データ分析システム バックエンド API
 """
 
 import logging
+from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI
@@ -13,11 +14,15 @@ from fastapi.middleware.cors import CORSMiddleware
 # Import configuration
 from backend.app.core.config import settings
 
-# Import routers
-from backend.app.api.endpoints import visualization
+# Import routers from the unified location
 from backend.api.routers import (
-    auth, data_input, analysis,
-    data_processing, prediction, report_generation
+    auth,
+    data_input,
+    analysis,
+    visualization,
+    data_processing,
+    prediction,
+    report_generation
 )
 
 # Initialize logging
@@ -34,8 +39,13 @@ from firebase_admin import credentials, initialize_app
 try:
     firebase_app = firebase_admin.get_app()
 except ValueError:
-    cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-    firebase_app = initialize_app(cred)
+    try:
+        cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+        firebase_app = initialize_app(cred)
+        logger.info("Firebase Admin SDK initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase Admin SDK: {str(e)}")
+        raise
 
 # FastAPI application
 app = FastAPI(
@@ -53,14 +63,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth.router)
-app.include_router(visualization.router, prefix="/api/visualization", tags=["visualization"])
-app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
-app.include_router(data_input.router, prefix="/data_input", tags=["data_input"])
-app.include_router(data_processing.router, prefix="/data_processing", tags=["data_processing"])
-app.include_router(prediction.router, prefix="/prediction", tags=["prediction"])
-app.include_router(report_generation.router, prefix="/report_generation", tags=["report_generation"])
+# Include routers with proper error handling
+try:
+    app.include_router(auth(), prefix="/api/auth", tags=["auth"])
+    app.include_router(visualization(), prefix="/api/visualization", tags=["visualization"])
+    app.include_router(analysis(), prefix="/api/analysis", tags=["analysis"])
+    app.include_router(data_input(), prefix="/api/data_input", tags=["data_input"])
+    app.include_router(data_processing(), prefix="/api/data_processing", tags=["data_processing"])
+    app.include_router(prediction(), prefix="/api/prediction", tags=["prediction"])
+    app.include_router(report_generation(), prefix="/api/report_generation", tags=["report_generation"])
+    logger.info("All routers initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize routers: {str(e)}")
+    raise
 
 # Health check endpoint
 @app.get("/health")

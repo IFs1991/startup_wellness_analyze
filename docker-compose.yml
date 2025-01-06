@@ -1,12 +1,44 @@
 version: "3.9"
 
 services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/wellness_db
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/startupwellnessanalyze-445505-6a7cc0e46cac.json
+      - FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+      - FIRESTORE_EMULATOR_HOST=localhost:8080
+    volumes:
+      - ./backend:/app
+      - ./backend/credentials:/app/credentials:ro
 
-  frontoend:
-    build: ./frontoend
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=wellness_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     ports:
-      - "3000:3000"
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+volumes:
+  postgres_data:

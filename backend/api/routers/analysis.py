@@ -6,11 +6,17 @@ import logging
 from pydantic import BaseModel, Field
 import numpy as np
 import pandas as pd
-from starlette.middleware.base import BaseHTTPMiddleware  # 修正: 正しいインポートパス
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # 認証関連のインポート
 from typing import Optional
 from pydantic import BaseModel as PydanticBaseModel
+
+# APIRouterの初期化
+router = APIRouter(
+    prefix="/analysis",
+    tags=["analysis"]
+)
 
 # User モデルの定義
 class User(PydanticBaseModel):
@@ -180,9 +186,6 @@ def get_analysis_service() -> AnalysisService:
     if _analysis_service_instance is None:
         _analysis_service_instance = AnalysisService()
     return _analysis_service_instance
-
-# ルーターの初期化
-router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 # エラーハンドリングミドルウェア
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):

@@ -1,44 +1,37 @@
 from datetime import datetime
-from typing import Union, List
+from typing import List, Dict, Any
+from uuid import uuid4
 
-from backend.app.schemas import DashboardConfig, GraphConfig, VisualizationResponse
-from backend.service.firestore.client import FirestoreService
-from backend.service.tasks import process_visualization_data
-
+from backend.app.schemas import VisualizationResponse
 
 class BaseVisualizationService:
-    """可視化サービスの基本クラス"""
-    def __init__(self, firestore_service: FirestoreService):
-        self.firestore = firestore_service
+    def __init__(self, db_service):
+        self.db = db_service
 
     async def create_visualization(
         self,
-        config: Union[DashboardConfig, GraphConfig],
+        config: Dict[str, Any],
         visualization_type: str,
         user_id: str
     ) -> VisualizationResponse:
-        """可視化を作成する共通ロジック"""
+        """新しい可視化を作成"""
+        visualization_id = str(uuid4())
+        now = datetime.utcnow().isoformat()
+
         visualization_data = {
-            'id': f"{visualization_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            'type': visualization_type,
-            'config': config.dict(),
-            'created_at': datetime.now(),
-            'updated_at': datetime.now(),
-            'created_by': user_id,
-            'data': {},
-            'status': 'processing'
+            "id": visualization_id,
+            "user_id": user_id,
+            "visualization_type": visualization_type,
+            "config": config,
+            "created_at": now,
+            "updated_at": now
         }
 
-        await self.firestore.save_results(
-            results=[visualization_data],
-            collection_name='visualizations'
-        )
-
-        # バックグラウンドタスクの開始
-        await process_visualization_data(
-            visualization_data['id'],
-            config.dict(),
-            user_id
+        # Firestoreに保存
+        await self.db.create_document(
+            collection="visualizations",
+            document_id=visualization_id,
+            data=visualization_data
         )
 
         return VisualizationResponse(**visualization_data)
@@ -48,13 +41,9 @@ class BaseVisualizationService:
         user_id: str
     ) -> List[VisualizationResponse]:
         """ユーザーの可視化一覧を取得"""
-        conditions = [
-            {'field': 'created_by', 'operator': '==', 'value': user_id}
-        ]
-
-        visualizations = await self.firestore.fetch_documents(
-            collection_name='visualizations',
-            conditions=conditions
+        visualizations = await self.db.query_documents(
+            collection="visualizations",
+            filters={"user_id": user_id}
         )
 
         return [VisualizationResponse(**v) for v in visualizations]

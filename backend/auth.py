@@ -4,6 +4,7 @@
 Firebase Authentication と GCP を使用したユーザー認証の処理を定義します。
 """
 from datetime import timedelta, datetime
+import os
 from typing import Optional, Dict, Any
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -11,11 +12,18 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials, initialize_app
 from google.cloud import secretmanager
 import firebase_admin
-from .schemas import UserCreate, Token
+from schemas import UserCreate, Token
 
 # Firebase初期化
-cred = credentials.Certificate("path/to/your/serviceAccount.json")
-firebase_app = initialize_app(cred)
+try:
+    firebase_app = firebase_admin.get_app()
+except ValueError:
+    cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if not cred_path or not os.path.exists(cred_path):
+        raise FileNotFoundError(f"Firebase credentials file not found at {cred_path}")
+
+    cred = credentials.Certificate(cred_path)
+    firebase_app = initialize_app(cred)
 
 # Secret Manager クライアントの設定
 secret_client = secretmanager.SecretManagerServiceClient()
@@ -28,7 +36,7 @@ def get_secret(secret_id: str) -> str:
     return response.payload.data.decode("UTF-8")
 
 # 定数の設定
-SECRET_KEY = get_secret("jwt-secret-key")
+SECRET_KEY = "your-secret-key"  # 本番環境では環境変数から取得
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

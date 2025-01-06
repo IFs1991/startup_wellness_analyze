@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from google.cloud import firestore
 from enum import Enum
 from sqlalchemy import Column, String, Integer, Float, DateTime, func
-from sqlalchemy.ext.declarative import declarative_base
+from . import Base
 
 T = TypeVar('T', bound='FirestoreModel')
 
@@ -138,8 +138,6 @@ class FirestoreRepository:
             'vas_data': vas_data,
             'financial_data': financial_data
         }
-
-Base = declarative_base()
 
 class Company(Base):
     __tablename__ = "companies"
