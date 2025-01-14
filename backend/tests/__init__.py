@@ -1,3 +1,0 @@
-"""
-Backend tests package initialization.
-"""
