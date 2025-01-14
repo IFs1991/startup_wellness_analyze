@@ -1,0 +1,93 @@
+backend:
+  auth_service:
+    - user_authentication
+    - role_management
+    - permission_control
+    - session_management
+
+  portfolio_service:
+    company_management:
+      - create_company
+      - update_company
+      - delete_company
+      - get_company_details
+    status_tracking:
+      - status_updates
+      - status_history
+      - status_notifications
+    stage_management:
+      - stage_updates
+      - stage_validation
+      - stage_history
+
+  analysis_service:
+    comparison_engine:
+      - cross_company_analysis
+      - benchmark_calculations
+      - performance_scoring
+    metrics_processing:
+      - kpi_calculation
+      - trend_analysis
+      - growth_metrics
+    data_aggregation:
+      - company_aggregation
+      - group_aggregation
+      - portfolio_aggregation
+
+  group_service:
+    management:
+      - group_crud_operations
+      - membership_management
+      - group_permissions
+    tagging:
+      - tag_crud_operations
+      - tag_assignment
+      - tag_search
+    analysis:
+      - group_metrics
+      - group_reports
+      - group_comparisons
+
+  data_service:
+    processing:
+      - data_validation
+      - data_cleaning
+      - data_transformation
+    storage:
+      - data_persistence
+      - data_retrieval
+      - data_backup
+    integration:
+      - external_api_integration
+      - data_synchronization
+      - webhook_management
+
+  report_service:
+    generation:
+      - report_building
+      - template_processing
+      - data_compilation
+    distribution:
+      - email_service
+      - file_storage
+      - access_control
+
+  api_endpoints:
+    portfolio:
+      - GET /api/v1/portfolios
+      - POST /api/v1/portfolios
+      - PUT /api/v1/portfolios/{id}
+      - DELETE /api/v1/portfolios/{id}
+    analysis:
+      - GET /api/v1/analysis/comparison
+      - POST /api/v1/analysis/custom
+      - GET /api/v1/analysis/benchmarks
+    groups:
+      - GET /api/v1/groups
+      - POST /api/v1/groups
+      - PUT /api/v1/groups/{id}
+      - GET /api/v1/groups/{id}/members
+    reports:
+      - GET /api/v1/reports
+      - POST /api/v1/reports/generate
+      - GET /api/v1/reports/templates

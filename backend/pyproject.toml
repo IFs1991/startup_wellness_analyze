@@ -1,0 +1,63 @@
+# ビルドシステムの設定
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "startup_wellness_analyze"
+version = "1.0.0"
+description = "Startup Wellness Analysis Backend"
+requires-python = ">=3.9"
+dynamic = ["authors"]
+
+# 依存関係の追加
+dependencies = [
+    "pandas>=1.5.0",
+    "mlxtend>=0.22.0",
+    "scikit-learn>=1.0.0",
+    "numpy>=1.21.0",
+    "aiohttp>=3.8.0",
+    "fastapi>=0.68.0",
+    "asyncio>=3.4.3",
+    "typing-extensions>=4.0.0",
+    "sqlalchemy>=2.0.0",
+    "asyncpg>=0.29.0",
+    "python-dotenv>=1.0.0"
+]
+
+# setuptools固有の設定
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = {find = {where = ["src"]}}
+
+# Pyright（静的型チェッカー）の設定
+[tool.pyright]
+include = ["backend", "backend/typings"]  # typingsディレクトリを追加
+extraPaths = ["backend", "backend/typings"]  # typingsディレクトリを追加
+typeCheckingMode = "basic"  # 基本的な型チェックモード
+reportMissingImports = "warning"  # 不明なインポートは警告として扱う
+reportAttributeAccessIssue = false
+reportOptionalMemberAccess = false
+reportUnknownImportSymbol = "warning"  # 不明なインポートシンボルは警告として扱う
+reportCallIssue = "none"  # 関数呼び出しの警告を無効化
+
+# Pylance（VSCode用の Python言語サーバー）の設定
+[tool.pylance]
+python.analysis.extraPaths = ["backend", "backend/typings"]  # typingsディレクトリを追加
+python.analysis.typeCheckingMode = "basic"  # 基本的な型チェックモード
+python.analysis.autoImportCompletions = true  # 自動インポート補完を有効化
+python.analysis.useLibraryCodeForTypes = true  # ライブラリコードの型情報を使用
+python.analysis.diagnosticMode = "workspace"  # ワークスペース全体での診断を有効化
+python.analysis.reportInvalidTypeForm = "none"  # 型式の警告を無効化
+python.analysis.reportAssignmentType = "none"  # 型の割り当ての警告を無効化
+
+# コードフォーマッター（Black）の設定
+[tool.black]
+line-length = 88  # 1行の最大長
+target-version = ['py39']  # Python 3.9向けの整形
+include = '\.pyi?$'  # .pyと.pyiファイルを対象とする
+
+# インポート整形（isort）の設定
+[tool.isort]
+profile = "black"  # Blackと互換性のある設定を使用
+multi_line_output = 3  # 複数行のインポートのスタイル
