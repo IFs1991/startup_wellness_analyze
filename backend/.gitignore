@@ -1,3 +1,9 @@
+# 環境変数と認証情報
+.env
+credentials/firebase/*.json
+*.pem
+*.key
+
 # Python
 __pycache__/
 *.py[cod]
@@ -20,19 +26,12 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# 仮想環境
 .env
 .venv
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
-.env*
-.env.local
-.env.development
-.env.test
-.env.production
 
 # IDE
 .idea/
@@ -40,72 +39,23 @@ venv.bak/
 *.swp
 *.swo
 
-# Logs
-logs/
+# ログとデータベース
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-firebase-debug.log*
-firebase-debug.*.log*
-*-debug.log
-*-debug.*.log
-ui-debug.log
-firestore-debug.log
-
-# Firebase & GCP
-.firebase/
-.firebaserc
-firebase-debug.log
-firebase.json
-.runtimeconfig.json
-firestore.indexes.json
-firestore.rules
-
-# Credentials
-credentials/
-**/service-account.json
-**/serviceAccount.json
-**/credentials/*.json
-**/config/credentials/
-service_account_key.json
-
-# Coverage
-coverage/
-.nyc_output/
-.coverage
-htmlcov/
-
-# Node
-node_modules/
-.npm
-.node_repl_history
-*.tgz
-.yarn-integrity
-
-# Build
-build/
-dist/
-*.pyc
-__pycache__/
-
-# Database
 *.sqlite3
 *.db
 
-# OS
+# テストとカバレッジ
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# その他
 .DS_Store
 Thumbs.db
-
-# Project specific
-data/
-config.json
-secrets/
-test-results/
-
-# Additional project files
-*.bak
-*.tmp
-*.temp
-*.cache
-*.old

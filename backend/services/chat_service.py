@@ -1,5 +1,6 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import openai
+from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageParam
 import json
 import logging
 from datetime import datetime
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 class ChatService:
     def __init__(self):
+        self.client = openai.OpenAI()  # OpenAIクライアントの初期化
         self.system_prompt = """
 あなたは企業のウェルネス分析アシスタントです。
 与えられた企業データに基づいて、以下の観点から分析と提案を行ってください：
@@ -38,14 +40,14 @@ class ChatService:
             company_context = json.dumps(company_data, ensure_ascii=False, default=str)
 
             # メッセージを構築
-            messages = [
+            messages: List[ChatCompletionMessageParam] = [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "system", "content": f"企業データ: {company_context}"},
                 {"role": "user", "content": message}
             ]
 
             # OpenAI APIを呼び出し
-            response = openai.ChatCompletion.create(
+            response: ChatCompletion = self.client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=0.7,
@@ -56,7 +58,10 @@ class ChatService:
             )
 
             # レスポンスを取得
-            ai_response = response.choices[0].message.content
+            if not response.choices or not response.choices[0].message.content:
+                raise Exception("AIからの応答が空でした")
+
+            ai_response: str = response.choices[0].message.content
 
             # レスポンスをログに記録
             logger.info(f"AI Response generated for company data at {datetime.now()}")

@@ -1,10 +1,11 @@
-from typing import Generic, TypeVar, Type, Optional, List, Any, Dict
+from typing import Generic, TypeVar, Type, Optional, List, Any, Dict, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.sql import Select
+from sqlalchemy.orm import DeclarativeBase, Mapped
 from ..models import Base
 
-ModelType = TypeVar("ModelType", bound=Base)
+ModelType = TypeVar('ModelType', bound=DeclarativeBase)
 
 class BaseRepository(Generic[ModelType]):
     """基本リポジトリクラス"""
@@ -50,7 +51,7 @@ class BaseRepository(Generic[ModelType]):
         """全てのエンティティを取得する"""
         query = select(self.model)
         result = await self.session.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def get_by_field(self, field: str, value: Any) -> Optional[ModelType]:
         """フィールドの値でエンティティを取得する"""
@@ -62,7 +63,7 @@ class BaseRepository(Generic[ModelType]):
         """フィールドの値で複数のエンティティを取得する"""
         query = select(self.model).where(getattr(self.model, field) == value)
         result = await self.session.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def exists(self, **kwargs) -> bool:
         """条件に一致するエンティティが存在するか確認する"""
@@ -110,4 +111,4 @@ class BaseRepository(Generic[ModelType]):
         """条件に一致するエンティティを検索する"""
         query = self._prepare_query(**kwargs)
         result = await self.session.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())

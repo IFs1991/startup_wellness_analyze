@@ -3,12 +3,12 @@ from typing import Optional
 from ..models.chat import ChatRequest, ChatResponse
 from ..services.chat_service import ChatService
 from ..services.company_service import CompanyService
-from ..auth.auth_bearer import JWTBearer
+from ..auth import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/chat",
     tags=["chat"],
-    dependencies=[Depends(JWTBearer())]
+    dependencies=[Depends(get_current_user)]
 )
 
 @router.post("", response_model=ChatResponse)

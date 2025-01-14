@@ -1,90 +1,76 @@
-from firebase_admin import credentials, firestore, initialize_app
-from google.cloud.firestore import Client
-from typing import Generator
-from contextlib import contextmanager
-from backend.config import GOOGLE_CLOUD_PROJECT, CREDENTIALS_PATH
+from typing import AsyncGenerator, List, Any, Sequence
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.pool import QueuePool
+from sqlalchemy import text
 
-# Firebase初期化
-cred = credentials.Certificate(CREDENTIALS_PATH)
-firebase_app = initialize_app(cred, {
-    'projectId': GOOGLE_CLOUD_PROJECT
-})
+import sys
+from pathlib import Path
 
-# Firestoreクライアントの初期化
-db = firestore.client()
+# configモジュールへのパスを追加
+config_path = Path(__file__).parent.parent
+if str(config_path) not in sys.path:
+    sys.path.append(str(config_path))
 
-@contextmanager
-def get_db() -> Generator[Client, None, None]:
+from config.config import get_settings
+
+settings = get_settings()
+
+# 非同期データベースエンジンの作成
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=settings.DEBUG,
+    future=True,
+    **settings.SQLALCHEMY_CONFIG
+)
+
+# 非同期セッションの設定
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """データベースセッションの依存性注入用ジェネレータ"""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+# データベース操作のヘルパー関数
+async def get_collection_data(session: AsyncSession, table_name: str) -> List[dict]:
     """
-    Firestoreデータベースクライアントを取得し、コンテキストマネージャーとして使用するための関数です。
-
-    Yields:
-        Client: Firestoreクライアントインスタンス
-
-    Example:
-        with get_db() as db:
-            users_ref = db.collection('users')
-            docs = users_ref.stream()
-    """
-    try:
-        yield db
-    except Exception as e:
-        # エラーログ記録やエラーハンドリングをここで実装
-        print(f"Database error: {str(e)}")
-        raise
-    finally:
-        # Firestoreはステートレスなので、明示的なクローズは不要
-        pass
-
-# 使用例を含むヘルパー関数
-async def get_collection_data(collection_name: str):
-    """
-    指定されたコレクションのデータを取得するヘルパー関数
+    指定されたテーブルのデータを取得するヘルパー関数
 
     Args:
-        collection_name (str): 取得するコレクション名
+        session (AsyncSession): データベースセッション
+        table_name (str): 取得するテーブル名
 
     Returns:
-        list: ドキュメントのリスト
+        List[dict]: レコードのリスト（辞書形式）
     """
-    with get_db() as db:
-        collection_ref = db.collection(collection_name)
-        docs = collection_ref.stream()
-        return [doc.to_dict() for doc in docs]
+    # SQLインジェクション対策のためにパラメータバインディングを使用
+    stmt = text(f"SELECT * FROM {table_name}")
+    result = await session.execute(stmt)
+    rows = result.fetchall()
+    return [dict(row._mapping) for row in rows]
 
-# バッチ処理用のヘルパー関数
-def batch_write(operations: list):
+async def execute_batch_operations(session: AsyncSession, operations: List[str]):
     """
     バッチ処理を実行するヘルパー関数
 
     Args:
-        operations (list): バッチ操作のリスト
-
-    Example:
-        operations = [
-            {
-                'type': 'set',
-                'collection': 'users',
-                'doc_id': 'user1',
-                'data': {'name': 'John Doe'}
-            }
-        ]
+        session (AsyncSession): データベースセッション
+        operations (List[str]): SQL操作のリスト
     """
-    batch = db.batch()
-
     try:
-        for op in operations:
-            ref = db.collection(op['collection']).document(op['doc_id'])
-            if op['type'] == 'set':
-                batch.set(ref, op['data'])
-            elif op['type'] == 'update':
-                batch.update(ref, op['data'])
-            elif op['type'] == 'delete':
-                batch.delete(ref)
-
-        batch.commit()
+        for operation in operations:
+            stmt = text(operation)
+            await session.execute(stmt)
+        await session.commit()
     except Exception as e:
-        print(f"Batch operation failed: {str(e)}")
-        raise
+        await session.rollback()
+        raise e
 
 # 設定ファイル (backend/config.py)

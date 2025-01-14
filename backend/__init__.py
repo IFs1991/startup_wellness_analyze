@@ -1,18 +1,22 @@
 """
-Startup Wellness Analysis Backend Package
+Startup Wellness データ分析システム バックエンド
+
+このモジュールは、アプリケーションのエントリーポイントとして機能し、
+主要なコンポーネントへのアクセスを提供します。
 """
 
-__version__ = '1.0.0'
-__author__ = 'Startup Wellness Team'
+# アプリケーション設定をインポート
+from backend.app.core.config import settings
 
-import os
-import logging
+# バージョン情報とアプリケーション識別子の定義
+__version__ = settings.VERSION
+__app_name__ = settings.APP_NAME
+__project_name__ = settings.PROJECT_NAME
 
-# ロギング設定
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# 環境変数の設定
-os.environ.setdefault('PYTHONPATH', os.path.dirname(os.path.dirname(__file__)))
+# このモジュールから外部に公開するシンボルを定義
+__all__ = [
+    'settings',
+    '__version__',
+    '__app_name__',
+    '__project_name__'
+]

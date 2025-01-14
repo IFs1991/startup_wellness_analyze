@@ -59,15 +59,18 @@ class DataStorage:
             storage_path = self._generate_storage_path(filename)
 
             # S3にアップロード
+            metadata_dict = {
+                'checksum': checksum
+            }
+            if tags:
+                metadata_dict.update(tags)
+
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=storage_path,
                 Body=binary_data,
                 ContentType=content_type,
-                Metadata={
-                    'checksum': checksum,
-                    **tags if tags else {}
-                }
+                Metadata=metadata_dict
             )
 
             # メタデータを作成

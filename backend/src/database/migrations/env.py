@@ -7,7 +7,7 @@ from alembic import context
 
 # モデルのメタデータをインポート
 from ..models import Base
-from ..config import DatabaseConfig
+from ..config import PostgresConfig
 
 # Alembic設定を取得
 config = context.config
@@ -21,7 +21,7 @@ target_metadata = Base.metadata
 
 def get_url():
     """データベースURLを取得する"""
-    db_config = DatabaseConfig()
+    db_config = PostgresConfig()
     return db_config.get_database_url()
 
 def run_migrations_offline() -> None:
@@ -55,6 +55,8 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_async_migrations() -> None:
     """非同期でマイグレーションを実行する"""
     configuration = config.get_section(config.config_ini_section)
+    if configuration is None:
+        configuration = {}
     configuration["sqlalchemy.url"] = get_url()
 
     connectable = async_engine_from_config(

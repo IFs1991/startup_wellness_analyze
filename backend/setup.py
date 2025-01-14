@@ -1,9 +1,14 @@
 from setuptools import setup, find_packages
+from pathlib import Path
+
+# プロジェクトルートディレクトリ
+BASE_DIR = Path(__file__).parent
 
 setup(
     name="startup_wellness_analyze",
     version="1.0.0",
-    packages=find_packages(),
+    package_dir={"": "src"},
+    packages=find_packages(where="src", exclude=["tests*"]),
     install_requires=[
         "fastapi==0.112.2",
         "uvicorn==0.30.6",
@@ -22,7 +27,14 @@ setup(
         "dash==2.17.1",
         "matplotlib==3.9.2",
         "seaborn==0.13.2",
-        "lifelines==0.29.0"
+        "lifelines==0.29.0",
+        "python-dotenv==1.0.1",
+        "asyncpg==0.29.0"
     ],
     python_requires=">=3.9",
+    include_package_data=True,
+    description="Startup Wellness Analysis System",
+    author="Your Name",
+    author_email="your.email@example.com",
+    url="https://github.com/yourusername/startup_wellness_analyze",
 )

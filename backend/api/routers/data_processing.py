@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
-from ...service.firestore.client import FirestoreService
+from service.firestore.client import FirestoreService
 
 router = APIRouter(
     prefix="/data_processing",

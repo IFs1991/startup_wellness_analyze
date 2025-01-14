@@ -1,36 +1,58 @@
-FROM python:3.9
+# ビルドステージ
+FROM python:3.9-slim-buster AS builder
+
+# ビルド環境の設定
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
+# 必要なビルドツールのインストール
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 # 依存関係のインストール
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir python-multipart==0.0.9 && \
-    pip install --no-cache-dir pandas==2.2.2
+COPY requirements.txt .
+RUN python -m venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    pip install --no-cache-dir -U pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# 開発用依存関係のインストール（オプション）
-COPY requirements-dev.txt ./
-RUN if [ "$ENVIRONMENT" = "development" ] ; then pip install --no-cache-dir -r requirements-dev.txt ; fi
+# 本番環境ステージ
+FROM python:3.9-slim-buster
 
-# アプリケーションのコピー
-COPY . .
+# 環境変数の設定
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app
 
-# パッケージのインストール
-ENV PYTHONPATH=/app:${PYTHONPATH}
-RUN pip install -e .
+WORKDIR /app
 
-# ログ設定
-ENV PYTHONUNBUFFERED=1
-ENV LOG_LEVEL=INFO
-ENV ENVIRONMENT=production
-ENV GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/startupwellnessanalyze-445505-6a7cc0e46cac.json
+# 仮想環境のコピー
+COPY --from=builder /opt/venv /opt/venv
 
-# Firebase認証情報のマウントポイント
-VOLUME /app/credentials
+# セキュリティ設定
+RUN useradd -r -s /bin/false app && \
+    mkdir -p /app /var/log/app && \
+    chown -R app:app /app /var/log/app
 
-# ポートの設定
+# アプリケーションファイルのコピー
+COPY --chown=app:app . .
+
+# 実行ユーザーの変更
+USER app
+
+# ポート設定
 EXPOSE 8000
 
+# ヘルスチェック
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+
 # 起動コマンド
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--workers", "4", "--log-level", "info"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

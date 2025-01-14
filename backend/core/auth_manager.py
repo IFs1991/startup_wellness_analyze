@@ -9,8 +9,11 @@ from firebase_admin import credentials, initialize_app, get_app, auth
 from google.cloud import firestore
 import os
 from pathlib import Path
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, Any
 from datetime import datetime
+import asyncio
+import logging
+from concurrent.futures import ThreadPoolExecutor
 
 # パスワードハッシュ化の設定
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -22,12 +25,35 @@ class AuthManager:
     """
     _instance = None
     _firestore_client = None
+    _executor = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(AuthManager, cls).__new__(cls)
-            cls._instance._initialize_firebase()
+            cls._instance._initialize()
         return cls._instance
+
+    def _initialize(self):
+        """初期化処理を行います。"""
+        self._initialize_firebase()
+        self._setup_logging()
+        self._initialize_thread_pool()
+
+    def _initialize_thread_pool(self):
+        """スレッドプールを初期化します。"""
+        if not self._executor:
+            self._executor = ThreadPoolExecutor(max_workers=4)
+
+    def _setup_logging(self):
+        """ロギングを設定します。"""
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
 
     def _initialize_firebase(self):
         """Firebase Adminの初期化"""
@@ -75,15 +101,58 @@ class AuthManager:
             self._firestore_client = firestore.Client()
         return self._firestore_client
 
-    def create_firebase_user(self, email: str, password: str, display_name: Optional[str] = "") -> Dict:
+    async def create_firebase_user(
+        self,
+        email: str,
+        password: str,
+        display_name: Optional[str] = ""
+    ) -> Dict[str, Any]:
         """
         Firebaseに新規ユーザーを作成します。
+
         Args:
             email (str): ユーザーのメールアドレス
             password (str): パスワード
             display_name (str, optional): 表示名
+
         Returns:
-            Dict: 作成されたユーザーの情報
+            Dict[str, Any]: 作成されたユーザーの情報
+
+        Raises:
+            ValueError: ユーザー作成に失敗した場合
+        """
+        try:
+            self.logger.info(f"ユーザー作成開始: {email}")
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self._executor,
+                self._create_firebase_user_sync,
+                email,
+                password,
+                display_name
+            )
+            self.logger.info(f"ユーザー作成成功: {email}")
+            return result
+        except Exception as e:
+            self.logger.error(f"ユーザー作成失敗: {str(e)}")
+            raise ValueError(f"ユーザー作成に失敗しました: {str(e)}")
+
+    def _create_firebase_user_sync(
+        self,
+        email: str,
+        password: str,
+        display_name: Optional[str] = ""
+    ) -> Dict[str, Any]:
+        """
+        同期的にFirebaseユーザーを作成します。
+
+        Args:
+            email (str): メールアドレス
+            password (str): パスワード
+            display_name (str, optional): 表示名
+
+        Returns:
+            Dict[str, Any]: ユーザー情報
         """
         try:
             create_args = {
@@ -113,7 +182,8 @@ class AuthManager:
                 'display_name': display_name if display_name else ""
             }
         except Exception as e:
-            raise ValueError(f"Failed to create user: {str(e)}")
+            self.logger.error(f"同期的ユーザー作成中にエラー: {str(e)}")
+            raise
 
     def create_custom_token(self, uid: str) -> str:
         """
@@ -129,65 +199,117 @@ class AuthManager:
         except Exception as e:
             raise ValueError(f"Failed to create custom token: {str(e)}")
 
-    def verify_firebase_token(self, token: str) -> Dict:
+    async def verify_firebase_token(self, token: str) -> Dict[str, Any]:
         """
         Firebaseトークンを検証します。
+
         Args:
             token (str): 検証するトークン
+
         Returns:
-            Dict: デコードされたトークン情報
+            Dict[str, Any]: デコードされたトークン情報
+
+        Raises:
+            ValueError: トークンが無効な場合
         """
         try:
-            return auth.verify_id_token(token)
+            self.logger.info("トークン検証開始")
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self._executor,
+                auth.verify_id_token,
+                token
+            )
+            self.logger.info("トークン検証成功")
+            return result
         except Exception as e:
-            raise ValueError(f"Invalid token: {str(e)}")
+            self.logger.error(f"トークン検証失敗: {str(e)}")
+            raise ValueError(f"無効なトークン: {str(e)}")
 
-    def get_user_by_email(self, email: str) -> Union[Dict, None]:
+    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """
         メールアドレスからユーザー情報を取得します。
+
         Args:
             email (str): ユーザーのメールアドレス
+
         Returns:
-            Dict or None: ユーザー情報、存在しない場合はNone
+            Optional[Dict[str, Any]]: ユーザー情報、存在しない場合はNone
         """
         try:
-            user = auth.get_user_by_email(email)
-            return {
-                'uid': user.uid,
-                'email': user.email,
-                'display_name': user.display_name if user.display_name else ""
-            }
-        except auth.UserNotFoundError:
+            self.logger.info(f"ユーザー検索開始: {email}")
+            loop = asyncio.get_event_loop()
+            user = await loop.run_in_executor(
+                self._executor,
+                auth.get_user_by_email,
+                email
+            )
+            if user:
+                return {
+                    'uid': user.uid,
+                    'email': user.email,
+                    'display_name': user.display_name if user.display_name else ""
+                }
             return None
+        except auth.UserNotFoundError:
+            self.logger.info(f"ユーザーが見つかりません: {email}")
+            return None
+        except Exception as e:
+            self.logger.error(f"ユーザー検索中にエラー: {str(e)}")
+            raise
 
-    def update_user_last_login(self, uid: str):
+    async def update_user_last_login(self, uid: str):
         """
         ユーザーの最終ログイン時間を更新します。
-        Args:
-            uid (str): ユーザーID
-        """
-        user_ref = self.firestore_client.collection('users').document(uid)
-        user_ref.update({
-            'last_login': firestore.SERVER_TIMESTAMP
-        })
 
-    def revoke_user_sessions(self, uid: str):
-        """
-        ユーザーの全てのセッションを無効化します。
         Args:
             uid (str): ユーザーID
         """
         try:
+            self.logger.info(f"最終ログイン時間更新開始: {uid}")
+            user_ref = self.firestore_client.collection('users').document(uid)
+            await asyncio.get_event_loop().run_in_executor(
+                self._executor,
+                lambda: user_ref.update({
+                    'last_login': firestore.SERVER_TIMESTAMP
+                })
+            )
+            self.logger.info(f"最終ログイン時間更新成功: {uid}")
+        except Exception as e:
+            self.logger.error(f"最終ログイン時間更新失敗: {str(e)}")
+            raise
+
+    async def revoke_user_sessions(self, uid: str):
+        """
+        ユーザーの全てのセッションを無効化します。
+
+        Args:
+            uid (str): ユーザーID
+        """
+        try:
+            self.logger.info(f"セッション無効化開始: {uid}")
+            loop = asyncio.get_event_loop()
+
             # Firebase側でトークンを無効化
-            auth.revoke_refresh_tokens(uid)
+            await loop.run_in_executor(
+                self._executor,
+                auth.revoke_refresh_tokens,
+                uid
+            )
 
             # Firestoreの最終ログアウト時間を更新
             user_ref = self.firestore_client.collection('users').document(uid)
-            user_ref.update({
-                'last_logout': firestore.SERVER_TIMESTAMP
-            })
+            await loop.run_in_executor(
+                self._executor,
+                lambda: user_ref.update({
+                    'last_logout': firestore.SERVER_TIMESTAMP
+                })
+            )
+
+            self.logger.info(f"セッション無効化成功: {uid}")
         except Exception as e:
-            raise ValueError(f"Failed to revoke user sessions: {str(e)}")
+            self.logger.error(f"セッション無効化失敗: {str(e)}")
+            raise ValueError(f"セッション無効化に失敗しました: {str(e)}")
 
     def delete_user(self, uid: str):
         """

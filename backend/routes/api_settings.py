@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 from ..models.api_settings import OpenAISettings, OpenAISettingsResponse
 from ..services.api_settings_service import APISettingsService
-from ..auth.auth_bearer import JWTBearer
+from ..auth import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/settings",
     tags=["settings"],
-    dependencies=[Depends(JWTBearer())]
+    dependencies=[Depends(get_current_user)]
 )
 
 @router.post("/openai", response_model=OpenAISettingsResponse)

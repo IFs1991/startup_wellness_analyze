@@ -10,7 +10,7 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
 from ..dependencies import get_current_user
-from ...service.firestore.client import FirestoreService, StorageError, ValidationError
+from service.firestore.client import FirestoreService, StorageError, ValidationError
 
 # 2. Router object definition with prefix and tags
 router = APIRouter(

@@ -10,6 +10,7 @@
 - `data_input.py` - データ入力処理
 - `data_quality_checker.py` - データ品質チェック
 - `descriptive_stats_calculator.py` - 記述統計の計算
+- `text_miner.py` - テキストデータの分析・感情分析（Gemini AI活用）
 
 ### 2. 分析アルゴリズム系
 - `survival_analyzer.py` - 生存分析
@@ -18,6 +19,7 @@
 - `correlation_analyzer.py` - 相関分析
 - `pca_analyzer.py` - 主成分分析
 - `association_analyzer.py` - アソシエーション分析
+- `feature_engineer.py` - 特徴量エンジニアリング
 
 ### 3. 可視化・レポート系
 - `dashboard_creator.py` - ダッシュボード作成
@@ -37,6 +39,7 @@
 - `scalability.py` - スケーラビリティ対応
 - `performance_predictor.py` - パフォーマンス予測
 - `utils.py` - ユーティリティ機能
+- `model_evaluator.py` - モデル評価機能
 
 ## フロントエンドとの連携
 
@@ -51,6 +54,7 @@
 ### データ入出力連携
 - `data_input.py`がフロントエンドからのデータ入力を受け付け
 - `google_forms_connector.py`がフロントエンドのフォーム機能と連携
+- `text_miner.py`がテキストデータの分析結果をフロントエンドに提供
 
 ### 認証・セキュリティ連携
 - `auth_manager.py`がフロントエンドのログイン・認証機能を支援

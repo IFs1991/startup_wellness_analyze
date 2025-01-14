@@ -4,6 +4,7 @@ from pydantic import BaseModel, ValidationError
 import pandas as pd
 import numpy as np
 from enum import Enum
+import re
 
 class DataValidationRule(BaseModel):
     field: str
@@ -77,10 +78,10 @@ class DataProcessor:
             method = rule.get("method")
             params = rule.get("parameters", {})
 
-            if field in cleaned_data:
+            if field is not None and method is not None and field in cleaned_data:
                 cleaned_data[field] = await self._apply_cleaning_method(
                     cleaned_data[field],
-                    method,
+                    str(method),
                     params
                 )
 
@@ -218,6 +219,9 @@ class DataProcessor:
     def _convert_type(self, value: Any, params: Dict[str, Any]) -> Any:
         """型を変換する"""
         target_type = params.get("target_type")
+        if target_type is None:
+            raise ValueError("Target type must be specified")
+
         type_converters = {
             "int": int,
             "float": float,
@@ -225,7 +229,7 @@ class DataProcessor:
             "bool": bool
         }
 
-        converter = type_converters.get(target_type)
+        converter = type_converters.get(str(target_type))
         if not converter:
             raise ValueError(f"Unsupported target type: {target_type}")
 

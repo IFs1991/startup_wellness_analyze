@@ -1,9 +1,11 @@
 from datetime import datetime
 from enum import Enum
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, JSON, Table
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship, DeclarativeBase, Mapped, mapped_column
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    """モデルの基底クラス"""
+    pass
 
 class UserRole(str, Enum):
     """ユーザーロール"""

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 from datetime import datetime
-from ...service.firestore.client import FirestoreService
+from service.firestore.client import FirestoreService
 from firebase_admin import auth
 
 # APIRouterの初期化

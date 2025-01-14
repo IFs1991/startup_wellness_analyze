@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
 from enum import Enum
@@ -23,7 +23,7 @@ class Group(BaseModel):
     created_at: datetime
     updated_at: datetime
     owner_id: str
-    settings: Dict[str, any] = {}
+    settings: Dict[str, Any] = {}
 
 class GroupManagementService:
     def __init__(self, database):

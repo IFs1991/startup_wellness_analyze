@@ -1,17 +1,7 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+"""
+データベース関連のモジュールを提供するパッケージ
+"""
 
-SQLALCHEMY_DATABASE_URL = "postgresql://postgres:postgres@db:5432/startup_wellness"
+from .database import get_db, get_collection_data, execute_batch_operations
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+__all__ = ['get_db', 'get_collection_data', 'execute_batch_operations']

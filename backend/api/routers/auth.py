@@ -3,7 +3,6 @@
 認証 API ルーター
 Firebase AuthenticationとCloud Firestoreを使用した認証機能を提供します。
 """
-# 1. APIRouterのインポート
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from typing import Optional, Dict
@@ -12,15 +11,34 @@ from firebase_admin import auth
 from datetime import datetime
 from service.firestore.client import FirestoreService
 
-# 2. routerオブジェクトの定義
+__all__ = ['router', 'get_current_user']
+
+# routerオブジェクトの定義
 router = APIRouter(
     prefix="/auth",
     tags=["auth"],
     responses={404: {"description": "Not found"}}
 )
 
-# 3. 必要なサービスの初期化
+# 必要なサービスの初期化
 firestore_service = FirestoreService()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    """Firebaseトークンを検証してユーザー情報を取得"""
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+# 依存関係をルーターに追加
+router.dependencies = [Depends(get_current_user)]
 
 # データモデルの定義
 class Token(BaseModel):
@@ -38,20 +56,6 @@ class UserResponse(BaseModel):
     display_name: Optional[str]
     created_at: datetime
     last_login: Optional[datetime]
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
-
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
-    """Firebaseトークンを検証してユーザー情報を取得"""
-    try:
-        decoded_token = auth.verify_id_token(token)
-        return decoded_token
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
 @router.post("/register", response_model=Dict)
 async def register_user(user: UserCreate):
