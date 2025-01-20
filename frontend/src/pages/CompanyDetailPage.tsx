@@ -8,6 +8,7 @@ import { FinancialDataUpload } from '@/components/companies/CompanyDetail/Financ
 import { InvestmentSummary } from '@/components/companies/CompanyDetail/InvestmentSummary';
 import { CompanyNotes } from '@/components/companies/CompanyDetail/CompanyNotes';
 import { CompanyDetailSkeleton } from '@/components/companies/CompanyDetail/CompanyDetailSkeleton';
+import { AIChat } from '@/components/companies/CompanyDetail/AIChat';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Pencil } from 'lucide-react';
@@ -91,14 +92,15 @@ export function CompanyDetailPage() {
         growth={company.financials.growth}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <InvestmentSummary investments={company.investments || []} />
-        <CompanyNotes companyId={company.id} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <FinancialMetrics data={company.financials.history} />
-        <WellnessAnalysis scores={wellnessScores} />
+      <div className="grid grid-cols-2 gap-6">
+        <div className="space-y-6">
+          <FinancialMetrics data={company.financials.history} />
+          <InvestmentSummary investments={company.investments || []} />
+        </div>
+        <div className="space-y-6">
+          <WellnessAnalysis scores={wellnessScores} />
+          <AIChat companyId={company.id} />
+        </div>
       </div>
 
       <FinancialDataUpload

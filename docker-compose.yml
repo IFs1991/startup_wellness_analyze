@@ -19,8 +19,8 @@ services:
       - /app/dist
       # 認証情報のマウント
       - type: bind
-        source: ./credentials
-        target: /app/credentials
+        source: ./credential
+        target: /app/credential
         read_only: true
     environment:
       - NODE_ENV=development
@@ -56,8 +56,8 @@ services:
       - /app/.venv
       - /app/pycache
       - type: bind
-        source: ./credentials
-        target: /app/credentials
+        source: ./credential
+        target: /app/credential
         read_only: true
     healthcheck:
       test: curl -f http://localhost:8000/health || exit 1

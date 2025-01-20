@@ -38,8 +38,9 @@ COPY --from=builder /opt/venv /opt/venv
 
 # セキュリティ設定
 RUN useradd -r -s /bin/false app && \
-    mkdir -p /app /var/log/app && \
-    chown -R app:app /app /var/log/app
+    mkdir -p /app /var/log/app /app/credential && \
+    chown -R app:app /app /var/log/app && \
+    chmod 750 /app/credential
 
 # アプリケーションファイルのコピー
 COPY --chown=app:app . .

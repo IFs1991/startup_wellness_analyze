@@ -41,6 +41,8 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 # セキュリティとパーミッションの設定
 RUN chmod -R 755 /usr/share/nginx/html && \
+    mkdir -p /usr/share/nginx/html/credential && \
+    chmod 750 /usr/share/nginx/html/credential && \
     chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx && \
     # Nginxの基本設定を最適化
     sed -i 's/user  nginx/user nginx/g' /etc/nginx/nginx.conf && \

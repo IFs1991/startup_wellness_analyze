@@ -9,6 +9,8 @@ frontend/.env.*
 *.pem
 *.key
 **/service-account*.json
+/credential/
+/credential/*.json
 
 # Python関連
 __pycache__/
