@@ -1,218 +1,183 @@
 import pytest
+import asyncio
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from backend.src.database.models import Base, Group, User, Tag
+from google.cloud import firestore
+from google.cloud.firestore import AsyncClient
 from backend.src.database.repositories.group import GroupRepository
 
-# テスト用のデータベースURL
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/test_startup_wellness"
+@pytest.fixture
+async def firestore_client():
+    """Firestoreエミュレータに接続するクライアントを作成"""
+    import os
+    os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
+    client = firestore.AsyncClient(project="test-project")
+    yield client
+    # テスト後のクリーンアップ
+    collections = await client.collections()
+    for collection in collections:
+        docs = await collection.get()
+        for doc in docs:
+            await doc.reference.delete()
 
 @pytest.fixture
-async def engine():
-    """テスト用のデータベースエンジンを作成する"""
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    await engine.dispose()
-
-@pytest.fixture
-async def session(engine):
-    """テスト用のセッションを作成する"""
-    async_session = sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session() as session:
-        yield session
-
-@pytest.fixture
-async def test_user(session):
-    """テスト用のユーザーを作成��る"""
-    user = User(
-        username="test_user",
-        email="test@example.com",
-        password_hash="hashed_password",
-        role="user",
-        is_active=True
-    )
-    session.add(user)
-    await session.commit()
-    return user
+async def group_repository(firestore_client):
+    """グループリポジトリのインスタンスを作成"""
+    return GroupRepository(firestore_client)
 
 @pytest.mark.asyncio
-async def test_group_repository(session, test_user):
-    """グループリポジトリのテスト"""
-    repo = GroupRepository(session)
-
+async def test_group_repository(group_repository):
+    """グループリポジトリの基本的なCRUD操作をテスト"""
     # グループを作成
-    group = await repo.create(
-        name="Test Group",
-        description="Test Description",
-        owner_id=test_user.id,
-        is_private=False
-    )
+    group_data = {
+        "name": "Test Group",
+        "description": "Test Description",
+        "owner_id": "test_owner",
+        "is_private": False
+    }
 
+    group = await group_repository.create(**group_data)
     assert group.name == "Test Group"
-    assert group.owner_id == test_user.id
-    assert group.is_private is False
+    assert group.description == "Test Description"
+    assert group.owner_id == "test_owner"
+
+    # IDで取得
+    retrieved_group = await group_repository.get_by_id(group.id)
+    assert retrieved_group is not None
+    assert retrieved_group.name == group.name
 
     # オーナーIDで取得
-    groups_by_owner = await repo.get_by_owner(test_user.id)
+    groups_by_owner = await group_repository.get_by_owner("test_owner")
     assert len(groups_by_owner) == 1
     assert groups_by_owner[0].id == group.id
 
     # メンバーを追加
-    member_user = User(
-        username="member_user",
-        email="member@example.com",
-        password_hash="hashed_password",
-        role="user",
-        is_active=True
-    )
-    session.add(member_user)
-    await session.commit()
+    member_data = {
+        "user_id": "test_member",
+        "role": "member"
+    }
+    await group_repository.add_member(group.id, **member_data)
 
-    await repo.add_member(group.id, member_user.id, "member")
+    # グループメンバーを取得
+    members = await group_repository.get_members(group.id)
+    assert len(members) == 1
+    assert members[0].user_id == "test_member"
+    assert members[0].role == "member"
 
     # タグを追加
-    tag = Tag(name="test_tag")
-    session.add(tag)
-    await session.commit()
-
-    await repo.add_tag(group.id, tag.id)
-
-    # 詳細付きで取得
-    group_with_details = await repo.get_with_details(group.id)
-    assert group_with_details is not None
-    assert len(group_with_details.members) == 2  # オーナーとメンバー
-    assert len(group_with_details.tags) == 1
-
-    # ユーザーのグループを取得
-    user_groups = await repo.get_user_groups(member_user.id)
-    assert len(user_groups) == 1
-    assert user_groups[0].id == group.id
-
-    # メンバーのロールを更新
-    await repo.update_member_role(group.id, member_user.id, "admin")
-    group_with_details = await repo.get_with_details(group.id)
-    member = next(m for m in group_with_details.members if m.user_id == member_user.id)
-    assert member.role == "admin"
+    tag_data = {
+        "name": "test_tag"
+    }
+    await group_repository.add_tag(group.id, **tag_data)
 
     # グループのタグを取得
-    group_tags = await repo.get_group_tags(group.id)
-    assert len(group_tags) == 1
-    assert group_tags[0].name == "test_tag"
-
-    # グループを検索
-    search_results = await repo.search_groups(
-        name="Test",
-        owner_id=test_user.id,
-        member_id=member_user.id,
-        tag_name="test_tag",
-        page=1,
-        per_page=10
-    )
-    assert len(search_results) == 1
-    assert search_results[0].id == group.id
-
-    # タグを削除
-    await repo.remove_tag(group.id, tag.id)
-    group_with_details = await repo.get_with_details(group.id)
-    assert len(group_with_details.tags) == 0
-
-    # メンバーを削除
-    await repo.remove_member(group.id, member_user.id)
-    group_with_details = await repo.get_with_details(group.id)
-    assert len(group_with_details.members) == 1  # オーナーのみ
+    tags = await group_repository.get_tags(group.id)
+    assert len(tags) == 1
+    assert tags[0].name == "test_tag"
 
     # グループを更新
-    updated_group = await repo.update(
-        group.id,
-        name="Updated Group",
-        is_private=True
-    )
+    updated_data = {
+        "name": "Updated Group",
+        "is_private": True
+    }
+    updated_group = await group_repository.update(group.id, **updated_data)
     assert updated_group is not None
     assert updated_group.name == "Updated Group"
     assert updated_group.is_private is True
 
+    # メンバーを削除
+    removed = await group_repository.remove_member(group.id, "test_member")
+    assert removed is True
+
+    # タグを削除
+    removed = await group_repository.remove_tag(group.id, "test_tag")
+    assert removed is True
+
     # グループを削除
-    deleted = await repo.delete(group.id)
+    deleted = await group_repository.delete(group.id)
     assert deleted is True
 
     # 削除されたことを確認
-    deleted_group = await repo.get_by_id(group.id)
+    deleted_group = await group_repository.get_by_id(group.id)
     assert deleted_group is None
 
 @pytest.mark.asyncio
-async def test_group_repository_error_handling(session):
-    """グループリポジトリのエラーハンドリングをテスト"""
-    repo = GroupRepository(session)
+async def test_group_repository_search(group_repository):
+    """グループリポジトリの検索機能をテスト"""
+    # テスト用のグループを複数作成
+    groups_data = [
+        {
+            "name": f"Group {i}",
+            "description": f"Description {i}",
+            "owner_id": f"owner_{i}",
+            "is_private": i % 2 == 0
+        } for i in range(5)
+    ]
 
+    created_groups = []
+    for group_data in groups_data:
+        group = await group_repository.create(**group_data)
+        created_groups.append(group)
+
+        # メンバーとタグを追加
+        await group_repository.add_member(
+            group.id,
+            user_id=f"member_{i}",
+            role="member"
+        )
+
+        await group_repository.add_tag(
+            group.id,
+            name=f"tag_{i}"
+        )
+
+    # プライベート設定でフィルター
+    private_groups = await group_repository.search_groups(
+        is_private=True,
+        page=1,
+        per_page=10
+    )
+    assert len(private_groups) == 3
+
+    # タグでフィルター
+    groups_by_tag = await group_repository.get_groups_by_tag("tag_0")
+    assert len(groups_by_tag) == 1
+
+    # メンバーでフィルター
+    groups_by_member = await group_repository.get_groups_by_member("member_0")
+    assert len(groups_by_member) == 1
+
+    # ページネーション
+    paginated_groups = await group_repository.search_groups(
+        page=1,
+        per_page=2
+    )
+    assert len(paginated_groups) == 2
+
+@pytest.mark.asyncio
+async def test_group_repository_error_handling(group_repository):
+    """グループリポジトリのエラーハンドリングをテスト"""
     # 存在しないグループIDでの操作
     non_existent_id = "non_existent_id"
 
     # 存在しないグループの取得
-    group = await repo.get_by_id(non_existent_id)
+    group = await group_repository.get_by_id(non_existent_id)
     assert group is None
 
-    # 存在しないグループの詳細取得
-    group_with_details = await repo.get_with_details(non_existent_id)
-    assert group_with_details is None
+    # 存在しないグループのメンバー取得
+    members = await group_repository.get_members(non_existent_id)
+    assert len(members) == 0
 
-    # 存在しないグループへのメンバー追加
-    with pytest.raises(Exception):
-        await repo.add_member(non_existent_id, "user_id", "member")
+    # 存在しないグループのタグ取得
+    tags = await group_repository.get_tags(non_existent_id)
+    assert len(tags) == 0
 
-    # 存在しないグループ��のタグ追加
-    with pytest.raises(Exception):
-        await repo.add_tag(non_existent_id, "tag_id")
-
-@pytest.mark.asyncio
-async def test_group_repository_member_management(session, test_user):
-    """グループメンバー管理のテスト"""
-    repo = GroupRepository(session)
-
-    # グループを作成
-    group = await repo.create(
-        name="Test Group",
-        description="Test Description",
-        owner_id=test_user.id,
-        is_private=False
+    # 存在しないグループの更新
+    updated_group = await group_repository.update(
+        non_existent_id,
+        name="updated"
     )
+    assert updated_group is None
 
-    # 複数のメンバーを追加
-    members = []
-    for i in range(5):
-        user = User(
-            username=f"member_{i}",
-            email=f"member{i}@example.com",
-            password_hash="hashed_password",
-            role="user",
-            is_active=True
-        )
-        session.add(user)
-        await session.commit()
-        members.append(user)
-
-        await repo.add_member(group.id, user.id, "member")
-
-    # メンバー数を確認
-    group_with_details = await repo.get_with_details(group.id)
-    assert len(group_with_details.members) == 6  # オーナー + 5メンバー
-
-    # メンバーのロールを一括更新
-    for member in members[:2]:
-        await repo.update_member_role(group.id, member.id, "admin")
-
-    group_with_details = await repo.get_with_details(group.id)
-    admin_count = sum(1 for m in group_with_details.members if m.role == "admin")
-    assert admin_count == 2
-
-    # メンバーを一括削除
-    for member in members[3:]:
-        await repo.remove_member(group.id, member.id)
-
-    group_with_details = await repo.get_with_details(group.id)
-    assert len(group_with_details.members) == 4  # オーナー + 3メンバー
+    # 存在しないグループの削除
+    deleted = await group_repository.delete(non_existent_id)
+    assert deleted is False

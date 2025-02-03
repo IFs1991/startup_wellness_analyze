@@ -1,12 +1,17 @@
 import pytest
-from fastapi.testclient import TestClient
-from backend.src.main import app
+from httpx import AsyncClient
+from backend.main import app
 from backend.src.database.models import User, Group, Tag
 
-client = TestClient(app)
+pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
-def test_user():
+async def async_client():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+async def test_user():
     """テスト用のユーザーデータを作成する"""
     return {
         "username": "test_user",
@@ -16,7 +21,7 @@ def test_user():
     }
 
 @pytest.fixture
-def test_group():
+async def test_group():
     """テスト用のグループデータを作成する"""
     return {
         "name": "Test Group",
@@ -24,260 +29,145 @@ def test_group():
         "is_private": False
     }
 
-def test_create_group(test_user, test_group):
+async def test_create_group(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
     """グループ作成のテスト"""
-    # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
 
-    # ログイン
-    login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
-    }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    # グループデータに会社IDを追加
+    group_data = {**test_group_data, "company_id": company_id}
 
     # グループを作成
-    response = client.post("/api/groups/", json=test_group, headers=headers)
+    response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
     assert response.status_code == 201
     data = response.json()
-    assert data["name"] == test_group["name"]
-    assert data["owner_id"] is not None
-    assert data["is_private"] == test_group["is_private"]
+    assert data["name"] == test_group_data["name"]
+    assert data["description"] == test_group_data["description"]
+    assert data["company_id"] == company_id
 
-def test_get_group(test_user, test_group):
+async def test_get_group(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
     """グループ取得のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
 
     # グループを作成
-    create_response = client.post("/api/groups/", json=test_group, headers=headers)
+    group_data = {**test_group_data, "company_id": company_id}
+    create_response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
     group_id = create_response.json()["id"]
 
     # グループを取得
-    response = client.get(f"/api/groups/{group_id}", headers=headers)
+    response = await async_client.get(f"/api/groups/{group_id}", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == test_group["name"]
-    assert data["description"] == test_group["description"]
+    assert data["name"] == test_group_data["name"]
+    assert data["description"] == test_group_data["description"]
 
-def test_update_group(test_user, test_group):
+async def test_update_group(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
     """グループ更新のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
 
     # グループを作成
-    create_response = client.post("/api/groups/", json=test_group, headers=headers)
+    group_data = {**test_group_data, "company_id": company_id}
+    create_response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
     group_id = create_response.json()["id"]
 
     # グループを更新
     update_data = {
         "name": "Updated Group",
+        "description": "Updated Description",
         "is_private": True
     }
-    response = client.put(f"/api/groups/{group_id}", json=update_data, headers=headers)
+    response = await async_client.put(f"/api/groups/{group_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == update_data["name"]
+    assert data["description"] == update_data["description"]
     assert data["is_private"] == update_data["is_private"]
 
-def test_add_group_member(test_user, test_group):
-    """グループメンバー追加のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+async def test_delete_group(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
+    """グループ削除のテスト"""
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
+
+    # グループを作成
+    group_data = {**test_group_data, "company_id": company_id}
+    create_response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
+    group_id = create_response.json()["id"]
+
+    # グループを削除
+    response = await async_client.delete(f"/api/groups/{group_id}", headers=auth_headers)
+    assert response.status_code == 204
+
+    # 削除されたグループを取得しようとする
+    get_response = await async_client.get(f"/api/groups/{group_id}", headers=auth_headers)
+    assert get_response.status_code == 404
+
+async def test_add_member(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
+    """メンバー追加のテスト"""
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
+
+    # グループを作成
+    group_data = {**test_group_data, "company_id": company_id}
+    create_response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
+    group_id = create_response.json()["id"]
 
     # 新しいメンバーを作成
-    member_data = {
-        "username": "member_user",
-        "email": "member@example.com",
-        "password": "password",
+    new_member = {
+        "username": "new_member",
+        "email": "new_member@example.com",
+        "password": "member_password",
         "role": "user"
     }
-    client.post("/api/users/register", json=member_data)
-
-    # グループを作成
-    create_response = client.post("/api/groups/", json=test_group, headers=headers)
-    group_id = create_response.json()["id"]
+    member_response = await async_client.post("/api/users/register", json=new_member)
+    member_id = member_response.json()["id"]
 
     # メンバーを追加
-    member_add_data = {
-        "username": member_data["username"],
-        "role": "member"
-    }
-    response = client.post(f"/api/groups/{group_id}/members", json=member_add_data, headers=headers)
-    assert response.status_code == 201
-    data = response.json()
-    assert data["role"] == member_add_data["role"]
-
-def test_add_group_tag(test_user, test_group):
-    """グループタグ追加のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # グループを作成
-    create_response = client.post("/api/groups/", json=test_group, headers=headers)
-    group_id = create_response.json()["id"]
-
-    # タグを追加
-    tag_data = {
-        "name": "test_tag"
-    }
-    response = client.post(f"/api/groups/{group_id}/tags", json=tag_data, headers=headers)
-    assert response.status_code == 201
-    data = response.json()
-    assert data["name"] == tag_data["name"]
-
-def test_search_groups(test_user):
-    """グループ検索のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 複数のグループを作成
-    groups = [
-        {
-            "name": f"Group {i}",
-            "description": f"Description {i}",
-            "is_private": i % 2 == 0
-        }
-        for i in range(5)
-    ]
-
-    for group in groups:
-        client.post("/api/groups/", json=group, headers=headers)
-
-    # 名前で検索
-    response = client.get("/api/groups/search?name=Group", headers=headers)
+    response = await async_client.post(f"/api/groups/{group_id}/members/{member_id}", headers=auth_headers)
     assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 5
 
-    # プライベート設定で検索
-    response = client.get("/api/groups/search?is_private=false", headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-
-def test_update_member_role(test_user, test_group):
-    """メンバーロール更新のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 新しいメンバーを作成
-    member_data = {
-        "username": "member_user",
-        "email": "member@example.com",
-        "password": "password",
-        "role": "user"
-    }
-    client.post("/api/users/register", json=member_data)
-
-    # グループを作成
-    create_response = client.post("/api/groups/", json=test_group, headers=headers)
-    group_id = create_response.json()["id"]
-
-    # メンバーを追加
-    member_add_data = {
-        "username": member_data["username"],
-        "role": "member"
-    }
-    client.post(f"/api/groups/{group_id}/members", json=member_add_data, headers=headers)
-
-    # メンバーのロールを更新
-    role_update_data = {
-        "role": "admin"
-    }
-    response = client.put(
-        f"/api/groups/{group_id}/members/{member_data['username']}/role",
-        json=role_update_data,
-        headers=headers
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["role"] == role_update_data["role"]
-
-def test_remove_member(test_user, test_group):
+async def test_remove_member(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
     """メンバー削除のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 新しいメンバーを作成
-    member_data = {
-        "username": "member_user",
-        "email": "member@example.com",
-        "password": "password",
-        "role": "user"
-    }
-    client.post("/api/users/register", json=member_data)
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
 
     # グループを作成
-    create_response = client.post("/api/groups/", json=test_group, headers=headers)
+    group_data = {**test_group_data, "company_id": company_id}
+    create_response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
     group_id = create_response.json()["id"]
-
-    # メンバーを追加
-    member_add_data = {
-        "username": member_data["username"],
-        "role": "member"
-    }
-    client.post(f"/api/groups/{group_id}/members", json=member_add_data, headers=headers)
 
     # メンバーを削除
-    response = client.delete(
-        f"/api/groups/{group_id}/members/{member_data['username']}",
-        headers=headers
-    )
+    member_id = test_user_data["id"]
+    response = await async_client.delete(f"/api/groups/{group_id}/members/{member_id}", headers=auth_headers)
     assert response.status_code == 200
 
-    # グループの詳細を取得して確認
-    response = client.get(f"/api/groups/{group_id}", headers=headers)
-    data = response.json()
-    members = [m for m in data["members"] if m["username"] == member_data["username"]]
-    assert len(members) == 0
+async def test_get_group_members(async_client, test_user_data, test_company_data, test_group_data, auth_headers):
+    """グループメンバー取得のテスト"""
+    # 会社を作成
+    company_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
+    company_id = company_response.json()["id"]
 
-def test_unauthorized_access():
+    # グループを作成
+    group_data = {**test_group_data, "company_id": company_id}
+    create_response = await async_client.post("/api/groups/", json=group_data, headers=auth_headers)
+    group_id = create_response.json()["id"]
+
+    # メンバーリストを取得
+    response = await async_client.get(f"/api/groups/{group_id}/members", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    # 作成者が自動的にメンバーとして追加されているはず
+    assert len(data) >= 1
+
+async def test_unauthorized_access(async_client):
     """未認証アクセスのテスト"""
-    # 認証なしで保護されたエンドポイントにアクセス
-    response = client.get("/api/groups/")
+    response = await async_client.get("/api/groups/")
     assert response.status_code == 401

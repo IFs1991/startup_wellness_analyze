@@ -1,165 +1,241 @@
 # -*- coding: utf-8 -*-
 
 """
-相関分析
-
-VAS データと損益計算書データの相関関係を分析します。
-BigQueryService を利用した非同期処理に対応しています。
+相関分析モジュール
+データセット内の変数間の相関関係を分析します。
 """
 
 from typing import List, Optional, Tuple, Any, Dict
 import pandas as pd
-from service.bigquery.client import BigQueryService
-from service.firestore.client import FirestoreService
+import numpy as np
+from scipy import stats
 from datetime import datetime
+from . import BaseAnalyzer, AnalysisError
 
-class CorrelationAnalyzer:
-    def __init__(self, bq_service: BigQueryService):
+class CorrelationAnalyzer(BaseAnalyzer):
+    """相関分析を行うクラス"""
+
+    def __init__(
+        self,
+        method: str = 'pearson',
+        threshold: float = 0.3,
+        p_value_threshold: float = 0.05
+    ):
         """
-        コンストラクタ
+        初期化メソッド
 
         Args:
-            bq_service (BigQueryService): BigQueryサービスのインスタンス
+            method (str): 相関係数の計算方法（'pearson', 'spearman', 'kendall'）
+            threshold (float): 相関係数の閾値
+            p_value_threshold (float): p値の閾値
         """
-        self.bq_service = bq_service
+        super().__init__("correlation_analysis")
+        self.method = method
+        self.threshold = threshold
+        self.p_value_threshold = p_value_threshold
 
-    def _validate_data(self,
-                      data: pd.DataFrame,
-                      vas_variables: List[str],
-                      financial_variables: List[str]) -> Tuple[bool, Optional[str]]:
+    def _validate_data(self, data: pd.DataFrame) -> bool:
         """
-        データのバリデーションを行う
+        データのバリデーション
 
         Args:
             data (pd.DataFrame): 検証対象のデータ
-            vas_variables (List[str]): VASデータの変数名リスト
-            financial_variables (List[str]): 損益計算書データの変数名リスト
 
         Returns:
-            Tuple[bool, Optional[str]]: (バリデーション結果, エラーメッセージ)
+            bool: バリデーション結果
         """
         if data.empty:
-            return False, "データが空です"
+            raise AnalysisError("データが空です")
 
-        # 必要なカラムの存在確認
-        required_columns = vas_variables + financial_variables
-        missing_columns = [col for col in required_columns if col not in data.columns]
-        if missing_columns:
-            return False, f"以下のカラムが見つかりません: {', '.join(missing_columns)}"
+        numeric_cols = data.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) < 2:
+            raise AnalysisError("数値型の列が2つ以上必要です")
 
-        # データ型の確認（数値型であることを確認）
-        non_numeric_columns = [col for col in required_columns
-                             if not pd.api.types.is_numeric_dtype(data[col])]
-        if non_numeric_columns:
-            return False, f"以下のカラムが数値型ではありません: {', '.join(non_numeric_columns)}"
+        return True
 
-        return True, None
-
-    async def analyze(self,
-                     query: str,
-                     vas_variables: List[str],
-                     financial_variables: List[str],
-                     save_results: bool = True,
-                     dataset_id: Optional[str] = None,
-                     table_id: Optional[str] = None) -> Tuple[pd.DataFrame, Dict]:
+    def _calculate_correlation_matrix(
+        self,
+        data: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        VASデータと財務データの相関分析を実行
+        相関行列とp値行列を計算
 
         Args:
-            query: データ取得用のクエリ
-            vas_variables: VASデータの変数リスト (例: ['pain_level', 'stress_level'])
-            financial_variables: 財務データの変数リスト (例: ['revenue', 'gross_profit'])
-            save_results: 結果を保存するかどうか
-            dataset_id: 保存先のデータセットID
-            table_id: 保存先のテーブルID
+            data (pd.DataFrame): 分析対象データ
 
         Returns:
-            相関行列とメタデータ
+            Tuple[pd.DataFrame, pd.DataFrame]: (相関行列, p値行列)
+        """
+        numeric_data = data.select_dtypes(include=[np.number])
+        n = len(numeric_data.columns)
+        p_values = pd.DataFrame(np.zeros((n, n)), columns=numeric_data.columns, index=numeric_data.columns)
+
+        for i in range(n):
+            for j in range(i+1, n):
+                if self.method == 'pearson':
+                    corr, p_value = stats.pearsonr(numeric_data.iloc[:, i], numeric_data.iloc[:, j])
+                elif self.method == 'spearman':
+                    corr, p_value = stats.spearmanr(numeric_data.iloc[:, i], numeric_data.iloc[:, j])
+                else:  # kendall
+                    corr, p_value = stats.kendalltau(numeric_data.iloc[:, i], numeric_data.iloc[:, j])
+
+                p_values.iloc[i, j] = p_value
+                p_values.iloc[j, i] = p_value
+
+        corr_matrix = numeric_data.corr(method=self.method)
+        return corr_matrix, p_values
+
+    async def analyze(
+        self,
+        data: pd.DataFrame,
+        target_columns: Optional[List[str]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        相関分析を実行
+
+        Args:
+            data (pd.DataFrame): 分析対象データ
+            target_columns (Optional[List[str]]): 分析対象の列名リスト
+            **kwargs: 追加のパラメータ
+
+        Returns:
+            Dict[str, Any]: 分析結果
         """
         try:
-            # BigQueryからデータを取得
-            data = await self.bq_service.fetch_data(query)
+            # 対象列の選択
+            if target_columns:
+                data = data[target_columns]
 
-            # データのバリデーション
-            valid, error_msg = self._validate_data(data, vas_variables, financial_variables)
-            if not valid:
-                raise ValueError(error_msg)
+            # 数値型のカラムのみを抽出
+            numeric_data = data.select_dtypes(include=[np.number])
 
-            # 相関行列の計算
-            correlation_matrix = data[vas_variables + financial_variables].corr()
+            # 相関行列とp値行列の計算
+            corr_matrix, p_values = self._calculate_correlation_matrix(numeric_data)
 
-            # メタデータの生成
-            metadata = {
-                'timestamp': datetime.now().isoformat(),
-                'vas_variables': vas_variables,
-                'financial_variables': financial_variables,
-                'sample_size': len(data),
-                'analysis_type': 'correlation'
+            # 有意な相関関係の抽出
+            significant_correlations = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i + 1, len(corr_matrix.columns)):
+                    corr = corr_matrix.iloc[i, j]
+                    p_value = p_values.iloc[i, j]
+
+                    if abs(corr) >= self.threshold and p_value <= self.p_value_threshold:
+                        significant_correlations.append({
+                            'variable1': corr_matrix.columns[i],
+                            'variable2': corr_matrix.columns[j],
+                            'correlation': float(corr),
+                            'p_value': float(p_value)
+                        })
+
+            # 結果の整形
+            result = {
+                'correlation_matrix': corr_matrix.to_dict('records'),
+                'p_value_matrix': p_values.to_dict('records'),
+                'significant_correlations': significant_correlations,
+                'summary': {
+                    'total_variables': len(numeric_data.columns),
+                    'significant_pairs': len(significant_correlations),
+                    'method': self.method,
+                    'parameters': {
+                        'correlation_threshold': self.threshold,
+                        'p_value_threshold': self.p_value_threshold
+                    },
+                    'variables_analyzed': list(numeric_data.columns)
+                }
             }
 
-            # 結果の保存（オプション）
-            if save_results and dataset_id and table_id:
-                await self.bq_service.save_results(
-                    correlation_matrix,
-                    dataset_id,
-                    table_id
-                )
-
-            return correlation_matrix, metadata
+            return result
 
         except Exception as e:
-            raise RuntimeError(f"相関分析の実行中にエラーが発生しました: {str(e)}")
+            self.logger.error(f"Error in correlation analysis: {str(e)}")
+            raise AnalysisError(f"相関分析に失敗しました: {str(e)}")
 
-
-async def analyze_correlation(request: Any) -> Tuple[Dict, int]:
+async def analyze_correlations(
+    collection: str,
+    target_columns: List[str],
+    method: str = 'pearson',
+    threshold: float = 0.3,
+    p_value_threshold: float = 0.05,
+    filters: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
     """
-    Cloud Functions用のエントリーポイント関数
+    相関分析を実行するヘルパー関数
 
     Args:
-        request: Cloud Functionsのリクエストオブジェクト
+        collection (str): 分析対象のコレクション名
+        target_columns (List[str]): 分析対象の列名リスト
+        method (str): 相関係数の計算方法
+        threshold (float): 相関係数の閾値
+        p_value_threshold (float): p値の閾値
+        filters (Optional[List[Dict[str, Any]]]): データ取得時のフィルター条件
 
     Returns:
-        Tuple[Dict, int]: (レスポンス, ステータスコード)
+        Dict[str, Any]: 分析結果
     """
     try:
-        request_json = request.get_json()
+        analyzer = CorrelationAnalyzer(
+            method=method,
+            threshold=threshold,
+            p_value_threshold=p_value_threshold
+        )
 
-        if not request_json:
-            return {'error': 'リクエストデータがありません'}, 400
+        # データの取得
+        data = await analyzer.fetch_data(
+            collection=collection,
+            filters=filters
+        )
 
+        # 分析の実行と結果の保存
+        results = await analyzer.analyze_and_save(
+            data=data,
+            target_columns=target_columns
+        )
+
+        return results
+
+    except Exception as e:
+        raise AnalysisError(f"相関分析の実行に失敗しました: {str(e)}")
+
+async def analyze_correlation_request(request: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    """
+    相関分析のリクエストを処理
+
+    Args:
+        request (Dict[str, Any]): リクエストデータ
+
+    Returns:
+        Tuple[Dict[str, Any], int]: (レスポンス, ステータスコード)
+    """
+    try:
         # 必須パラメータの確認
-        required_params = ['query', 'vas_variables', 'financial_variables']
-        missing_params = [param for param in required_params if param not in request_json]
-        if missing_params:
-            return {
-                'error': f'必須パラメータが不足しています: {", ".join(missing_params)}'
-            }, 400
+        required_params = ['collection', 'target_columns']
+        for param in required_params:
+            if param not in request:
+                return {
+                    'status': 'error',
+                    'message': f'必須パラメータ {param} が指定されていません'
+                }, 400
 
-        # パラメータの取得
-        query = request_json['query']
-        vas_variables = request_json['vas_variables']
-        financial_variables = request_json['financial_variables']
-        dataset_id = request_json.get('dataset_id')
-        table_id = request_json.get('table_id')
+        # オプションパラメータの取得
+        method = request.get('method', 'pearson')
+        threshold = float(request.get('threshold', 0.3))
+        p_value_threshold = float(request.get('p_value_threshold', 0.05))
+        filters = request.get('filters')
 
-        # サービスの初期化
-        bq_service = BigQueryService()
-        analyzer = CorrelationAnalyzer(bq_service)
-
-        # 分析実行
-        correlation_matrix, metadata = await analyzer.analyze(
-            query=query,
-            vas_variables=vas_variables,
-            financial_variables=financial_variables,
-            save_results=bool(dataset_id and table_id),
-            dataset_id=dataset_id,
-            table_id=table_id
+        # 分析の実行
+        results = await analyze_correlations(
+            collection=request['collection'],
+            target_columns=request['target_columns'],
+            method=method,
+            threshold=threshold,
+            p_value_threshold=p_value_threshold,
+            filters=filters
         )
 
         return {
             'status': 'success',
-            'results': correlation_matrix.to_dict('records'),
-            'metadata': metadata
+            'results': results
         }, 200
 
     except Exception as e:

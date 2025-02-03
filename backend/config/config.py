@@ -6,15 +6,23 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# .envファイルのパスを指定して読み込み
+env_path = Path(__file__).parents[2] / '.env'
+load_dotenv(dotenv_path=env_path)
 
 class Settings(BaseSettings):
     # アプリケーション設定
-    APP_NAME: str = "startup-wellness"
-    PROJECT_NAME: str = "Startup Wellness Data Analysis System"
-    VERSION: str = "0.1.0"
+    APP_NAME: str = "startup-wellness"  # デフォルト値を設定
+    PROJECT_NAME: str = "Startup Wellness Data Analysis System"  # デフォルト値を設定
+    VERSION: str = os.getenv("VERSION", "0.1.0")
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # 環境変数が設定されている場合は、それを優先して使用
+        self.APP_NAME = os.getenv("APP_NAME", self.APP_NAME)
+        self.PROJECT_NAME = os.getenv("PROJECT_NAME", self.PROJECT_NAME)
 
     # ログ設定
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -24,9 +32,9 @@ class Settings(BaseSettings):
 
     # PostgreSQL基本設定
     DB_ENGINE: str = os.getenv("DB_ENGINE", "postgresql")
-    DB_NAME: str = os.getenv("DB_NAME", "startup_wellness_analyze")
-    DB_USER: str = os.getenv("DB_USER", "startup_wellness_user")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "1spel!2stack3win")
+    DB_NAME: str = os.getenv("DB_NAME")
+    DB_USER: str = os.getenv("DB_USER")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD")
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
     DB_PORT: int = int(os.getenv("DB_PORT", "5432"))
     DB_SCHEMA: str = os.getenv("DB_SCHEMA", "public")
@@ -39,6 +47,10 @@ class Settings(BaseSettings):
     @property
     def DATABASE_URL(self) -> str:
         """SQLAlchemy用のデータベースURLを生成"""
+        required_vars = ["DB_NAME", "DB_USER", "DB_PASSWORD"]
+        missing_vars = [var for var in required_vars if not getattr(self, var)]
+        if missing_vars:
+            raise ValueError(f"Required environment variables not set: {', '.join(missing_vars)}")
         return f"{self.DB_ENGINE}+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     @property

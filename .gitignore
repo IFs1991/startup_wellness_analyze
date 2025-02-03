@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 backend/credentials/*.json
+!backend/credentials/startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
@@ -12,7 +13,7 @@ frontend/.env.*
 /credential/
 /credential/*.json
 
-# Python関連
+# Python関連（バックエンド）
 __pycache__/
 *.py[cod]
 *$py.class
@@ -36,6 +37,58 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# 分析関連
+analysis_results/
+*.pkl
+*.joblib
+*.h5
+*.model
+*.npy
+*.npz
+.ipynb_checkpoints/
+*.ipynb
+models/
+temp_analysis/
+cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# データとログ
+data/
+raw_data/
+processed_data/
+interim_data/
+external_data/
+logs/
+*.log
+*.sqlite3
+*.db
+db.sqlite3
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.arrow
+*.hdf5
+bigquery_cache/
+firestore_cache/
+
+# Node.js関連（フロントエンド）
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-debug.log*
+.next/
+.nuxt/
+dist/
+dist-ssr/
+*.local
+
 # 仮想環境
 .env
 .venv
@@ -45,19 +98,12 @@ ENV/
 env.bak/
 venv.bak/
 
-# Node.js関連
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-.next/
-.nuxt/
-dist/
-
 # IDE・エディタ関連
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
 *.swp
 *.swo
 *~
@@ -66,12 +112,11 @@ dist/
 .settings/
 *.sublime-workspace
 *.sublime-project
-
-# ログとデータベース
-*.log
-*.sqlite3
-*.db
-db.sqlite3
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # テストとカバレッジ
 .coverage
@@ -88,6 +133,8 @@ coverage.xml
 .pytest_cache/
 cover/
 junit/
+test_results/
+benchmark_results/
 
 # ビルドとコンパイル
 /dist
@@ -114,6 +161,21 @@ $RECYCLE.BIN/
 *.tsbuildinfo
 next-env.d.ts
 
+# MLflow関連
+mlruns/
+mlflow/
+mlartifacts/
+
+# Ray Tune関連
+ray_results/
+tune_results/
+
+# プロファイリング結果
+*.prof
+*.profile
+*.stats
+profiling_results/
+
 # その他
 *.bak
 *.swp
@@ -123,3 +185,31 @@ next-env.d.ts
 .env.development.local
 .env.test.local
 .env.production.local
+tmp/
+.tmp/
+.temp/
+
+# 認証情報と機密ファイル
+**/credentials/*.json
+**/*firebase-adminsdk*.json
+**/*.pem
+**/*.key
+.env
+.env.*
+!.env.example
+
+# データベース関連
+*.sql
+*.dump
+backups/
+
+# キャッシュとログ
+*.log
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ログファイル
+backend/logs/
+*.log

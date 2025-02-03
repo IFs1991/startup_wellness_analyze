@@ -7,8 +7,7 @@ BASE_DIR = Path(__file__).parent
 setup(
     name="startup_wellness_analyze",
     version="1.0.0",
-    package_dir={"": "src"},
-    packages=find_packages(where="src", exclude=["tests*"]),
+    packages=find_packages(exclude=["tests*"]),
     install_requires=[
         "fastapi==0.112.2",
         "uvicorn==0.30.6",
@@ -36,5 +35,5 @@ setup(
     description="Startup Wellness Analysis System",
     author="Your Name",
     author_email="your.email@example.com",
-    url="https://github.com/yourusername/startup_wellness_analyze",
+    url="https://github.com/IFs1991/startup_wellness_analyze",
 )

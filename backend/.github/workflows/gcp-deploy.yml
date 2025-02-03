@@ -42,10 +42,10 @@ jobs:
 
     - id: auth
       name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v1
+      uses: google-github-actions/auth@v2 # v2 以降を使用
       with:
-        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        workload_identity_provider: projects/startup-wellness/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider # ← 正しい Workload Identity Provider のリソース名を設定
+        service_account: startupwellness-github-actions-deploy@startup-wellness.iam.gserviceaccount.com # ← Workload Identity Federation 用に作成したサービスアカウントのメールアドレスを設定
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2

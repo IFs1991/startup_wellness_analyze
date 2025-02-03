@@ -13,13 +13,28 @@ from firebase_admin import credentials, initialize_app
 from google.cloud import secretmanager
 import firebase_admin
 from schemas import UserCreate, Token
+from pathlib import Path
+from dotenv import load_dotenv
+
+# .envファイルを読み込む
+load_dotenv()
 
 # Firebase初期化
 try:
     firebase_app = firebase_admin.get_app()
 except ValueError:
     cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    if not cred_path or not os.path.exists(cred_path):
+    if not cred_path:
+        # 環境変数が設定されていない場合は、デフォルトのパスを使用
+        base_dir = Path(__file__).resolve().parent
+        cred_path = str(base_dir / "credentials" / "startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json")
+    else:
+        # 相対パスを絶対パスに変換
+        if cred_path.startswith('./'):
+            base_dir = Path(__file__).resolve().parent
+            cred_path = str(base_dir / cred_path[2:])
+
+    if not os.path.exists(cred_path):
         raise FileNotFoundError(f"Firebase credentials file not found at {cred_path}")
 
     cred = credentials.Certificate(cred_path)
@@ -41,7 +56,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # OAuth2 スキームの設定
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/users/login")
 
 class FirebaseAuthManager:
     """Firebase認証マネージャー"""
@@ -50,6 +65,7 @@ class FirebaseAuthManager:
     async def verify_token(token: str) -> Dict[Any, Any]:
         """Firebaseトークンを検証"""
         try:
+            # IDトークンを検証
             decoded_token = firebase_auth.verify_id_token(token)
             return decoded_token
         except Exception as e:

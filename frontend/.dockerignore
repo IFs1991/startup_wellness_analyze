@@ -1,24 +1,29 @@
 # 依存関係
-node_modules/
+node_modules
+.npm
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-.npm
 .yarn
 .pnp.*
+.yarnrc
+.npmrc
 
 # ビルド出力
-dist/
-build/
+dist
+build
 coverage/
 .next/
 out/
 .nuxt/
 .output/
+*.tsbuildinfo
 
 # 開発環境ファイル
-.env*
+.env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
@@ -32,11 +37,13 @@ out/
 *.swo
 .project
 .settings/
+.editorconfig
 
 # OS生成ファイル
 .DS_Store
 Thumbs.db
 *.pem
+desktop.ini
 
 # Git関連
 .git/
@@ -45,11 +52,20 @@ Thumbs.db
 # テスト関連
 /coverage
 .nyc_output
+__tests__/
+*.spec.*
+*.test.*
 
 # Docker関連
 Dockerfile*
 docker-compose*
 .docker/
+
+# キャッシュ
+.cache/
+.temp/
+.tmp/
+*.cache
 
 # その他
 *.log
@@ -57,3 +73,25 @@ logs/
 tmp/
 temp/
 .cache/
+stats.json
+.DS_Store
+*.bak
+*.swp
+*.swo
+
+# セキュリティ関連
+*.key
+*.pem
+*.cert
+*.crt
+*.p12
+
+# 必要なファイルは除外しない
+!tsconfig.json
+!tsconfig.*.json
+!package-lock.json
+!src/**/*
+!public/**/*
+!vite.config.ts
+!postcss.config.js
+!tailwind.config.js

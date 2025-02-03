@@ -2,15 +2,15 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 
 from backend.app.schemas import DashboardConfig, GraphConfig, VisualizationResponse
+from backend.routers.auth_router import verify_token as get_current_user
+from backend.src.database.firestore.client import FirestoreClient as FirestoreService
 from backend.app.services.visualization import BaseVisualizationService
-from backend.api.routers.auth import get_current_user
 
 router = APIRouter()
 
 
 def get_visualization_service() -> BaseVisualizationService:
     """依存性注入: 可視化サービスの取得"""
-    from backend.service.firestore.client import FirestoreService
     return BaseVisualizationService(FirestoreService())
 
 

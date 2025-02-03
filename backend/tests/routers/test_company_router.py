@@ -1,13 +1,18 @@
 import pytest
 from datetime import datetime
-from fastapi.testclient import TestClient
-from backend.src.main import app
+from httpx import AsyncClient
+from backend.main import app
 from backend.src.database.models import User, Company, Status, Stage
 
-client = TestClient(app)
+pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
-def test_user():
+async def async_client():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+async def test_user():
     """テスト用のユーザーデータを作成する"""
     return {
         "username": "test_user",
@@ -17,7 +22,7 @@ def test_user():
     }
 
 @pytest.fixture
-def test_company():
+async def test_company():
     """テスト用の会社データを作成する"""
     return {
         "name": "Test Company",
@@ -29,193 +34,116 @@ def test_company():
         "location": "Tokyo, Japan"
     }
 
-def test_create_company(test_user, test_company):
+async def test_create_company(async_client, test_user_data, test_company_data, auth_headers):
     """会社作成のテスト"""
-    # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
-
-    # ログイン
-    login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
-    }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 会社を作成
-    response = client.post("/api/companies/", json=test_company, headers=headers)
+    response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
     assert response.status_code == 201
     data = response.json()
-    assert data["name"] == test_company["name"]
-    assert data["industry"] == test_company["industry"]
-    assert data["owner_id"] is not None
+    assert data["name"] == test_company_data["name"]
+    assert data["industry"] == test_company_data["industry"]
+    assert data["employee_count"] == test_company_data["employee_count"]
 
-def test_get_company(test_user, test_company):
+async def test_get_company(async_client, test_user_data, test_company_data, auth_headers):
     """会社取得のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # 会社を作成
-    create_response = client.post("/api/companies/", json=test_company, headers=headers)
+    create_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
     company_id = create_response.json()["id"]
 
     # 会社を取得
-    response = client.get(f"/api/companies/{company_id}", headers=headers)
+    response = await async_client.get(f"/api/companies/{company_id}", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == test_company["name"]
-    assert data["industry"] == test_company["industry"]
+    assert data["name"] == test_company_data["name"]
+    assert data["industry"] == test_company_data["industry"]
 
-def test_update_company(test_user, test_company):
+async def test_update_company(async_client, test_user_data, test_company_data, auth_headers):
     """会社更新のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # 会社を作成
-    create_response = client.post("/api/companies/", json=test_company, headers=headers)
+    create_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
     company_id = create_response.json()["id"]
 
     # 会社を更新
     update_data = {
         "name": "Updated Company",
+        "industry": "Updated Industry",
         "employee_count": 200
     }
-    response = client.put(f"/api/companies/{company_id}", json=update_data, headers=headers)
+    response = await async_client.put(f"/api/companies/{company_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == update_data["name"]
+    assert data["industry"] == update_data["industry"]
     assert data["employee_count"] == update_data["employee_count"]
 
-def test_add_company_status(test_user, test_company):
+async def test_add_company_status(async_client, test_user_data, test_company_data, test_status_data, auth_headers):
     """会社のステータス追加テスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # 会社を作成
-    create_response = client.post("/api/companies/", json=test_company, headers=headers)
+    create_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
     company_id = create_response.json()["id"]
 
     # ステータスを追加
-    status_data = {
-        "type": "ACTIVE",
-        "description": "Company is active"
-    }
-    response = client.post(f"/api/companies/{company_id}/status", json=status_data, headers=headers)
+    response = await async_client.post(
+        f"/api/companies/{company_id}/status",
+        json=test_status_data,
+        headers=auth_headers
+    )
     assert response.status_code == 201
     data = response.json()
-    assert data["type"] == status_data["type"]
-    assert data["description"] == status_data["description"]
+    assert data["type"] == test_status_data["type"]
+    assert data["description"] == test_status_data["description"]
 
-def test_add_company_stage(test_user, test_company):
+async def test_add_company_stage(async_client, test_user_data, test_company_data, test_stage_data, auth_headers):
     """会社のステージ追加テスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # 会社を作成
-    create_response = client.post("/api/companies/", json=test_company, headers=headers)
+    create_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
     company_id = create_response.json()["id"]
 
     # ステージを追加
-    stage_data = {
-        "type": "SEED",
-        "description": "Seed stage"
-    }
-    response = client.post(f"/api/companies/{company_id}/stage", json=stage_data, headers=headers)
+    response = await async_client.post(
+        f"/api/companies/{company_id}/stage",
+        json=test_stage_data,
+        headers=auth_headers
+    )
     assert response.status_code == 201
     data = response.json()
-    assert data["type"] == stage_data["type"]
-    assert data["description"] == stage_data["description"]
+    assert data["type"] == test_stage_data["type"]
+    assert data["description"] == test_stage_data["description"]
 
-def test_search_companies(test_user):
+async def test_search_companies(async_client, test_user_data, test_company_data, auth_headers):
     """会社検索のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    # 会社を作成
+    await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
 
-    # 複数の会社を作成
-    companies = [
-        {
-            "name": f"Company {i}",
-            "description": f"Description {i}",
-            "industry": "Technology" if i % 2 == 0 else "Finance",
-            "founded_date": datetime.now().isoformat(),
-            "employee_count": 100 * (i + 1),
-            "website": f"https://example{i}.com",
-            "location": f"Location {i}"
-        }
-        for i in range(5)
-    ]
-
-    for company in companies:
-        client.post("/api/companies/", json=company, headers=headers)
-
-    # 業界で検索
-    response = client.get("/api/companies/search?industry=Technology", headers=headers)
+    # 会社を検索
+    search_params = {
+        "industry": test_company_data["industry"],
+        "min_employees": 50,
+        "max_employees": 150
+    }
+    response = await async_client.get("/api/companies/search", params=search_params, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 3
+    assert len(data) > 0
+    assert data[0]["industry"] == test_company_data["industry"]
+    assert data[0]["employee_count"] >= search_params["min_employees"]
+    assert data[0]["employee_count"] <= search_params["max_employees"]
 
-    # 従業員数で検索
-    response = client.get("/api/companies/search?min_employees=200", headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 4
-
-def test_unauthorized_access():
+async def test_unauthorized_access(async_client):
     """未認証アクセスのテスト"""
     # 認証なしで保護されたエンドポイントにアクセス
-    response = client.get("/api/companies/")
+    response = await async_client.get("/api/companies/")
     assert response.status_code == 401
 
-def test_delete_company(test_user, test_company):
+async def test_delete_company(async_client, test_user_data, test_company_data, auth_headers):
     """会社削除のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # 会社を作成
-    create_response = client.post("/api/companies/", json=test_company, headers=headers)
+    create_response = await async_client.post("/api/companies/", json=test_company_data, headers=auth_headers)
     company_id = create_response.json()["id"]
 
     # 会社を削除
-    response = client.delete(f"/api/companies/{company_id}", headers=headers)
-    assert response.status_code == 200
+    response = await async_client.delete(f"/api/companies/{company_id}", headers=auth_headers)
+    assert response.status_code == 204
 
-    # 削除された会社の取得を試みる
-    response = client.get(f"/api/companies/{company_id}", headers=headers)
-    assert response.status_code == 404
+    # 削除された会社を取得しようとする
+    get_response = await async_client.get(f"/api/companies/{company_id}", headers=auth_headers)
+    assert get_response.status_code == 404

@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.src.database.connection import DatabaseConnection
-from backend.src.database.config import DatabaseConfig
+from backend.src.database.config import PostgresConfig
 
 @pytest.mark.asyncio
 async def test_database_connection(database_connection):
@@ -17,7 +17,7 @@ async def test_session(session):
 
 def test_config(test_config):
     """設定のテスト"""
-    assert isinstance(test_config, DatabaseConfig)
+    assert isinstance(test_config, PostgresConfig)
     assert test_config.host == "localhost"
     assert test_config.port == 5432
     assert test_config.database == "test_startup_wellness"

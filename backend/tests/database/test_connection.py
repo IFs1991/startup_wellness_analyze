@@ -1,107 +1,88 @@
 import pytest
 import asyncio
-from sqlalchemy import text
-from backend.src.database.connection import DatabaseConnection
-from backend.src.database.config import PostgresTestConfig
-from backend.src.database.models import Base
+from google.cloud import firestore
+from google.cloud.firestore import AsyncClient
+from backend.src.database.connection import FirestoreConnection
+from backend.src.database.config import FirestoreConfig
 
 @pytest.fixture
-async def db_connection():
-    """テスト用のデータベース接続を作成する"""
-    config = PostgresTestConfig(
-        host="localhost",
-        port=5432,
-        database="test_startup_wellness",
-        username="postgres",
-        password="postgres",
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800,
-        echo=False,
-        timezone="UTC"
+async def firestore_config():
+    """テスト用のFirestore設定を作成"""
+    return FirestoreConfig(
+        project_id="test-project",
+        emulator_host="localhost:8080"
     )
-    connection = DatabaseConnection(config.get_database_url())
+
+@pytest.fixture
+async def db_connection(firestore_config):
+    """テスト用のFirestore接続を作成"""
+    connection = FirestoreConnection(firestore_config)
     await connection.initialize()
     yield connection
     await connection.cleanup()
 
-@pytest.fixture(autouse=True)
-async def cleanup_database(db_connection):
-    """テスト後にデータベースをクリーンアップする"""
-    yield db_connection
-
 @pytest.mark.asyncio
-async def test_database_connection_initialization(db_connection):
-    """データベース接続の初期化をテストする"""
+async def test_firestore_connection_initialization(db_connection):
+    """Firestore接続の初期化をテスト"""
     # 接続を確認
     is_connected = await db_connection.check_connection()
     assert is_connected is True
 
-    # セッションを取得
-    async with db_connection.get_session() as session:
-        # 簡単なクエリを実行
-        result = await session.execute(text("SELECT 1"))
-        value = result.scalar()
-        assert value == 1
+    # クライアントを取得してコレクションにアクセス
+    client = db_connection.get_client()
+    test_ref = client.collection('test').document('test')
+    await test_ref.set({'test': True})
+    doc = await test_ref.get()
+    assert doc.exists
+    assert doc.to_dict()['test'] is True
 
 @pytest.mark.asyncio
-async def test_database_connection_from_config():
-    """設定からのデータベース接続をテストする"""
-    # テスト用の設定を取得
-    config = PostgresTestConfig(
-        host="localhost",
-        port=5432,
-        database="test_startup_wellness",
-        username="postgres",
-        password="postgres",
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800,
-        echo=False,
-        timezone="UTC"
+async def test_firestore_connection_from_config():
+    """設定からのFirestore接続をテスト"""
+    config = FirestoreConfig(
+        project_id="test-project",
+        emulator_host="localhost:8080"
     )
 
-    # 設定からデータベース接続を作成
-    connection = DatabaseConnection(config.get_database_url())
+    connection = FirestoreConnection(config)
     try:
         await connection.initialize()
-        # 接続を確認
         is_connected = await connection.check_connection()
         assert is_connected is True
 
-        # ���ッションを取得して簡単なクエリを実行
-        async with connection.get_session() as session:
-            result = await session.execute(text("SELECT 1"))
-            value = result.scalar()
-            assert value == 1
+        # 基本的なドキュメント操作をテスト
+        client = connection.get_client()
+        test_ref = client.collection('test').document('test')
+        await test_ref.set({'test': True})
+        doc = await test_ref.get()
+        assert doc.exists
     finally:
         await connection.cleanup()
 
 @pytest.mark.asyncio
-async def test_database_connection_cleanup(db_connection):
-    """データベース接続のクリーンアップをテストする"""
-    # データベースを作成
-    await db_connection.create_database()
+async def test_firestore_connection_cleanup(db_connection):
+    """Firestore接続のクリーンアップをテスト"""
+    # テストデータを作成
+    client = db_connection.get_client()
+    test_ref = client.collection('test').document('cleanup_test')
+    await test_ref.set({'test': True})
 
-    # データベースを削除
-    await db_connection.drop_database()
-
-    # 接続をクリーンアップ
+    # クリーンアップを実行
     await db_connection.cleanup()
 
-    # 接続が切られていることを確認
+    # 接続が正しく切断されていることを確認
     with pytest.raises(Exception):
-        async with db_connection.get_session() as session:
-            await session.execute(text("SELECT 1"))
+        await test_ref.get()
 
 @pytest.mark.asyncio
-async def test_database_connection_error_handling():
-    """データベース接続のエラーンドリングをテストする"""
-    # 無効なデータベースURLで接続を試みる
-    invalid_url = "postgresql+asyncpg://invalid:invalid@localhost:5432/invalid_db"
-    connection = DatabaseConnection(invalid_url)
+async def test_firestore_connection_error_handling():
+    """Firestore接続のエラーハンドリングをテスト"""
+    # 無効な設定で接続を試みる
+    invalid_config = FirestoreConfig(
+        project_id="invalid-project",
+        emulator_host="invalid:9999"
+    )
+    connection = FirestoreConnection(invalid_config)
 
     try:
         # 接続を確認
@@ -115,66 +96,46 @@ async def test_database_connection_error_handling():
         await connection.cleanup()
 
 @pytest.mark.asyncio
-async def test_database_connection_pool():
-    """データベース接続プールをテストする"""
-    config = PostgresTestConfig(
-        host="localhost",
-        port=5432,
-        database="test_startup_wellness",
-        username="postgres",
-        password="postgres",
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800,
-        echo=False,
-        timezone="UTC"
-    )
-    connection = DatabaseConnection(config.get_database_url())
-    try:
-        await connection.initialize()
-        # 複数のセッションを同時に作成
-        sessions = []
-        for _ in range(3):
-            async with connection.get_session() as session:
-                sessions.append(session)
-                # 簡単なクエリを実行
-                result = await session.execute(text("SELECT 1"))
-                value = result.scalar()
-                assert value == 1
-    finally:
-        await connection.cleanup()
+async def test_firestore_batch_operations(db_connection):
+    """Firestoreのバッチ操作をテスト"""
+    client = db_connection.get_client()
+    batch = client.batch()
+
+    # バッチで複数のドキュメントを作成
+    docs = []
+    for i in range(3):
+        ref = client.collection('test').document(f'batch_test_{i}')
+        batch.set(ref, {'index': i})
+        docs.append(ref)
+
+    await batch.commit()
+
+    # 作成されたドキュメントを確認
+    for i, ref in enumerate(docs):
+        doc = await ref.get()
+        assert doc.exists
+        assert doc.to_dict()['index'] == i
 
 @pytest.mark.asyncio
-async def test_database_connection_with_config():
-    """データベース設定を使用した接続をテストする"""
-    # デスト用の設定を取得
-    config = PostgresTestConfig(
-        host="localhost",
-        port=5432,
-        database="test_startup_wellness",
-        username="postgres",
-        password="postgres",
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=1800,
-        echo=False,
-        timezone="UTC"
-    )
+async def test_firestore_transaction(db_connection):
+    """Firestoreのトランザクションをテスト"""
+    client = db_connection.get_client()
+    doc_ref = client.collection('test').document('transaction_test')
 
-    # 設定からデータベース接続を作成
-    connection = DatabaseConnection(config.get_database_url())
-    try:
-        await connection.initialize()
-        # 接続を確認
-        is_connected = await connection.check_connection()
-        assert is_connected is True
+    # 初期データを設定
+    await doc_ref.set({'counter': 0})
 
-        # セッションを取得して簡単なクエリを実行
-        async with connection.get_session() as session:
-            result = await session.execute(text("SELECT 1"))
-            value = result.scalar()
-            assert value == 1
-    finally:
-        await connection.cleanup()
+    @firestore.async_transactional
+    async def increment_counter(transaction, doc_ref):
+        snapshot = await transaction.get(doc_ref)
+        transaction.update(doc_ref, {
+            'counter': snapshot.get('counter') + 1
+        })
+
+    # トランザクションを実行
+    transaction = client.transaction()
+    await increment_counter(transaction, doc_ref)
+
+    # 結果を確認
+    doc = await doc_ref.get()
+    assert doc.to_dict()['counter'] == 1

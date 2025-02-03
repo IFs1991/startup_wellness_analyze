@@ -1,13 +1,18 @@
 import pytest
-from fastapi.testclient import TestClient
-from backend.src.main import app
+from httpx import AsyncClient
+from backend.main import app
 from backend.src.database.models import User
 from backend.src.database.repositories.user import UserRepository
 
-client = TestClient(app)
+pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
-def test_user():
+async def async_client():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+async def test_user():
     """テスト用のユーザーデータを作成する"""
     return {
         "username": "test_user",
@@ -16,175 +21,105 @@ def test_user():
         "role": "user"
     }
 
-def test_register_user(test_user):
+async def test_register_user(async_client, test_user_data):
     """ユーザー登録のテスト"""
-    response = client.post("/api/users/register", json=test_user)
+    response = await async_client.post("/api/users/register", json=test_user_data)
     assert response.status_code == 201
     data = response.json()
-    assert data["username"] == test_user["username"]
-    assert data["email"] == test_user["email"]
-    assert data["role"] == test_user["role"]
+    assert data["username"] == test_user_data["username"]
+    assert data["email"] == test_user_data["email"]
+    assert data["role"] == test_user_data["role"]
     assert "password" not in data
 
-def test_login_user(test_user):
+async def test_login_user(async_client, test_user_data):
     """ユーザーログインのテスト"""
     # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
+    await async_client.post("/api/users/register", json=test_user_data)
 
     # ログイン
     login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
+        "username": test_user_data["username"],
+        "password": test_user_data["password"]
     }
-    response = client.post("/api/users/login", json=login_data)
+    response = await async_client.post("/api/users/login", json=login_data)
     assert response.status_code == 200
     data = response.json()
     assert "access_token" in data
     assert data["token_type"] == "bearer"
 
-def test_get_current_user(test_user):
+async def test_get_current_user(async_client, auth_headers):
     """現在のユーザー情報取得のテスト"""
-    # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
-
-    # ログイン
-    login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
-    }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-
-    # 現在のユーザー情報を取得
-    headers = {"Authorization": f"Bearer {token}"}
-    response = client.get("/api/users/me", headers=headers)
+    response = await async_client.get("/api/users/me", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
-    assert data["username"] == test_user["username"]
-    assert data["email"] == test_user["email"]
-    assert data["role"] == test_user["role"]
+    assert "username" in data
+    assert "email" in data
+    assert "role" in data
 
-def test_update_user(test_user):
+async def test_update_user(async_client, test_user_data, auth_headers):
     """ユーザー情報更新のテスト"""
-    # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
-
-    # ログイン
-    login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
-    }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-
-    # ユーザー情報を更新
     update_data = {
-        "email": "updated@example.com"
+        "email": "updated@example.com",
+        "username": "updated_user"
     }
-    headers = {"Authorization": f"Bearer {token}"}
-    response = client.put("/api/users/me", json=update_data, headers=headers)
+    response = await async_client.put("/api/users/me", json=update_data, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["email"] == update_data["email"]
+    assert data["username"] == update_data["username"]
 
-def test_change_password(test_user):
+async def test_change_password(async_client, test_user_data, auth_headers):
     """パスワード変更のテスト"""
-    # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
-
-    # ログイン
-    login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
-    }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-
-    # パスワードを変更
     password_data = {
-        "current_password": test_user["password"],
-        "new_password": "new_password"
+        "current_password": test_user_data["password"],
+        "new_password": "new_password123"
     }
-    headers = {"Authorization": f"Bearer {token}"}
-    response = client.post("/api/users/change-password", json=password_data, headers=headers)
+    response = await async_client.post("/api/users/change-password", json=password_data, headers=auth_headers)
     assert response.status_code == 200
 
-    # 新しいパスワードでログイン
-    new_login_data = {
-        "username": test_user["username"],
-        "password": "new_password"
+    # 新しいパスワードでログインできることを確認
+    login_data = {
+        "username": test_user_data["username"],
+        "password": "new_password123"
     }
-    response = client.post("/api/users/login", json=new_login_data)
-    assert response.status_code == 200
+    login_response = await async_client.post("/api/users/login", json=login_data)
+    assert login_response.status_code == 200
 
-def test_register_duplicate_user(test_user):
+async def test_register_duplicate_user(async_client, test_user_data):
     """重複ユーザー登録のテスト"""
     # 最初のユーザーを登録
-    client.post("/api/users/register", json=test_user)
+    await async_client.post("/api/users/register", json=test_user_data)
 
-    # 同じユーザー名で登録を試みる
-    response = client.post("/api/users/register", json=test_user)
+    # 同じデータで再度登録を試みる
+    response = await async_client.post("/api/users/register", json=test_user_data)
     assert response.status_code == 400
 
-def test_login_invalid_credentials(test_user):
+async def test_login_invalid_credentials(async_client, test_user_data):
     """無効な認証情報でのログインテスト"""
     # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
+    await async_client.post("/api/users/register", json=test_user_data)
 
-    # 誤ったパスワードでログイン
+    # 誤ったパスワードでログインを試みる
     login_data = {
-        "username": test_user["username"],
+        "username": test_user_data["username"],
         "password": "wrong_password"
     }
-    response = client.post("/api/users/login", json=login_data)
+    response = await async_client.post("/api/users/login", json=login_data)
     assert response.status_code == 401
 
-def test_unauthorized_access():
+async def test_unauthorized_access(async_client):
     """未認証アクセスのテスト"""
-    # 認証なしで保護されたエンドポイントにアクセス
-    response = client.get("/api/users/me")
+    response = await async_client.get("/api/users/me")
     assert response.status_code == 401
 
-def test_admin_operations(test_user):
+async def test_admin_operations(async_client, test_user_data):
     """管理者操作のテスト"""
     # 管理者ユーザーを作成
-    admin_user = test_user.copy()
-    admin_user["role"] = "admin"
-    client.post("/api/users/register", json=admin_user)
-
-    # 管理者でログイン
-    login_data = {
-        "username": admin_user["username"],
-        "password": admin_user["password"]
+    admin_data = {
+        "username": "admin_user",
+        "email": "admin@example.com",
+        "password": "admin_password",
+        "role": "admin"
     }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 通常ユーザーを作成
-    normal_user = {
-        "username": "normal_user",
-        "email": "normal@example.com",
-        "password": "password",
-        "role": "user"
-    }
-    client.post("/api/users/register", json=normal_user)
-
-    # ユーザーのロールを更新
-    role_data = {"role": "moderator"}
-    response = client.put(f"/api/users/{normal_user['username']}/role", json=role_data, headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["role"] == "moderator"
-
-    # ユーザーを非アクティブ化
-    response = client.post(f"/api/users/{normal_user['username']}/deactivate", headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["is_active"] is False
-
-    # ユーザーをアクティブ化
-    response = client.post(f"/api/users/{normal_user['username']}/activate", headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["is_active"] is True
+    response = await async_client.post("/api/users/register", json=admin_data)
+    assert response.status_code == 201

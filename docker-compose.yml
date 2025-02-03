@@ -1,107 +1,80 @@
 # docker-compose.yml
+
+version: '3.8'
+
 services:
   # フロントエンドサービス
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
+      dockerfile: Dockerfile.dev
     volumes:
-      # 開発環境でのソースコード変更の反映
-      - type: bind
-        source: ./frontend
-        target: /app
-      # node_modulesはコンテナ内のものを使用
+      - ./frontend:/app
       - /app/node_modules
-      - /app/dist
-      # 認証情報のマウント
-      - type: bind
-        source: ./credential
-        target: /app/credential
-        read_only: true
+    ports:
+      - "5173:5173"
     environment:
       - NODE_ENV=development
-    healthcheck:
-      test: wget -q --spider http://localhost:80 || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 5s
-    restart: unless-stopped
-    networks:
-      - frontend_network
-      - backend_network
+      - VITE_API_URL=http://localhost:8000/api
+    depends_on:
+      - backend
+    network_mode: "host"
+    command: npm run dev
 
   # バックエンドサービス
   backend:
     build:
-      context: .
-      dockerfile: ./backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - ./backups:/app/backups
+    environment:
+      - ENVIRONMENT=development
+      - DB_HOST=localhost
+      - DB_PORT=5432
+      - DB_NAME=startup_wellness_analyze
+      - DB_USER=postgres
+      - DB_PASSWORD=1spel!2stack3win
+      - DATABASE_URL=postgresql://postgres:1spel!2stack3win@localhost:5432/startup_wellness_analyze
     ports:
       - "8000:8000"
     depends_on:
-      - db
-    env_file:
-      - .env
-    environment:
-      - ENVIRONMENT=development
-    volumes:
-      - type: bind
-        source: ./backend
-        target: /app
-      - /app/venv
-      - /app/.venv
-      - /app/pycache
-      - type: bind
-        source: ./credential
-        target: /app/credential
-        read_only: true
-    healthcheck:
-      test: curl -f http://localhost:8000/health || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 5s
-    restart: unless-stopped
-    networks:
-      - backend_network
+      db:
+        condition: service_healthy
+    network_mode: "host"
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # データベースサービス
   db:
     image: postgres:15
-    env_file:
-      - .env
-    environment:
-      - POSTGRES_DB=wellness_db
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - type: bind
-        source: ./backend/database/init.sql
-        target: /docker-entrypoint-initdb.d/init.sql
-        read_only: true
+    environment:
+      - POSTGRES_DB=startup_wellness_analyze
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=1spel!2stack3win
+    ports:
+      - "5432:5432"
+    network_mode: "host"
     healthcheck:
-      test: pg_isready -U postgres
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 5s
-    restart: unless-stopped
-    networks:
-      - backend_network
 
 # 永続化用のボリューム定義
 volumes:
   postgres_data:
     name: wellness_postgres_data
+  frontend_node_modules:
+    name: wellness_frontend_node_modules
+  frontend_dist:
+    name: wellness_frontend_dist
 
 # ネットワーク定義
 networks:
-  frontend_network:
-    name: wellness_frontend_net
-  backend_network:
-    name: wellness_backend_net
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge

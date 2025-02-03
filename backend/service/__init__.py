@@ -1,3 +1,0 @@
-"""
-Startup Wellness Service Package
-"""

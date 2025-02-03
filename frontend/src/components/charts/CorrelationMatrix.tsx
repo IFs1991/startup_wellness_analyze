@@ -12,7 +12,6 @@ interface CorrelationMatrixProps {
 
 export const CorrelationMatrix: React.FC<CorrelationMatrixProps> = ({ data }) => {
   const getCorrelationColor = (value: number) => {
-    const absValue = Math.abs(value);
     const intensity = Math.min(Math.abs(value) * 255, 255);
     return value >= 0
       ? `rgb(${intensity}, ${intensity}, 255)`

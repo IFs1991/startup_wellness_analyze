@@ -2,6 +2,23 @@
 Write-Host "Restarting PostgreSQL service..."
 Restart-Service postgresql-x64-17
 
+# 環境変数の読み込み
+if (Test-Path ".env") {
+    Get-Content ".env" | ForEach-Object {
+        if ($_ -match '^([^=]+)=(.*)$') {
+            $key = $matches[1]
+            $value = $matches[2]
+            [Environment]::SetEnvironmentVariable($key, $value)
+        }
+    }
+}
+
+# パスワードの確認
+if (-not $env:POSTGRES_PASSWORD) {
+    Write-Error "POSTGRES_PASSWORD environment variable is not set"
+    exit 1
+}
+
 # 少し待機
 Start-Sleep -Seconds 5
 
@@ -27,7 +44,8 @@ Start-Sleep -Seconds 5
 
 # パスワードを設定
 Write-Host "Setting new password..."
-psql -U postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+$password = $env:POSTGRES_PASSWORD
+psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$password';"
 
 # pg_hba.confを元に戻す
 Write-Host "Restoring pg_hba.conf..."

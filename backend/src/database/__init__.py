@@ -1,5 +1,4 @@
-from .connection import DatabaseConnection
-from .config import PostgresConfig, PostgresTestConfig
-from .models import Base
+"""データベース関連のモジュール"""
+from .firestore import FirestoreClient, get_firestore_client
 
-__all__ = ['DatabaseConnection', 'PostgresConfig', 'PostgresTestConfig', 'Base']
+__all__ = ['FirestoreClient', 'get_firestore_client']

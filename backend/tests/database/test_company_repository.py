@@ -1,203 +1,151 @@
 import pytest
+import asyncio
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from backend.src.database.models import Base, Company, Status, Stage
+from google.cloud import firestore
+from google.cloud.firestore import AsyncClient
 from backend.src.database.repositories.company import CompanyRepository
 
-# テスト用のデータベースURL
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/test_startup_wellness"
+@pytest.fixture
+async def firestore_client():
+    """Firestoreエミュレータに接続するクライアントを作成"""
+    import os
+    os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
+    client = firestore.AsyncClient(project="test-project")
+    yield client
+    # テスト後のクリーンアップ
+    collections = await client.collections()
+    for collection in collections:
+        docs = await collection.get()
+        for doc in docs:
+            await doc.reference.delete()
 
 @pytest.fixture
-async def engine():
-    """テスト用のデータベースエンジンを作成する"""
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    await engine.dispose()
-
-@pytest.fixture
-async def session(engine):
-    """テスト用のセッションを作成する"""
-    async_session = sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session() as session:
-        yield session
+async def company_repository(firestore_client):
+    """会社リポジトリのインスタンスを作成"""
+    return CompanyRepository(firestore_client)
 
 @pytest.mark.asyncio
-async def test_company_repository(session):
-    """会社リポジトリのテスト"""
-    repo = CompanyRepository(session)
-
+async def test_company_repository(company_repository):
+    """会社リポジトリの基本的なCRUD操作をテスト"""
     # 会社を作成
-    company = await repo.create(
-        name="Test Company",
-        description="Test Description",
-        industry="Technology",
-        owner_id="test_owner",
-        founded_date=datetime.now(),
-        employee_count=100,
-        website="https://example.com",
-        location="Tokyo, Japan"
-    )
+    company_data = {
+        "name": "Test Company",
+        "description": "Test Description",
+        "industry": "Technology",
+        "owner_id": "test_owner",
+        "founded_date": datetime.now(),
+        "employee_count": 100,
+        "website": "https://example.com",
+        "location": "Tokyo, Japan"
+    }
 
+    company = await company_repository.create(**company_data)
     assert company.name == "Test Company"
     assert company.industry == "Technology"
     assert company.owner_id == "test_owner"
 
+    # IDで取得
+    retrieved_company = await company_repository.get_by_id(company.id)
+    assert retrieved_company is not None
+    assert retrieved_company.name == company.name
+
     # オーナーIDで取得
-    companies_by_owner = await repo.get_by_owner("test_owner")
+    companies_by_owner = await company_repository.get_by_owner("test_owner")
     assert len(companies_by_owner) == 1
     assert companies_by_owner[0].id == company.id
 
     # 業界で取得
-    companies_by_industry = await repo.get_by_industry("Technology")
+    companies_by_industry = await company_repository.get_by_industry("Technology")
     assert len(companies_by_industry) == 1
     assert companies_by_industry[0].id == company.id
 
     # ステータスを追加
-    status = Status(
-        company_id=company.id,
-        type="ACTIVE",
-        description="Company is active",
-        created_at=datetime.now()
-    )
-    session.add(status)
-    await session.commit()
+    status_data = {
+        "type": "ACTIVE",
+        "description": "Company is active",
+        "created_at": datetime.now()
+    }
+    await company_repository.add_status(company.id, **status_data)
 
     # ステージを追加
-    stage = Stage(
-        company_id=company.id,
-        type="SEED",
-        description="Seed stage",
-        created_at=datetime.now()
-    )
-    session.add(stage)
-    await session.commit()
+    stage_data = {
+        "type": "SEED",
+        "description": "Seed stage",
+        "created_at": datetime.now()
+    }
+    await company_repository.add_stage(company.id, **stage_data)
 
     # 詳細付きで取得
-    company_with_details = await repo.get_with_details(company.id)
+    company_with_details = await company_repository.get_with_details(company.id)
     assert company_with_details is not None
     assert company_with_details.statuses[0].type == "ACTIVE"
     assert company_with_details.stages[0].type == "SEED"
 
     # 最新のステータスを取得
-    latest_status = await repo.get_latest_status(company.id)
+    latest_status = await company_repository.get_latest_status(company.id)
     assert latest_status is not None
     assert latest_status.type == "ACTIVE"
 
     # 最新のステージを取得
-    latest_stage = await repo.get_latest_stage(company.id)
+    latest_stage = await company_repository.get_latest_stage(company.id)
     assert latest_stage is not None
     assert latest_stage.type == "SEED"
 
-    # ステージで会社を取得
-    companies_by_stage = await repo.get_companies_by_stage("SEED")
-    assert len(companies_by_stage) == 1
-    assert companies_by_stage[0].id == company.id
-
-    # ステータスで会社を取得
-    companies_by_status = await repo.get_companies_by_status("ACTIVE")
-    assert len(companies_by_status) == 1
-    assert companies_by_status[0].id == company.id
-
-    # 会社を検索
-    search_results = await repo.search_companies(
-        name="Test",
-        industry="Technology",
-        stage_type="SEED",
-        status_type="ACTIVE",
-        owner_id="test_owner",
-        page=1,
-        per_page=10
-    )
-    assert len(search_results) == 1
-    assert search_results[0].id == company.id
-
     # 会社を更新
-    updated_company = await repo.update(
-        company.id,
-        name="Updated Company",
-        employee_count=200
-    )
+    updated_data = {
+        "name": "Updated Company",
+        "employee_count": 200
+    }
+    updated_company = await company_repository.update(company.id, **updated_data)
     assert updated_company is not None
     assert updated_company.name == "Updated Company"
     assert updated_company.employee_count == 200
 
     # 会社を削除
-    deleted = await repo.delete(company.id)
+    deleted = await company_repository.delete(company.id)
     assert deleted is True
 
     # 削除されたことを確認
-    deleted_company = await repo.get_by_id(company.id)
+    deleted_company = await company_repository.get_by_id(company.id)
     assert deleted_company is None
 
 @pytest.mark.asyncio
-async def test_company_repository_error_handling(session):
-    """会社リポジトリのエラーハンドリングをテスト"""
-    repo = CompanyRepository(session)
-
-    # 存在しない会社IDでの操作
-    non_existent_id = "non_existent_id"
-
-    # 存在しない会社の取得
-    company = await repo.get_by_id(non_existent_id)
-    assert company is None
-
-    # 存在しない会社の詳細取得
-    company_with_details = await repo.get_with_details(non_existent_id)
-    assert company_with_details is None
-
-    # 存在しない会社の最新ステータス取得
-    latest_status = await repo.get_latest_status(non_existent_id)
-    assert latest_status is None
-
-    # 存在���ない会社の最新ステージ取得
-    latest_stage = await repo.get_latest_stage(non_existent_id)
-    assert latest_stage is None
-
-@pytest.mark.asyncio
-async def test_company_repository_search_filters(session):
-    """会社リポジトリの検索フィルターをテスト"""
-    repo = CompanyRepository(session)
-
+async def test_company_repository_search(company_repository):
+    """会社リポジトリの検索機能をテスト"""
     # テスト用の会社を複数作成
-    companies = []
-    for i in range(5):
-        company = await repo.create(
-            name=f"Company {i}",
-            description=f"Description {i}",
-            industry="Technology" if i % 2 == 0 else "Finance",
-            owner_id=f"owner_{i}",
-            founded_date=datetime.now(),
-            employee_count=100 * (i + 1),
-            website=f"https://example{i}.com",
-            location=f"Location {i}"
-        )
-        companies.append(company)
+    companies_data = [
+        {
+            "name": f"Company {i}",
+            "description": f"Description {i}",
+            "industry": "Technology" if i % 2 == 0 else "Finance",
+            "owner_id": f"owner_{i}",
+            "founded_date": datetime.now(),
+            "employee_count": 100 * (i + 1),
+            "website": f"https://example{i}.com",
+            "location": f"Location {i}"
+        } for i in range(5)
+    ]
+
+    for company_data in companies_data:
+        company = await company_repository.create(**company_data)
 
         # ステータスとステージを追加
-        status = Status(
-            company_id=company.id,
-            type="ACTIVE" if i % 2 == 0 else "INACTIVE",
-            description=f"Status {i}",
+        await company_repository.add_status(
+            company.id,
+            type="ACTIVE" if company_data["industry"] == "Technology" else "INACTIVE",
+            description=f"Status for {company.name}",
             created_at=datetime.now()
         )
-        stage = Stage(
-            company_id=company.id,
-            type="SEED" if i % 2 == 0 else "SERIES_A",
-            description=f"Stage {i}",
+
+        await company_repository.add_stage(
+            company.id,
+            type="SEED" if company_data["industry"] == "Technology" else "SERIES_A",
+            description=f"Stage for {company.name}",
             created_at=datetime.now()
         )
-        session.add(status)
-        session.add(stage)
-        await session.commit()
 
     # 業界でフィルター
-    tech_companies = await repo.search_companies(
+    tech_companies = await company_repository.search_companies(
         industry="Technology",
         page=1,
         per_page=10
@@ -205,7 +153,7 @@ async def test_company_repository_search_filters(session):
     assert len(tech_companies) == 3
 
     # ステージでフィルター
-    seed_companies = await repo.search_companies(
+    seed_companies = await company_repository.search_companies(
         stage_type="SEED",
         page=1,
         per_page=10
@@ -213,7 +161,7 @@ async def test_company_repository_search_filters(session):
     assert len(seed_companies) == 3
 
     # ステータスでフィルター
-    active_companies = await repo.search_companies(
+    active_companies = await company_repository.search_companies(
         status_type="ACTIVE",
         page=1,
         per_page=10
@@ -221,7 +169,7 @@ async def test_company_repository_search_filters(session):
     assert len(active_companies) == 3
 
     # 複数の条件でフィルター
-    filtered_companies = await repo.search_companies(
+    filtered_companies = await company_repository.search_companies(
         industry="Technology",
         stage_type="SEED",
         status_type="ACTIVE",
@@ -231,8 +179,30 @@ async def test_company_repository_search_filters(session):
     assert len(filtered_companies) == 3
 
     # ページネーション
-    paginated_companies = await repo.search_companies(
+    paginated_companies = await company_repository.search_companies(
         page=1,
         per_page=2
     )
     assert len(paginated_companies) == 2
+
+@pytest.mark.asyncio
+async def test_company_repository_error_handling(company_repository):
+    """会社リポジトリのエラーハンドリングをテスト"""
+    # 存在しない会社IDでの操作
+    non_existent_id = "non_existent_id"
+
+    # 存在しない会社の取得
+    company = await company_repository.get_by_id(non_existent_id)
+    assert company is None
+
+    # 存在しない会社の詳細取得
+    company_with_details = await company_repository.get_with_details(non_existent_id)
+    assert company_with_details is None
+
+    # 存在しない会社の最新ステータス取得
+    latest_status = await company_repository.get_latest_status(non_existent_id)
+    assert latest_status is None
+
+    # 存在しない会社の最新ステージ取得
+    latest_stage = await company_repository.get_latest_stage(non_existent_id)
+    assert latest_stage is None

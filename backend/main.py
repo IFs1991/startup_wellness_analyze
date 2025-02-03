@@ -5,29 +5,48 @@ Startup Wellness データ分析システム バックエンド API
 アプリケーションの起動と初期設定を担当します。
 """
 
+import os
+import sys
+from pathlib import Path
+
+# プロジェクトルートを追加（より安全な方法）
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+
+# 標準ライブラリのインポート
 import logging
 from datetime import datetime
 
+# サードパーティライブラリのインポート
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import configuration
-from backend.app.core.config import settings
+# Firestore クライアントのインポート
+from backend.src.database.firestore.client import FirestoreClient
 
-# Import routers individually to ensure proper loading
-from backend.api.routers.auth import router as auth_router
-from backend.api.routers.visualization import router as visualization_router
-from backend.api.routers.analysis import router as analysis_router
-from backend.api.routers.data_input import router as data_input_router
-from backend.api.routers.data_processing import router as data_processing_router
-from backend.api.routers.prediction import router as prediction_router
-from backend.api.routers.report_generation import router as report_generation_router
+# ローカルモジュールのインポート
+from backend.routers import (
+    auth_router,
+    company_router,
+    analysis_router,
+    report_router,
+    visualization_router
+)
 
-# Initialize logging
+# ログディレクトリの設定
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "app.log"
+
+# ロギングの設定
 logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(str(LOG_FILE), mode='a', encoding='utf-8')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -39,55 +58,79 @@ try:
     firebase_app = firebase_admin.get_app()
 except ValueError:
     try:
-        cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+        cred = credentials.Certificate(os.getenv('GOOGLE_APPLICATION_CREDENTIALS'))
         firebase_app = initialize_app(cred)
         logger.info("Firebase Admin SDK initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Firebase Admin SDK: {str(e)}")
         raise
 
-# FastAPI application
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    アプリケーションの起動時と終了時の処理を管理
+    """
+    try:
+        # Firestoreクライアントの初期化確認
+        firestore_client = FirestoreClient()
+        logger.info("アプリケーションの起動処理が完了しました")
+        yield
+    except Exception as e:
+        logger.error(f"アプリケーションの起動中にエラーが発生しました: {str(e)}")
+        raise
+
+# FastAPIアプリケーションの初期化
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description="データ分析システム用バックエンドAPI",
-    version=settings.VERSION,
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json"
+    title="Startup Wellness Analysis API",
+    description="スタートアップのウェルネス分析APIサービス",
+    version="1.0.0",
+    docs_url="/api/v1/docs",
+    redoc_url="/api/v1/redoc",
+    lifespan=lifespan
 )
 
-# Add CORS middleware
+# CORSミドルウェアの設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers with proper error handling
-try:
-    # 各ルーターを個別に登録
-    app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-    app.include_router(visualization_router, prefix="/api/visualization", tags=["visualization"])
-    app.include_router(analysis_router, prefix="/api/analysis", tags=["analysis"])
-    app.include_router(data_input_router, prefix="/api/data_input", tags=["data_input"])
-    app.include_router(data_processing_router, prefix="/api/data_processing", tags=["data_processing"])
-    app.include_router(prediction_router, prefix="/api/prediction", tags=["prediction"])
-    app.include_router(report_generation_router, prefix="/api/report_generation", tags=["report_generation"])
-    logger.info("All routers initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize routers: {str(e)}")
-    raise
+# Firestoreクライアントの初期化
+firestore_client = FirestoreClient()
 
-# Health check endpoint
+# ルーターの登録
+app.include_router(auth_router.router, prefix="/api/auth", tags=["認証"])
+app.include_router(company_router.router, prefix="/api/companies", tags=["企業"])
+app.include_router(analysis_router.router, prefix="/api/analysis", tags=["分析"])
+app.include_router(report_router.router, prefix="/api/reports", tags=["レポート"])
+app.include_router(visualization_router.router, prefix="/api/visualizations", tags=["可視化"])
+
+@app.get("/")
+async def root():
+    """ルートエンドポイント"""
+    return {
+        "message": "Welcome to Startup Wellness API",
+        "version": "1.0.0",
+    }
+
 @app.get("/health")
 async def health_check():
-    """APIの稼働状態を確認"""
+    """ヘルスチェックエンドポイント"""
     return {
         "status": "healthy",
-        "version": settings.VERSION,
+        "version": "1.0.0",
         "timestamp": datetime.now().isoformat()
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )

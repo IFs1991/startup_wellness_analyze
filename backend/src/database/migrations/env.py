@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 def get_url():
     """データベースURLを取得する"""
     db_config = PostgresConfig()
-    return db_config.get_database_url()
+    return db_config.get_database_url().replace('postgresql://', 'postgresql+asyncpg://')
 
 def run_migrations_offline() -> None:
     """

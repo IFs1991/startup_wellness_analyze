@@ -44,7 +44,6 @@
   },
 
   // プロジェクトに含めるファイルの設定
-  "include": [
-    "src/**/*"
-  ]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
+  "references": [{ "path": "./tsconfig.node.json" }]
 }

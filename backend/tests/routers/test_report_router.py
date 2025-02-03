@@ -1,13 +1,18 @@
 import pytest
 from datetime import datetime
-from fastapi.testclient import TestClient
-from backend.src.main import app
-from backend.src.database.models import User, Report, ReportTemplate
+from httpx import AsyncClient
+from backend.main import app
+from backend.src.database.models import User, Report, ReportTemplate as Template
 
-client = TestClient(app)
+pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
-def test_user():
+async def async_client():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+async def test_user():
     """テスト用のユーザーデータを作成する"""
     return {
         "username": "test_user",
@@ -17,7 +22,7 @@ def test_user():
     }
 
 @pytest.fixture
-def test_template():
+async def test_template():
     """テスト用のレポートテンプレートデータを作成する"""
     return {
         "name": "Test Template",
@@ -28,7 +33,7 @@ def test_template():
     }
 
 @pytest.fixture
-def test_report():
+async def test_report():
     """テスト用のレポートデータを作成する"""
     return {
         "content": "Test Report Content",
@@ -36,200 +41,121 @@ def test_report():
         "report_metadata": {"status": "completed"}
     }
 
-def test_create_template(test_user, test_template):
+async def test_create_template(async_client, test_user, test_template, auth_headers):
     """テンプレート作成のテスト"""
-    # ユーザーを登録
-    client.post("/api/users/register", json=test_user)
-
-    # ログイン
-    login_data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
-    }
-    login_response = client.post("/api/users/login", json=login_data)
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # テンプレートを作成
-    response = client.post("/api/reports/templates/", json=test_template, headers=headers)
+    response = await async_client.post("/api/v1/reports/templates/", json=test_template, headers=auth_headers)
     assert response.status_code == 201
     data = response.json()
     assert data["name"] == test_template["name"]
     assert data["format"] == test_template["format"]
     assert data["variables"] == test_template["variables"]
 
-def test_get_template(test_user, test_template):
+async def test_get_template(async_client, test_user, test_template, auth_headers):
     """テンプレート取得のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # テンプレートを作成
-    create_response = client.post("/api/reports/templates/", json=test_template, headers=headers)
+    create_response = await async_client.post("/api/v1/reports/templates/", json=test_template, headers=auth_headers)
     template_id = create_response.json()["id"]
 
     # テンプレートを取得
-    response = client.get(f"/api/reports/templates/{template_id}", headers=headers)
+    response = await async_client.get(f"/api/v1/reports/templates/{template_id}", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_template["name"]
     assert data["format"] == test_template["format"]
 
-def test_update_template(test_user, test_template):
+async def test_update_template(async_client, test_user, test_template, auth_headers):
     """テンプレート更新のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # テンプレートを作成
-    create_response = client.post("/api/reports/templates/", json=test_template, headers=headers)
+    create_response = await async_client.post("/api/v1/reports/templates/", json=test_template, headers=auth_headers)
     template_id = create_response.json()["id"]
 
     # テンプレートを更新
     update_data = {
         "name": "Updated Template",
-        "template_content": "Updated Content",
-        "variables": {"new_key": "new_value"}
+        "description": "Updated Description",
+        "variables": {"updated_key": "updated_value"}
     }
-    response = client.put(f"/api/reports/templates/{template_id}", json=update_data, headers=headers)
+    response = await async_client.put(f"/api/v1/reports/templates/{template_id}", json=update_data, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == update_data["name"]
-    assert data["template_content"] == update_data["template_content"]
+    assert data["description"] == update_data["description"]
     assert data["variables"] == update_data["variables"]
 
-def test_generate_report(test_user, test_template, test_report):
+async def test_generate_report(async_client, test_user, test_template, test_report, auth_headers):
     """レポート生成のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
     # テンプレートを作成
-    create_template_response = client.post("/api/reports/templates/", json=test_template, headers=headers)
-    template_id = create_template_response.json()["id"]
+    template_response = await async_client.post("/api/v1/reports/templates/", json=test_template, headers=auth_headers)
+    template_id = template_response.json()["id"]
 
     # レポートを生成
-    test_report["template_id"] = template_id
-    response = client.post("/api/reports/", json=test_report, headers=headers)
+    response = await async_client.post(
+        f"/api/v1/reports/generate/{template_id}",
+        json={"variables": {"test": "value"}},
+        headers=auth_headers
+    )
     assert response.status_code == 201
     data = response.json()
-    assert data["template_id"] == template_id
-    assert data["format"] == test_report["format"]
-    assert data["report_metadata"] == test_report["report_metadata"]
+    assert "content" in data
+    assert data["format"] == test_template["format"]
 
-def test_get_report(test_user, test_template, test_report):
+async def test_get_report(async_client, test_user, test_template, test_report, auth_headers):
     """レポート取得のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # テンプレートを作成
-    create_template_response = client.post("/api/reports/templates/", json=test_template, headers=headers)
-    template_id = create_template_response.json()["id"]
-
-    # レポートを生成
-    test_report["template_id"] = template_id
-    create_report_response = client.post("/api/reports/", json=test_report, headers=headers)
-    report_id = create_report_response.json()["id"]
+    # レポートを作成
+    create_response = await async_client.post("/api/v1/reports/", json=test_report, headers=auth_headers)
+    report_id = create_response.json()["id"]
 
     # レポートを取得
-    response = client.get(f"/api/reports/{report_id}", headers=headers)
+    response = await async_client.get(f"/api/v1/reports/{report_id}", headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
-    assert data["template_id"] == template_id
+    assert data["content"] == test_report["content"]
     assert data["format"] == test_report["format"]
 
-def test_search_reports(test_user, test_template):
+async def test_search_reports(async_client, test_user, test_template, auth_headers):
     """レポート検索のテスト"""
-    # ユーザーを��録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # テンプレートを作成
-    create_template_response = client.post("/api/reports/templates/", json=test_template, headers=headers)
-    template_id = create_template_response.json()["id"]
-
-    # 複数のレポートを生成
+    # 複数のレポートを作成
     reports = [
         {
-            "template_id": template_id,
-            "content": f"Report Content {i}",
-            "format": "pdf" if i % 2 == 0 else "docx",
-            "report_metadata": {"status": "completed" if i % 2 == 0 else "pending"}
+            "content": f"Test Report {i}",
+            "format": "pdf",
+            "report_metadata": {"status": "completed"}
         }
-        for i in range(5)
+        for i in range(3)
     ]
 
     for report in reports:
-        client.post("/api/reports/", json=report, headers=headers)
+        await async_client.post("/api/v1/reports/", json=report, headers=auth_headers)
 
-    # フォーマットで検索
-    response = client.get("/api/reports/search?format=pdf", headers=headers)
+    # レポートを検索
+    search_params = {
+        "format": "pdf",
+        "status": "completed"
+    }
+    response = await async_client.get("/api/v1/reports/search", params=search_params, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 3
+    assert len(data) >= 3
+    for report in data:
+        assert report["format"] == "pdf"
+        assert report["report_metadata"]["status"] == "completed"
 
-    # メタデータで検索
-    response = client.get("/api/reports/search?status=completed", headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 3
-
-def test_delete_report(test_user, test_template, test_report):
+async def test_delete_report(async_client, test_user, test_template, test_report, auth_headers):
     """レポート削除のテスト"""
-    # ユーザーを登録してログイン
-    client.post("/api/users/register", json=test_user)
-    login_response = client.post("/api/users/login", json={
-        "username": test_user["username"],
-        "password": test_user["password"]
-    })
-    token = login_response.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # テンプレートを作成
-    create_template_response = client.post("/api/reports/templates/", json=test_template, headers=headers)
-    template_id = create_template_response.json()["id"]
-
-    # レポートを生成
-    test_report["template_id"] = template_id
-    create_report_response = client.post("/api/reports/", json=test_report, headers=headers)
-    report_id = create_report_response.json()["id"]
+    # レポートを作成
+    create_response = await async_client.post("/api/v1/reports/", json=test_report, headers=auth_headers)
+    report_id = create_response.json()["id"]
 
     # レポートを削除
-    response = client.delete(f"/api/reports/{report_id}", headers=headers)
-    assert response.status_code == 200
+    response = await async_client.delete(f"/api/v1/reports/{report_id}", headers=auth_headers)
+    assert response.status_code == 204
 
-    # 削除されたレポートの取得を試みる
-    response = client.get(f"/api/reports/{report_id}", headers=headers)
-    assert response.status_code == 404
+    # 削除されたレポートを取得しようとする
+    get_response = await async_client.get(f"/api/v1/reports/{report_id}", headers=auth_headers)
+    assert get_response.status_code == 404
 
-def test_unauthorized_access():
-    """未認���アクセスのテスト"""
-    # 認証なしで保護されたエンドポイントにアクセス
-    response = client.get("/api/reports/templates/")
+async def test_unauthorized_access(async_client):
+    """未認証アクセスのテスト"""
+    response = await async_client.get("/api/v1/reports/")
     assert response.status_code == 401

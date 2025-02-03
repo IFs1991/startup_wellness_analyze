@@ -12,8 +12,11 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 from dataclasses import dataclass
-from service.bigquery.client import BigQueryService
-from service.firestore.client import FirestoreService
+from backend.src.database.bigquery.client import BigQueryService
+from backend.src.database.firestore.client import FirestoreClient
+from scipy import stats
+from . import BaseAnalyzer
+
 @dataclass
 class DescriptiveStatsConfig:
     """記述統計量の計算設定を保持するデータクラス"""
@@ -25,18 +28,81 @@ class DescriptiveStatsConfig:
     dataset_id: Optional[str] = None
     table_id: Optional[str] = None
 
-class DescriptiveStatsCalculator:
-    """
-    記述統計量を計算するクラスです。
-    BigQueryService を利用して非同期でデータの取得と保存を行います。
-    """
+class DescriptiveStatsCalculator(BaseAnalyzer):
+    """記述統計分析を行うクラス"""
 
-    def __init__(self, bq_service: BigQueryService):
+    def __init__(self, include_percentiles: bool = True):
         """
+        初期化メソッド
+
         Args:
-            bq_service (BigQueryService): BigQuery操作用のサービスインスタンス
+            include_percentiles (bool): パーセンタイル値を含めるかどうか
         """
-        self.bq_service = bq_service
+        super().__init__("descriptive_stats")
+        self.include_percentiles = include_percentiles
+        self.firestore_client = FirestoreClient()
+
+    def analyze(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        記述統計分析を実行
+
+        Args:
+            data (pd.DataFrame): 分析対象データ
+
+        Returns:
+            Dict[str, Any]: 分析結果
+        """
+        try:
+            # 数値型のカラムのみを抽出
+            numeric_data = data.select_dtypes(include=[np.number])
+
+            # 基本統計量の計算
+            basic_stats = {
+                'count': numeric_data.count().to_dict(),
+                'mean': numeric_data.mean().to_dict(),
+                'std': numeric_data.std().to_dict(),
+                'min': numeric_data.min().to_dict(),
+                'max': numeric_data.max().to_dict(),
+                'median': numeric_data.median().to_dict(),
+                'skewness': numeric_data.skew().to_dict(),
+                'kurtosis': numeric_data.kurtosis().to_dict()
+            }
+
+            # パーセンタイル値の計算（オプション）
+            if self.include_percentiles:
+                percentiles = [0.1, 0.25, 0.75, 0.9]
+                percentile_stats = {
+                    f'percentile_{int(p*100)}': numeric_data.quantile(p).to_dict()
+                    for p in percentiles
+                }
+                basic_stats.update(percentile_stats)
+
+            # 正規性検定
+            normality_tests = {}
+            for column in numeric_data.columns:
+                if len(numeric_data[column].dropna()) >= 3:  # 最小サンプルサイズ
+                    _, p_value = stats.normaltest(numeric_data[column].dropna())
+                    normality_tests[column] = {
+                        'is_normal': p_value > 0.05,
+                        'p_value': p_value
+                    }
+
+            # 結果の整形
+            result = {
+                'basic_statistics': basic_stats,
+                'normality_tests': normality_tests,
+                'summary': {
+                    'total_variables': len(numeric_data.columns),
+                    'total_samples': len(numeric_data),
+                    'variables_analyzed': list(numeric_data.columns)
+                }
+            }
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error in descriptive statistics analysis: {str(e)}")
+            raise
 
     def _validate_data(self, data: pd.DataFrame | pd.Series, target_variable: str) -> Tuple[bool, Optional[str]]:
         """
@@ -65,27 +131,6 @@ class DescriptiveStatsCalculator:
             return False, "データ数が不足しています（10以上必要）"
 
         return True, None
-
-    def _calculate_descriptive_stats(self, data: pd.DataFrame | pd.Series, target_variable: str) -> Dict[str, Any]:
-        """
-        データの記述統計量を計算します。
-
-        Args:
-            data (pd.DataFrame | pd.Series): 分析対象のデータ
-            target_variable (str): 分析対象の変数名
-
-        Returns:
-            Dict[str, Any]: 記述統計量
-        """
-        return {
-            "mean": data[target_variable].mean(),
-            "median": data[target_variable].median(),
-            "std": data[target_variable].std(),
-            "min": data[target_variable].min(),
-            "max": data[target_variable].max(),
-            "skewness": data[target_variable].skew(),
-            "kurtosis": data[target_variable].kurt()
-        }
 
     def _calculate_arima_metrics(self, data: pd.DataFrame | pd.Series, target_variable: str, arima_order: Tuple[int, int, int]) -> Dict[str, Any]:
         """
@@ -143,21 +188,18 @@ class DescriptiveStatsCalculator:
                 raise ValueError(error_message)
 
             # 記述統計量の計算
-            descriptive_stats = self._calculate_descriptive_stats(data, config.target_variable)
+            analysis_results = self.analyze(data)
 
             # ARIMA モデルの評価指標の計算
             arima_metrics = self._calculate_arima_metrics(data, config.target_variable, config.arima_order)
 
             # 結果の整形
-            analysis_results = {
-                "descriptive_stats": descriptive_stats,
-                "arima_metrics": arima_metrics,
-                "metadata": {
-                    "target_variable": config.target_variable,
-                    "arima_order": config.arima_order,
-                    "column_list": data.columns.tolist(),
-                    "analysis_timestamp": pd.Timestamp.now().isoformat()
-                }
+            analysis_results["arima_metrics"] = arima_metrics
+            analysis_results["metadata"] = {
+                "target_variable": config.target_variable,
+                "arima_order": config.arima_order,
+                "column_list": data.columns.tolist(),
+                "analysis_timestamp": pd.Timestamp.now().isoformat()
             }
 
             # 結果の保存
@@ -217,7 +259,7 @@ async def calculate_descriptive_stats(request: Any) -> Tuple[Dict[str, Any], int
 
         # サービスの初期化
         bq_service = BigQueryService()
-        calculator = DescriptiveStatsCalculator(bq_service)
+        calculator = DescriptiveStatsCalculator()
 
         # 記述統計量の計算
         results = await calculator.calculate(config)

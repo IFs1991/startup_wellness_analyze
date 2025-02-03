@@ -1,72 +1,83 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import BaseModel, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import os
 from dotenv import load_dotenv
+import platform
+from typing import Dict, Any, Optional
+from enum import Enum
 
 # .envファイルを読み込む
 load_dotenv()
 
-class PostgresConfig(BaseSettings):
-    """PostgreSQL設定"""
-    host: str = Field(default=os.getenv("POSTGRES_HOST", "localhost"))
-    port: int = Field(default=int(os.getenv("POSTGRES_PORT", "5432")))
-    database: str = Field(default=os.getenv("POSTGRES_DB", "startup_wellness"))
-    username: str = Field(default=os.getenv("POSTGRES_USER", "postgres"))
-    password: str = Field(default=os.getenv("POSTGRES_PASSWORD", "postgres"))
-    pool_size: int = Field(default=int(os.getenv("POSTGRES_POOL_SIZE", "5")))
-    max_overflow: int = Field(default=int(os.getenv("POSTGRES_MAX_OVERFLOW", "10")))
-    pool_timeout: int = Field(default=int(os.getenv("POSTGRES_POOL_TIMEOUT", "30")))
-    pool_recycle: int = Field(default=int(os.getenv("POSTGRES_POOL_RECYCLE", "1800")))
-    echo: bool = Field(default=os.getenv("POSTGRES_ECHO", "False").lower() == "true")
-    timezone: str = Field(default=os.getenv("POSTGRES_TIMEZONE", "UTC"))
+class EnvironmentType(str, Enum):
+    """環境の種類を定義"""
+    DEVELOPMENT = "development"
+    TESTING = "testing"
+    PRODUCTION = "production"
 
-    def get_database_url(self) -> str:
-        """データベースURLを取得する"""
-        return f"postgresql+asyncpg://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+class AppConfig(BaseSettings):
+    """アプリケーション全体の設定"""
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        case_sensitive=False,
+        extra='ignore'
+    )
 
-    def get_pool_settings(self) -> dict:
-        """プール設定を取得する"""
-        return {
-            "pool_size": self.pool_size,
-            "max_overflow": self.max_overflow,
-            "pool_timeout": self.pool_timeout,
-            "pool_recycle": self.pool_recycle
-        }
+    # アプリケーション基本設定
+    PROJECT_NAME: str = Field(default="Startup Wellness Data Analysis System")
+    VERSION: str = Field(default="0.1.0")
+    DEBUG: bool = Field(default=False)
+    ENVIRONMENT: EnvironmentType = Field(default=EnvironmentType.DEVELOPMENT)
 
-    def get_engine_settings(self) -> dict:
-        """エンジン設定を取得する"""
-        return {
-            "echo": self.echo,
-            "connect_args": {
-                "server_settings": {
-                    "timezone": self.timezone
-                }
-            }
-        }
+    # APIエンドポイント設定
+    API_V1_PREFIX: str = Field(default="/api/v1")
+    DOCS_URL: Optional[str] = Field(default=None)
+    REDOC_URL: Optional[str] = Field(default=None)
 
-    def get_all_settings(self) -> dict:
-        """全ての設定を取得する"""
-        return {
-            "database_url": self.get_database_url(),
-            "pool_settings": self.get_pool_settings(),
-            "engine_settings": self.get_engine_settings()
-        }
+    # セキュリティ設定
+    SECRET_KEY: str = Field(default=os.getenv("SECRET_KEY", "development-secret-key"))
+    ALGORITHM: str = Field(default="HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30)
 
-class PostgresTestConfig(PostgresConfig):
-    """PostgreSQLテスト用設定"""
-    host: str = Field(default=os.getenv("POSTGRES_TEST_HOST", "localhost"))
-    port: int = Field(default=int(os.getenv("POSTGRES_TEST_PORT", "5432")))
-    database: str = Field(default=os.getenv("POSTGRES_TEST_DB", "test_startup_wellness"))
-    username: str = Field(default=os.getenv("POSTGRES_TEST_USER", "postgres"))
-    password: str = Field(default=os.getenv("POSTGRES_TEST_PASSWORD", "postgres"))
+    # CORS設定
+    CORS_ORIGINS: list = Field(default=["http://localhost:3000", "http://localhost:8000"])
+    CORS_ALLOW_CREDENTIALS: bool = Field(default=True)
+    CORS_ALLOW_METHODS: list = Field(default=["*"])
+    CORS_ALLOW_HEADERS: list = Field(default=["*"])
+
+    @model_validator(mode='after')
+    def set_docs_urls(self) -> 'AppConfig':
+        """開発環境の場合のみドキュメントURLを設定"""
+        if self.ENVIRONMENT != EnvironmentType.PRODUCTION:
+            self.DOCS_URL = f"{self.API_V1_PREFIX}/docs"
+            self.REDOC_URL = f"{self.API_V1_PREFIX}/redoc"
+        return self
+
+class FirestoreConfig(BaseSettings):
+    """Firestore設定クラス"""
+    project_id: str
+    emulator_host: Optional[str] = None
+    credentials_path: Optional[str] = None
+
+    class Config:
+        env_prefix = "FIREBASE_"
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+# シングルトンインスタンスの作成
+app_config = AppConfig()
 
 @lru_cache()
-def get_postgres_config() -> PostgresConfig:
-    """PostgreSQL設定のシングルトンインスタンスを取得する"""
-    return PostgresConfig()
+def get_app_config() -> AppConfig:
+    """アプリケーション設定のシングルトンインスタンスを取得する"""
+    return app_config
 
 @lru_cache()
-def get_postgres_test_config() -> PostgresTestConfig:
-    """PostgreSQLテスト用設定のシングルトンインスタンスを取得する"""
-    return PostgresTestConfig()
+def get_firestore_config() -> FirestoreConfig:
+    """Firestore設定を取得する
+
+    Returns:
+        FirestoreConfig: Firestore設定
+    """
+    return FirestoreConfig()

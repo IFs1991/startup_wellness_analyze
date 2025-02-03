@@ -24,8 +24,12 @@ wheels/
 venv/
 env/
 ENV/
-.env
+.env*
 .venv/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # テストとキャッシュ
 .pytest_cache/
@@ -35,6 +39,9 @@ htmlcov/
 .nox/
 .hypothesis/
 .mypy_cache/
+.ruff_cache/
+coverage/
+.nyc_output/
 
 # IDE設定
 .idea/
@@ -44,15 +51,18 @@ htmlcov/
 .project
 .pydevproject
 .settings/
+*.sublime-*
 
 # ログとデータ
 *.log
 logs/
 data/
 tmp/
+temp/
+.cache/
 
 # Git関連
-.git
+.git/
 .gitignore
 
 # Docker関連
@@ -65,6 +75,18 @@ docker-compose*
 docs/
 README*
 
-# その他
+# OS生成ファイル
 .DS_Store
 Thumbs.db
+*.pem
+
+# セキュリティ関連
+*.key
+*.pem
+*.cert
+*.crt
+*.p12
+
+# クレデンシャル関連（Firebase認証ファイルは除く）
+credentials/*
+!credentials/startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json
