@@ -9,8 +9,12 @@ import numpy as np
 import pymc as pm
 import pandas as pd
 from dataclasses import dataclass
-from backend.src.database.bigquery.client import BigQueryService
+from src.database.bigquery.client import BigQueryService
 from config.bayesian_settings import calculate_adjusted_parameters
+import arviz as az
+from datetime import datetime
+import logging
+from .base import BaseAnalyzer
 
 @dataclass
 class BayesianAnalysisConfig:

@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from firebase_admin import auth
 from typing import Dict, Any
 from datetime import datetime
-from backend.src.database.firestore.client import FirestoreClient
+from src.database.firestore.client import FirestoreClient
 
 router = APIRouter()
 security = HTTPBearer()

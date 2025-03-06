@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from typing import Dict, Any, List
 from datetime import datetime
-from backend.src.database.firestore.client import FirestoreClient
+from src.database.firestore.client import FirestoreClient
 
 router = APIRouter()
 firestore_client = FirestoreClient()

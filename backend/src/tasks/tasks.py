@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 from typing import Dict, List, TypedDict, Any
-from backend.src.database.firestore.client import FirestoreClient
+from src.database.firestore.client import FirestoreClient
 
 logger = logging.getLogger(__name__)
 

@@ -16,14 +16,19 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 import nltk
 from dataclasses import dataclass
-from backend.src.database.bigquery.queries.data_queries import DataQueries
-from backend.src.database.firestore.client import FirestoreClient
+from src.database.bigquery.queries.data_queries import DataQueries
+from src.database.firestore.client import FirestoreClient
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation, NMF
 from collections import Counter
 import MeCab
-from . import BaseAnalyzer
+from .base import BaseAnalyzer
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import io
+import base64
+from datetime import datetime
 
 # NLTKの必要なリソースをダウンロード
 nltk.download('vader_lexicon')

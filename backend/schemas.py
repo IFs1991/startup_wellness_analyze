@@ -232,3 +232,31 @@ class Template(TemplateBase):
 
     class Config:
         from_attributes = True
+
+
+class AnalysisRequest(BaseModel):
+    """分析リクエストスキーマ"""
+    type: str
+    data: Dict[str, Any]
+    params: Dict[str, Any]
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class AnalysisResponse(BaseModel):
+    """分析レスポンススキーマ"""
+    id: str
+    type: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    params: Dict[str, Any]
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    user_id: str
+
+    model_config = {
+        "from_attributes": True
+    }

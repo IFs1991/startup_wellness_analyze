@@ -212,4 +212,17 @@ htmlcov/
 
 # ログファイル
 backend/logs/
-*.log
+*.log# プロジェクト特有の無視ファイル
+@docs/
+docs/
+@cloudbuild.yaml
+**/cloudbuild.yaml
+@credentials/
+**/credentials/
+# プロジェクト特有の無視ファイル
+@docs/
+docs/
+@cloudbuild.yaml
+**/cloudbuild.yaml
+@credentials/
+**/credentials/

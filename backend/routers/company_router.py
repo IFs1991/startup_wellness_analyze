@@ -4,7 +4,7 @@ from datetime import datetime
 
 from auth import get_current_user
 from schemas import CompanyCreate, CompanyUpdate, Company, StatusBase, Status, StageBase, Stage
-from backend.src.database.firestore.client import FirestoreClient
+from src.database.firestore.client import FirestoreClient
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
 firestore_client = FirestoreClient()

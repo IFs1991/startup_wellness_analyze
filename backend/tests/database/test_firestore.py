@@ -12,7 +12,7 @@ def test_firestore_connection():
         # すでに初期化されている場合は新たに初期化しない
         if not firebase_admin._apps:
             # パスを修正：相対パスで指定
-            cred = credentials.Certificate('../credentials/serviceAccountKey.json')  # ここを変更
+            cred = credentials.Certificate('../../credentials/serviceAccountKey.json')
             firebase_admin.initialize_app(cred)
 
         # Firestoreクライアントの作成

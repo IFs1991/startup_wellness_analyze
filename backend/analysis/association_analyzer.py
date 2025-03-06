@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import logging
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
-from backend.src.database.firestore.client import get_firestore_client
 from .base import BaseAnalyzer, AnalysisError
+from src.database.firestore.client import get_firestore_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -16,13 +16,6 @@ interface WellnessAnalysisProps {
 }
 
 export function WellnessAnalysis({ scores }: WellnessAnalysisProps) {
-  const getScoreStatus = (score: number) => {
-    if (score >= 90) return { label: '優秀', color: 'bg-green-500' };
-    if (score >= 80) return { label: '良好', color: 'bg-blue-500' };
-    if (score >= 70) return { label: '普通', color: 'bg-yellow-500' };
-    return { label: '要改善', color: 'bg-red-500' };
-  };
-
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-6">

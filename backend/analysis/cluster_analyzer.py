@@ -10,11 +10,17 @@ from typing import Optional, Tuple, Any, Dict, List
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score, calinski_harabasz_score
-from backend.src.database.bigquery.client import BigQueryService
-from backend.src.database.firestore.client import FirestoreClient
-from . import BaseAnalyzer, AnalysisError
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+import io
+import base64
+from .base import BaseAnalyzer, AnalysisError
+from src.database.bigquery.client import BigQueryService
+from src.database.firestore.client import FirestoreClient
 
 class ClusterAnalyzer(BaseAnalyzer):
     """クラスタリング分析を行うクラス"""

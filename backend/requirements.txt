@@ -12,13 +12,19 @@ python-jose[cryptography]
 passlib[bcrypt]
 anyio
 
+# Payment Processing
+stripe>=7.0.0
+
 # Database (Firestore)
 google-cloud-firestore>=2.13.1
 firebase-admin>=6.3.0
 google-auth>=2.25.2
 google-auth-httplib2>=0.1.1
 google-auth-oauthlib>=1.1.0
-
+# Database (SQLAlchemy)
+sqlalchemy>=1.4.0
+alembic>=1.10.0
+psycopg2-binary>=2.9.5  #
 # Data Analysis
 pandas
 numpy
@@ -35,6 +41,7 @@ networkx
 mlxtend>=0.22.0
 nltk
 textblob
+wordcloud
 mecab-python3>=1.0.10
 unidic-lite>=1.0.8
 

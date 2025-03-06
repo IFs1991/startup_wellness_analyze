@@ -12,13 +12,14 @@ services:
       - ./frontend:/app
       - /app/node_modules
     ports:
-      - "5173:5173"
+      - "3000:3000"
     environment:
       - NODE_ENV=development
-      - VITE_API_URL=http://localhost:8000/api
+      - VITE_API_URL=http://backend:8000/api
     depends_on:
       - backend
-    network_mode: "host"
+    networks:
+      - app_network
     command: npm run dev
 
   # バックエンドサービス
@@ -31,19 +32,26 @@ services:
       - ./backups:/app/backups
     environment:
       - ENVIRONMENT=development
-      - DB_HOST=localhost
+      - DB_HOST=db
       - DB_PORT=5432
       - DB_NAME=startup_wellness_analyze
       - DB_USER=postgres
       - DB_PASSWORD=1spel!2stack3win
-      - DATABASE_URL=postgresql://postgres:1spel!2stack3win@localhost:5432/startup_wellness_analyze
+      - DATABASE_URL=postgresql://postgres:1spel!2stack3win@db:5432/startup_wellness_analyze
+      - PYTHONPATH=/app/src:/app
+      - STRIPE_API_KEY=${STRIPE_API_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - STRIPE_PRICE_ID_BASIC=${STRIPE_PRICE_ID_BASIC}
+      - STRIPE_PRICE_ID_PRO=${STRIPE_PRICE_ID_PRO}
+      - STRIPE_PRICE_ID_ENTERPRISE=${STRIPE_PRICE_ID_ENTERPRISE}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
-    network_mode: "host"
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - app_network
+    command: bash -c "cd /app && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 
   # データベースサービス
   db:
@@ -56,7 +64,8 @@ services:
       - POSTGRES_PASSWORD=1spel!2stack3win
     ports:
       - "5432:5432"
-    network_mode: "host"
+    networks:
+      - app_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -74,7 +83,5 @@ volumes:
 
 # ネットワーク定義
 networks:
-  frontend_net:
-    driver: bridge
-  backend_net:
+  app_network:
     driver: bridge

@@ -2,7 +2,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 import pandas as pd
-from backend.src.database.firestore.client import get_firestore_client
+from src.database.firestore.client import get_firestore_client
+from abc import ABC, abstractmethod
 
 class AnalysisError(Exception):
     """分析処理に関するエラー"""
@@ -147,3 +148,24 @@ class BaseAnalyzer:
         except Exception as e:
             self.logger.error(f"Analysis failed: {str(e)}")
             raise AnalysisError(f"分析に失敗しました: {str(e)}")
+
+class DataRepository(ABC):
+    """データリポジトリの抽象基底クラス"""
+
+    @abstractmethod
+    async def get_document(self, collection: str, document_id: str) -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    async def query_documents(self, collection: str, filters=None, order_by=None, limit=None) -> List[Dict[str, Any]]:
+        pass
+
+    # 他の共通メソッド...
+
+class PostgresRepository(DataRepository):
+    """PostgreSQL用のリポジトリ実装"""
+    # PostgreSQL特有の実装
+
+class FirestoreRepository(DataRepository):
+    """Firestore用のリポジトリ実装"""
+    # Firestore特有の実装

@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 import time
 import pymc as pm
-from analysis.data_cleaning import BayesianDataCleaner, BayesianCleaningConfig
+from .data_cleaning import BayesianDataCleaner, BayesianCleaningConfig
 
 class BayesianModelMonitor:
     """ベイジアンモデルの品質監視クラス"""

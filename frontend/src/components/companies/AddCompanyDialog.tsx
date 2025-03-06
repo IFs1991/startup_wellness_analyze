@@ -17,8 +17,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { PlusCircle } from 'lucide-react';
+import { PlusCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { companiesApi } from '@/lib/api/companies';
 
 interface CompanyFormData {
   name: string;
@@ -56,35 +57,48 @@ const stages = [
 export function AddCompanyDialog() {
   const [formData, setFormData] = useState<CompanyFormData>(initialFormData);
   const [isOpen, setIsOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     try {
-      // TODO: Implement API call to create company
-      const response = await fetch('/api/companies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-      
-      const data = await response.json();
-      
+      setIsSubmitting(true);
+
+      // 企業スコアは初期値として70〜90の間の乱数を設定
+      const initialScore = Math.floor(Math.random() * 21) + 70;
+
+      // APIを使用して企業を追加
+      const companyData = {
+        name: formData.name,
+        industry: formData.industry,
+        stage: formData.stage,
+        employees: formData.employees,
+        foundedYear: formData.foundedYear,
+        location: formData.location,
+        score: initialScore, // 初期ウェルネススコア
+      };
+
+      const newCompany = await companiesApi.addCompany(companyData);
+
       toast({
         title: '企業を登録しました',
         description: `${formData.name}を登録しました。`,
       });
-      
+
       setIsOpen(false);
-      navigate(`/companies/${data.id}`);
+      setFormData(initialFormData);
+      navigate(`/companies/${newCompany.id}`);
     } catch (error) {
       toast({
         title: 'エラー',
         description: '企業の登録に失敗しました。',
         variant: 'destructive',
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -206,7 +220,14 @@ export function AddCompanyDialog() {
             <Button variant="outline" type="button" onClick={() => setIsOpen(false)}>
               キャンセル
             </Button>
-            <Button type="submit">登録</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  登録中...
+                </>
+              ) : '登録'}
+            </Button>
           </div>
         </form>
       </DialogContent>

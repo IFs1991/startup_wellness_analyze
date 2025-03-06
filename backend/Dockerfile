@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONPATH="/app" \
+    PYTHONPATH="/app:/app/src" \
     GOOGLE_APPLICATION_CREDENTIALS="/app/credentials/startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json"
 
 WORKDIR /app
@@ -43,7 +43,7 @@ FROM python:3.12-slim-bookworm as runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
-    PYTHONPATH="/app" \
+    PYTHONPATH="/app:/app/src" \
     GOOGLE_APPLICATION_CREDENTIALS="/app/credentials/startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json" \
     PYTHONASYNCIODEBUG=1 \
     REQUESTS_TIMEOUT=30 \
@@ -80,7 +80,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . .
 
 # Firebase認証情報ファイルのコピー
-COPY --chown=app:app ./credentials/startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json /app/backend/credentials/
+COPY --chown=app:app ./credentials/startupwellnessanalyze-445505-firebase-adminsdk-2hbn3-dc3bee234b.json /app/credentials/
 
 # 起動スクリプトの作成
 RUN printf '#!/bin/bash\n\
@@ -90,7 +90,7 @@ python -c "import sys; print(\"\n\".join(sys.path))"\n\
 echo -e "\nInstalled packages:"\n\
 pip list\n\
 echo -e "\nStarting application..."\n\
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 --limit-max-requests 10000 --timeout-keep-alive 75\n' > /app/start.sh && \
+exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 --limit-max-requests 10000 --timeout-keep-alive 75\n' > /app/start.sh && \
     chmod +x /app/start.sh && \
     chown app:app /app/start.sh
 
