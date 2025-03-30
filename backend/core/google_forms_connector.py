@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 import logging
 import asyncio
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 # ロギングの設定
 logger = logging.getLogger(__name__)
@@ -38,8 +38,9 @@ class FormResponse(BaseModel):
     last_submitted_time: datetime
     answers: Dict[str, Any]
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class FormsRequestParams(BaseModel):
     """フォームリクエストパラメータのバリデーションモデル"""
@@ -47,7 +48,8 @@ class FormsRequestParams(BaseModel):
     page_size: Optional[str] = None
     page_token: Optional[str] = None
 
-    @validator('page_size')
+    @field_validator('page_size')
+    @classmethod
     def validate_page_size(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             try:

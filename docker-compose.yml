@@ -1,12 +1,223 @@
-version: "3.9"
+# スタートアップウェルネス分析システム
+# 複数コンテナで構成されるアプリケーションの定義
 
 services:
+  # バックエンドAPI - FastAPIベースのRESTful APIサーバー
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+    image: startup-wellness-backend:latest
+    container_name: startup-wellness-backend
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
+    command: ["/bin/bash", "-c", "pip install fastapi uvicorn pandas numpy psycopg2-binary && cd /app && python -m uvicorn main:app --host 0.0.0.0 --port 8000"]
+    env_file:
+      - ./.env
+    environment:
+      # データベース接続情報
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-1spel!2stack3win}@postgres:5432/startup_wellness_analyze
+      - REDIS_URL=redis://startup-wellness-redis:6379/0
+      # Google認証情報 - 環境変数から参照
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/startupwellnessanalyze-445505-bf8634fbd5f3.json
+      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-startupwellnessanalyze-445505}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-startupwellnessanalyze-445505}
+      - GCP_REGION=${GCP_REGION:-asia-northeast1}
+      # アプリケーション設定
+      - TZ=Asia/Tokyo
+      - LOG_LEVEL=debug
+      - APP_ENV=${APP_ENV:-production}
+      - WORKERS=2
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      # パフォーマンス最適化
+      - MALLOC_TRIM_THRESHOLD_=100000
+      - PYTHONMALLOC=malloc
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - VECLIB_MAXIMUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      # モニタリング設定
+      - ENABLE_MEMORY_PROFILING=${ENABLE_MEMORY_PROFILING:-false}
+      - ENABLE_PSUTIL_MONITORING=${ENABLE_PSUTIL_MONITORING:-true}
+      # 開発環境設定
+      - DEV_MODE=${DEV_MODE:-true}
+      - FIRESTORE_EMULATOR_HOST=${USE_EMULATORS:+host.docker.internal:8080}
+      - FIREBASE_AUTH_EMULATOR_HOST=${USE_EMULATORS:+host.docker.internal:9099}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      startup-wellness-redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-1.0}"
+          memory: "${MEMORY_LIMIT:-2G}"
+        reservations:
+          cpus: "${CPU_RESERVATION:-0.25}"
+          memory: "${MEMORY_RESERVATION:-512M}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health", "||", "exit", "0"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
 
-  frontoend:
-    build: ./frontoend
+  # フロントエンドアプリケーション - Vite+React/TypeScriptベースのSPA
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NODE_ENV=${NODE_ENV:-production}
+        - VITE_API_URL=${VITE_API_URL:-http://backend:8000/api}
+        - VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
+        - VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN}
+        - VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID}
+        - VITE_FIREBASE_STORAGE_BUCKET=${VITE_FIREBASE_STORAGE_BUCKET}
+        - VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
+        - VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
+        - VITE_FIREBASE_MEASUREMENT_ID=${VITE_FIREBASE_MEASUREMENT_ID}
+    image: startup-wellness-frontend:${TAG:-latest}
+    container_name: startup-wellness-frontend
     ports:
-      - "3000:3000"
+      - "3000:80"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      # アプリケーション設定
+      - VITE_API_URL=${VITE_API_URL:-http://backend:8000/api}
+      - NODE_ENV=${NODE_ENV:-production}
+      - TZ=Asia/Tokyo
+      - DEV_MODE=${DEV_MODE:-true}
+      # Firebase環境変数
+      - VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
+      - VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN}
+      - VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID}
+      - VITE_FIREBASE_STORAGE_BUCKET=${VITE_FIREBASE_STORAGE_BUCKET}
+      - VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
+      - VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
+      - VITE_FIREBASE_MEASUREMENT_ID=${VITE_FIREBASE_MEASUREMENT_ID}
+      # Nginxのチューニングパラメーター
+      - NGINX_WORKER_PROCESSES=auto
+      - NGINX_WORKER_CONNECTIONS=1024
+      - NGINX_WORKER_RLIMIT_NOFILE=4096
+      # メモリ最適化設定
+      - MALLOC_TRIM_THRESHOLD_=65536
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80", "||", "exit", "0"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
+          memory: "${FRONTEND_MEMORY_LIMIT:-512M}"
+        reservations:
+          cpus: "${FRONTEND_CPU_RESERVATION:-0.1}"
+          memory: "${FRONTEND_MEMORY_RESERVATION:-128M}"
+
+  # 開発環境でのみ有効なモニタリングサービス
+  monitoring:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-latest}
+    container_name: startup-wellness-monitoring
+    ports:
+      - "${MONITORING_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    profiles:
+      - monitoring
+      - dev
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${MONITORING_CPU_LIMIT:-0.25}"
+          memory: "${MONITORING_MEMORY_LIMIT:-256M}"
+        reservations:
+          cpus: "${MONITORING_CPU_RESERVATION:-0.1}"
+          memory: "${MONITORING_MEMORY_RESERVATION:-64M}"
+    restart: unless-stopped
+
+  # PostgreSQLデータベース
+  postgres:
+    image: postgres:15-alpine
+    container_name: startup-wellness-postgres
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-1spel!2stack3win}
+      - POSTGRES_DB=${POSTGRES_DB:-startup_wellness_analyze}
+      - TZ=Asia/Tokyo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "${POSTGRES_CPU_LIMIT:-0.5}"
+          memory: "${POSTGRES_MEMORY_LIMIT:-512M}"
+        reservations:
+          cpus: "${POSTGRES_CPU_RESERVATION:-0.1}"
+          memory: "${POSTGRES_MEMORY_RESERVATION:-128M}"
+
+  # Redisキャッシュサーバー
+  startup-wellness-redis:
+    image: redis:alpine
+    container_name: startup-wellness-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "${REDIS_CPU_LIMIT:-0.25}"
+          memory: "${REDIS_MEMORY_LIMIT:-256M}"
+        reservations:
+          cpus: "${REDIS_CPU_RESERVATION:-0.05}"
+          memory: "${REDIS_MEMORY_RESERVATION:-64M}"
+
+# ボリューム定義
+volumes:
+  backend_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ネットワーク設定
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450  # GCPのネットワークに最適化

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Body, HTTPException
 from sqlalchemy.orm import Session
-from database.database import get_db
+from database.connection import get_db
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 import pandas as pd

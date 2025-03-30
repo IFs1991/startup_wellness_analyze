@@ -1,0 +1,22 @@
+# 認証関連
+argon2-cffi==21.3.0       # パスワードハッシュ用
+PyJWT==2.6.0              # JWT認証用
+pyotp==2.8.0              # TOTP多要素認証用
+qrcode==7.4.2             # MFA QRコード生成用
+redis==4.5.4              # レート制限とセッション用
+email-validator==2.0.0    # メール検証用
+cryptography==39.0.1      # 暗号化機能用
+httpx==0.24.0             # 非同期HTTPクライアント
+
+# コンプライアンス関連
+pydantic==1.10.7          # データバリデーション用
+python-dateutil==2.8.2    # 日付処理用
+
+# データ分析・可視化関連
+wordcloud==1.9.2          # テキストの視覚化用
+matplotlib>=3.5.0         # 描画用
+nltk>=3.7                 # 自然言語処理用
+scikit-learn>=1.0.2       # 機械学習用
+networkx>=2.8.0           # ネットワーク分析用
+
+# その他既存の依存関係

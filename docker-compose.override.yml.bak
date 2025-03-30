@@ -1,0 +1,123 @@
+# 開発環境用のオーバーライド設定
+
+services:
+  backend:
+    build:
+      context: ./backend
+      args:
+        - BUILD_ENV=development
+    environment:
+      - LOG_LEVEL=DEBUG
+      - APP_ENV=development
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      # デバッグ用設定
+      - PYTHONBREAKPOINT=ipdb.set_trace
+    volumes:
+      # 開発時は常にソースコードをマウント
+      - type: bind
+        source: ./backend
+        target: /app
+        read_only: false
+      # シェルヒストリーを保持
+      - type: bind
+        source: ~/.bash_history
+        target: /root/.bash_history
+        read_only: false
+    ports:
+      # デバッグポートの公開
+      - "5678:5678"
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # デバッグモードの場合は健全性チェックを無効化
+    healthcheck:
+      disable: true
+    profiles:
+      - dev
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - NODE_ENV=development
+    environment:
+      - NODE_ENV=development
+      - REACT_APP_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true  # ホットリロード用
+    volumes:
+      # 開発時は常にソースコードをマウント
+      - type: bind
+        source: ./frontend
+        target: /app
+        read_only: false
+      # node_modulesはコンテナ内のものを使用
+      - type: volume
+        source: frontend_node_modules
+        target: /app/node_modules
+    command: ["npm", "start"]
+    profiles:
+      - dev
+
+  # 開発環境用のデータベースエミュレーター
+  firestore-emulator:
+    image: mtlynch/firestore-emulator:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - FIRESTORE_PROJECT_ID=startup-wellness-dev
+    profiles:
+      - emulators
+      - dev
+
+  # 開発環境用の認証エミュレーター
+  firebase-auth-emulator:
+    image: andreysenov/firebase-tools:latest
+    ports:
+      - "9099:9099"
+    entrypoint: ["firebase", "emulators:start", "--only", "auth", "--project", "startup-wellness-dev"]
+    profiles:
+      - emulators
+      - dev
+
+  # 開発環境用のRedis（キャッシュ用）
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    profiles:
+      - dev
+
+  # 開発環境用のPgAdmin
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@startup-wellness.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    profiles:
+      - dev
+      - db-tools
+
+  # 開発環境用のプロファイリングツール
+  pyinstrument-server:
+    image: python:3.11-slim
+    volumes:
+      - ./backend:/app
+      - ./profiling:/profiling
+    working_dir: /app
+    command: >
+      bash -c "pip install pyinstrument flask &&
+               python -m pyinstrument.server --host 0.0.0.0 --port 8042 --dir /profiling"
+    ports:
+      - "8042:8042"
+    profiles:
+      - profiling
+      - dev-tools
+
+volumes:
+  pgadmin_data:
+    driver: local
+  frontend_node_modules:
+    driver: local

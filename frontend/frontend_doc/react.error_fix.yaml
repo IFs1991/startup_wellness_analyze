@@ -1,0 +1,624 @@
+# Recharts Extension Replacement Implementation Plan
+
+project:
+  name: "startup_wellness_analyze"
+  frontend_path: "C:/Users/seekf/Desktop/startup_wellness_analyze/frontend"
+  framework: "React with TypeScript (vite-react-typescript-starter)"
+
+problem_description:
+  summary: "Several recharts extension packages declared in package.json do not exist in npm registry"
+  error_packages:
+    - "recharts-boxplot@^1.0.0"
+    - "recharts-gauge@^1.0.0"
+    - "recharts-heatmap@^1.0.0"
+    - "recharts-network@^1.0.0"
+    - "recharts-violin@^1.0.0"
+  error_type: "npm error code E404 (Not Found)"
+
+cleanup_steps:
+  - action: "Remove non-existent packages from package.json"
+    file: "package.json"
+    changes:
+      remove_dependencies:
+        - "recharts-gauge"
+        - "recharts-boxplot"
+        - "recharts-violin"
+        - "recharts-heatmap"
+        - "recharts-network"
+    command: "Edit package.json manually or use: npm uninstall recharts-gauge recharts-boxplot recharts-violin recharts-heatmap recharts-network"
+
+  - action: "Clean npm cache (optional but recommended)"
+    command: "npm cache clean --force"
+
+  - action: "Verify package.json is valid"
+    command: "npm list --depth=0"
+
+implementation:
+  gauge_chart:
+    library: "react-gauge-component"
+    rationale: "Active maintenance (updated 6 months ago), extensive customization options, Grafana-like styling"
+    installation:
+      command: "npm install react-gauge-component"
+
+    implementation_example:
+      file_path: "src/components/charts/GaugeChart.tsx"
+      code: |
+        import React from 'react';
+        import GaugeComponent from 'react-gauge-component';
+
+        interface GaugeChartProps {
+          value: number;
+          min?: number;
+          max?: number;
+          label?: string;
+          size?: string;
+        }
+
+        export const GaugeChart: React.FC<GaugeChartProps> = ({
+          value,
+          min = 0,
+          max = 100,
+          label = '',
+          size = '175px'
+        }) => {
+          // Calculate percentage for the gauge
+          const percentage = Math.min(Math.max((value - min) / (max - min), 0), 1);
+
+          return (
+            <div style={{ width: size, height: size }}>
+              <GaugeComponent
+                value={percentage * 100}
+                type="radial"
+                labels={{
+                  markLabel: {
+                    type: 'outer',
+                    marks: [
+                      { value: 0, label: `${min}` },
+                      { value: 25 },
+                      { value: 50 },
+                      { value: 75 },
+                      { value: 100, label: `${max}` }
+                    ]
+                  },
+                  valueLabel: {
+                    formatTextValue: () => `${value}`
+                  }
+                }}
+                arc={{
+                  colorArray: ['#5BE12C', '#F5CD19', '#EA4228'],
+                  subArcs: [{ limit: 40 }, { limit: 70 }, { limit: 100 }]
+                }}
+                pointer={{ elastic: true }}
+              />
+              {label && <div className="text-center mt-2">{label}</div>}
+            </div>
+          );
+        };
+
+  boxplot_chart:
+    library: "Use Recharts base components"
+    rationale: "Maintains visual consistency with existing Recharts charts, no additional dependencies"
+    implementation_example:
+      file_path: "src/components/charts/BoxPlotChart.tsx"
+      code: |
+        import React from 'react';
+        import {
+          ComposedChart,
+          Line,
+          Bar,
+          XAxis,
+          YAxis,
+          CartesianGrid,
+          Tooltip,
+          Legend,
+          Rectangle,
+          RectangleProps
+        } from 'recharts';
+
+        interface BoxPlotData {
+          name: string;
+          min: number;
+          q1: number;
+          median: number;
+          q3: number;
+          max: number;
+          [key: string]: any;
+        }
+
+        interface BoxPlotChartProps {
+          data: BoxPlotData[];
+          width?: number;
+          height?: number;
+          boxWidth?: number;
+        }
+
+        // Custom BoxPlot shape component
+        const BoxPlotShape = (props: RectangleProps & {
+          dataKey?: string;
+          Q1?: number;
+          median?: number;
+          Q3?: number;
+          min?: number;
+          max?: number;
+        }) => {
+          const { x, y, width, height, Q1, median, Q3, min, max } = props;
+
+          if (!x || !y || !width || !height ||
+              Q1 === undefined || median === undefined ||
+              Q3 === undefined || min === undefined || max === undefined) {
+            return null;
+          }
+
+          const centerX = (x || 0) + (width || 0) / 2;
+
+          return (
+            <g>
+              {/* Min to Max vertical line */}
+              <line
+                x1={centerX}
+                y1={y - height + min * height}
+                x2={centerX}
+                y2={y - height + max * height}
+                stroke="#000"
+                strokeWidth={1}
+              />
+
+              {/* Box from Q1 to Q3 */}
+              <rect
+                x={x}
+                y={y - height + Q1 * height}
+                width={width}
+                height={(Q3 - Q1) * height}
+                fill="#8884d8"
+                stroke="#000"
+                strokeWidth={1}
+                opacity={0.8}
+              />
+
+              {/* Median line */}
+              <line
+                x1={x}
+                y1={y - height + median * height}
+                x2={x + width}
+                y2={y - height + median * height}
+                stroke="#000"
+                strokeWidth={1.5}
+              />
+
+              {/* Min horizontal line */}
+              <line
+                x1={centerX - width / 4}
+                y1={y - height + min * height}
+                x2={centerX + width / 4}
+                y2={y - height + min * height}
+                stroke="#000"
+                strokeWidth={1}
+              />
+
+              {/* Max horizontal line */}
+              <line
+                x1={centerX - width / 4}
+                y1={y - height + max * height}
+                x2={centerX + width / 4}
+                y2={y - height + max * height}
+                stroke="#000"
+                strokeWidth={1}
+              />
+            </g>
+          );
+        };
+
+        export const BoxPlotChart: React.FC<BoxPlotChartProps> = ({
+          data,
+          width = 800,
+          height = 400,
+          boxWidth = 30
+        }) => {
+          const normalizedData = data.map(item => {
+            const range = item.max - item.min;
+            return {
+              ...item,
+              _min: 0,
+              _q1: (item.q1 - item.min) / range,
+              _median: (item.median - item.min) / range,
+              _q3: (item.q3 - item.min) / range,
+              _max: 1
+            };
+          });
+
+          return (
+            <ComposedChart
+              width={width}
+              height={height}
+              data={normalizedData}
+              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" />
+              <YAxis domain={[0, 'dataMax']} />
+              <Tooltip
+                formatter={(value, name, props) => {
+                  const item = data[props.index];
+                  if (name === 'boxPlot') return '';
+
+                  return [
+                    `Min: ${item.min}\nQ1: ${item.q1}\nMedian: ${item.median}\nQ3: ${item.q3}\nMax: ${item.max}`,
+                    item.name
+                  ];
+                }}
+              />
+              <Legend />
+              <Bar
+                dataKey="_q1"
+                name="boxPlot"
+                shape={(props) => (
+                  <BoxPlotShape
+                    {...props}
+                    Q1={normalizedData[props.index]._q1}
+                    median={normalizedData[props.index]._median}
+                    Q3={normalizedData[props.index]._q3}
+                    min={normalizedData[props.index]._min}
+                    max={normalizedData[props.index]._max}
+                  />
+                )}
+                barSize={boxWidth}
+              />
+            </ComposedChart>
+          );
+        };
+
+  heatmap_chart:
+    library: "react-heatmap-grid"
+    rationale: "Well-maintained, flexible grid-based heatmap visualization"
+    installation:
+      command: "npm install react-heatmap-grid"
+
+    implementation_example:
+      file_path: "src/components/charts/HeatmapChart.tsx"
+      code: |
+        import React from 'react';
+        import HeatMap from 'react-heatmap-grid';
+
+        interface HeatmapChartProps {
+          data: number[][];
+          xLabels: string[];
+          yLabels: string[];
+          cellSize?: number;
+          cellStyle?: React.CSSProperties;
+          cellRender?: (value: number) => React.ReactNode;
+          xLabelWidth?: number;
+        }
+
+        export const HeatmapChart: React.FC<HeatmapChartProps> = ({
+          data,
+          xLabels,
+          yLabels,
+          cellSize = 30,
+          cellStyle,
+          cellRender,
+          xLabelWidth = 60
+        }) => {
+          return (
+            <div style={{ fontSize: '13px' }}>
+              <HeatMap
+                xLabels={xLabels}
+                yLabels={yLabels}
+                data={data}
+                xLabelWidth={xLabelWidth}
+                cellStyle={(background, value, min, max) => ({
+                  background,
+                  fontSize: '11px',
+                  color: value > (max - min) / 2 ? '#fff' : '#000',
+                  ...cellStyle
+                })}
+                cellRender={cellRender}
+                title={(value) => `Value: ${value}`}
+                height={cellSize}
+              />
+            </div>
+          );
+        };
+
+  network_chart:
+    library: "react-force-graph"
+    rationale: "Seamless React integration, support for 2D/3D/VR visualizations"
+    installation:
+      command: "npm install react-force-graph"
+
+    implementation_example:
+      file_path: "src/components/charts/NetworkChart.tsx"
+      code: |
+        import React, { useRef, useCallback } from 'react';
+        import ForceGraph2D from 'react-force-graph-2d';
+
+        interface NetworkNode {
+          id: string;
+          name?: string;
+          val?: number;
+          color?: string;
+          [key: string]: any;
+        }
+
+        interface NetworkLink {
+          source: string;
+          target: string;
+          value?: number;
+          color?: string;
+          [key: string]: any;
+        }
+
+        interface NetworkChartProps {
+          nodes: NetworkNode[];
+          links: NetworkLink[];
+          width?: number;
+          height?: number;
+          nodeRelSize?: number;
+          nodeAutoColorBy?: string;
+          linkWidth?: number | ((link: NetworkLink) => number);
+          linkColor?: string | ((link: NetworkLink) => string);
+          backgroundColor?: string;
+        }
+
+        export const NetworkChart: React.FC<NetworkChartProps> = ({
+          nodes,
+          links,
+          width = 800,
+          height = 600,
+          nodeRelSize = 6,
+          nodeAutoColorBy = 'group',
+          linkWidth = 1.5,
+          linkColor = 'rgba(50, 50, 50, 0.4)',
+          backgroundColor = '#fff'
+        }) => {
+          const graphRef = useRef();
+
+          // Node click handler with zoom
+          const handleNodeClick = useCallback((node) => {
+            if (graphRef.current) {
+              // @ts-ignore - Type issues with the ref
+              const fg = graphRef.current;
+              // Aim at node from outside
+              const distance = 100;
+              const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z || 0);
+
+              fg.cameraPosition(
+                { x: node.x * distRatio, y: node.y * distRatio, z: (node.z || 0) * distRatio },
+                node,
+                1000
+              );
+            }
+          }, []);
+
+          return (
+            <ForceGraph2D
+              ref={graphRef}
+              width={width}
+              height={height}
+              graphData={{ nodes, links }}
+              nodeRelSize={nodeRelSize}
+              nodeAutoColorBy={nodeAutoColorBy}
+              nodeLabel={(node) => node.name || node.id}
+              onNodeClick={handleNodeClick}
+              linkWidth={linkWidth}
+              linkColor={linkColor}
+              backgroundColor={backgroundColor}
+              cooldownTicks={100}
+              linkDirectionalParticles={2}
+              linkDirectionalParticleWidth={2}
+            />
+          );
+        };
+
+  violin_chart:
+    library: "React and D3.js custom implementation"
+    rationale: "Maximum flexibility for specialized visualization needs"
+    installation:
+      command: "npm install d3"
+
+    implementation_example:
+      file_path: "src/components/charts/ViolinChart.tsx"
+      code: |
+        import React, { useRef, useEffect } from 'react';
+        import * as d3 from 'd3';
+
+        interface ViolinData {
+          name: string;
+          values: number[];
+        }
+
+        interface ViolinChartProps {
+          data: ViolinData[];
+          width?: number;
+          height?: number;
+          marginTop?: number;
+          marginRight?: number;
+          marginBottom?: number;
+          marginLeft?: number;
+          xDomain?: string[];
+          yDomain?: [number, number];
+          thresholds?: number;
+          colors?: string[];
+        }
+
+        export const ViolinChart: React.FC<ViolinChartProps> = ({
+          data,
+          width = 800,
+          height = 400,
+          marginTop = 40,
+          marginRight = 30,
+          marginBottom = 40,
+          marginLeft = 40,
+          xDomain,
+          yDomain,
+          thresholds = 20,
+          colors = d3.schemeCategory10
+        }) => {
+          const svgRef = useRef<SVGSVGElement>(null);
+
+          useEffect(() => {
+            if (!svgRef.current || !data || data.length === 0) return;
+
+            // Clear previous content
+            d3.select(svgRef.current).selectAll('*').remove();
+
+            // Compute domains
+            const keys = xDomain || data.map(d => d.name);
+            const allValues = data.flatMap(d => d.values);
+            const y = yDomain || [
+              Math.min(...allValues),
+              Math.max(...allValues)
+            ];
+
+            // Set up scales
+            const x = d3.scaleBand()
+              .domain(keys)
+              .range([marginLeft, width - marginRight])
+              .padding(0.15);
+
+            const yScale = d3.scaleLinear()
+              .domain(y)
+              .range([height - marginBottom, marginTop]);
+
+            // Create violin shapes
+            const violinWidth = Math.min(80, x.bandwidth());
+
+            // Set up the SVG container
+            const svg = d3.select(svgRef.current);
+
+            // Add X and Y axes
+            svg.append('g')
+              .attr('transform', `translate(0,${height - marginBottom})`)
+              .call(d3.axisBottom(x));
+
+            svg.append('g')
+              .attr('transform', `translate(${marginLeft},0)`)
+              .call(d3.axisLeft(yScale));
+
+            // Create violin plots
+            data.forEach((violinData, i) => {
+              // Compute kernel density estimation
+              const kde = kernelDensityEstimator(kernelEpanechnikov(7),
+                yScale.ticks(thresholds));
+              const density = kde(violinData.values);
+
+              // Calculate the maximal width
+              const maxWidth = d3.max(density, d => d[1]) || 0;
+
+              // Scale for the violin width
+              const xNum = d3.scaleLinear()
+                .domain([0, maxWidth])
+                .range([0, violinWidth / 2]);
+
+              // Draw the violin path
+              const violinG = svg.append('g')
+                .attr('transform', `translate(${x(violinData.name)! + x.bandwidth() / 2},0)`);
+
+              // Create the outline
+              const area = d3.area()
+                .x0(d => -xNum(d[1]))
+                .x1(d => xNum(d[1]))
+                .y(d => yScale(d[0]))
+                .curve(d3.curveCatmullRom);
+
+              violinG.append('path')
+                .attr('d', area(density))
+                .style('fill', colors[i % colors.length])
+                .style('opacity', 0.8)
+                .style('stroke', 'none');
+
+              // Add median line
+              const median = d3.median(violinData.values) || 0;
+              violinG.append('line')
+                .attr('x1', -violinWidth / 2)
+                .attr('x2', violinWidth / 2)
+                .attr('y1', yScale(median))
+                .attr('y2', yScale(median))
+                .style('stroke', 'black')
+                .style('stroke-width', 2);
+            });
+
+            // Helper functions for KDE
+            function kernelDensityEstimator(kernel: (v: number) => number, X: number[]) {
+              return function(V: number[]) {
+                return X.map(x => [x, d3.mean(V, v => kernel(x - v)) || 0]);
+              };
+            }
+
+            function kernelEpanechnikov(k: number) {
+              return function(v: number) {
+                return Math.abs(v /= k) <= 1 ? 0.75 * (1 - v * v) / k : 0;
+              };
+            }
+          }, [data, width, height, marginTop, marginRight, marginBottom, marginLeft,
+              xDomain, yDomain, thresholds, colors]);
+
+          return (
+            <svg
+              ref={svgRef}
+              width={width}
+              height={height}
+              style={{ display: 'block', overflow: 'visible' }}
+            />
+          );
+        };
+
+integration_steps:
+  - step: "Remove existing recharts extension dependencies"
+    description: "Modify package.json to remove the missing packages"
+
+  - step: "Install the replacement libraries"
+    command: |
+      npm install react-gauge-component react-heatmap-grid react-force-graph d3
+
+  - step: "Create component directory structure"
+    command: |
+      mkdir -p src/components/charts
+
+  - step: "Implement the chart components"
+    description: "Create the TypeScript files for each chart component as defined above"
+
+  - step: "Create a chart index barrel file"
+    file_path: "src/components/charts/index.ts"
+    content: |
+      export * from './GaugeChart';
+      export * from './BoxPlotChart';
+      export * from './HeatmapChart';
+      export * from './NetworkChart';
+      export * from './ViolinChart';
+
+  - step: "Update existing imports"
+    description: |
+      Replace any existing imports of the missing recharts extensions with the new components.
+      For example, replace:
+      import { GaugeChart } from 'recharts-gauge';
+      with:
+      import { GaugeChart } from '@/components/charts';
+
+testing:
+  - test: "Component render tests"
+    description: "Ensure each component renders correctly with sample data"
+
+  - test: "Responsive behavior"
+    description: "Verify components adapt to different screen sizes and container dimensions"
+
+  - test: "Performance testing"
+    description: |
+      Test with large datasets to ensure good performance, especially for network and heatmap visualizations
+
+documentation:
+  - document: "Component API documentation"
+    description: "Document the props and usage patterns for each component"
+
+  - document: "Usage examples"
+    description: "Provide example code for common visualization scenarios"
+
+  - document: "Migration guide"
+    description: |
+      If there are existing uses of the missing recharts extensions, document how to migrate to the new components
+
+maintenance_considerations:
+  - consideration: "Keep libraries updated"
+    description: "Regularly check for updates to the visualization libraries to ensure security and feature improvements"
+
+  - consideration: "Monitor performance"
+    description: "Large datasets may require optimization techniques specific to each visualization type"

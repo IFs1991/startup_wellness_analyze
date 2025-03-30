@@ -109,3 +109,8 @@ test-results/
 *.temp
 *.cache
 *.old
+
+# ルートディレクトリの環境変数ファイルとクレデンシャルディレクトリへの参照
+../credentials/
+../.env
+../.env.*

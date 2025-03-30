@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Node.js
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# ビルドフォルダ
+/build
+/dist
+/out
+/.next
+/.cache
+
+# テスト
+/coverage
+.jest-cache/
+/cypress/videos/
+/cypress/screenshots/
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ログ
+*.log
+logs/
+
+# タイプスクリプト
+*.tsbuildinfo
+
+# その他
+*.bak
+*.tmp
+*.temp
+
+# 除外しないファイル
+!.env
+!.env.*
+!credentials/
+!**/credentials/**

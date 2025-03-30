@@ -1,0 +1,106 @@
+/*
+ * Tailwind CSS ディレクティブ
+ * @tailwind - Tailwindのベース、コンポーネント、ユーティリティスタイルをインポート
+ * @apply - Tailwindのユーティリティクラスを既存のCSSセレクタに適用
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 13%;
+
+    --primary: 217 89% 61%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 4 78% 56%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 0 0% 97%;
+    --muted-foreground: 0 0% 45%;
+
+    --border: 0 0% 93%;
+    --ring: 217 89% 61%;
+  }
+
+  /* ダークテーマをデフォルトに設定 */
+  :root {
+    --background: 0 0% 7%;
+    --foreground: 0 0% 98%;
+
+    --card: 0 0% 9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 217 89% 61%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 4 78% 56%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
+
+    --border: 0 0% 20%;
+    --ring: 217 89% 61%;
+  }
+}
+
+body {
+  @apply bg-gray-900 text-gray-100;
+  min-height: 100vh;
+}
+
+/* ドロップダウンメニューのスタイル改善 */
+.select-content {
+  @apply bg-gray-800 border border-gray-700 shadow-lg;
+}
+
+.select-item {
+  @apply hover:bg-gray-700 cursor-pointer;
+}
+
+@layer components {
+  .sidebar-icon {
+    @apply h-5 w-5 mr-3 text-gray-400 group-hover:text-blue-400;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-gray-300 mb-1;
+  }
+
+  .form-input {
+    @apply block w-full rounded-md border-gray-700 bg-gray-800 text-white shadow-sm
+           focus:border-blue-500 focus:ring-blue-500 sm:text-sm;
+  }
+
+  .form-error {
+    @apply mt-1 text-sm text-red-400;
+  }
+
+  .btn {
+    @apply inline-flex justify-center rounded-md border border-transparent
+           px-4 py-2 text-sm font-medium shadow-sm focus:outline-none
+           focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900;
+  }
+
+  .btn-primary {
+    @apply bg-blue-600 text-white hover:bg-blue-700
+           focus:ring-blue-500;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600
+           focus:ring-blue-500;
+  }
+}

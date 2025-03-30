@@ -1,124 +1,114 @@
 # -*- coding: utf-8 -*-
 """
-設定ファイル
-Startup Wellness データ分析システムの設定情報を定義します。
-GCP/Firebase環境に最適化されています。
+[非推奨] データベース設定モジュール
+
+警告: このモジュールは非推奨であり、将来のバージョンで削除される予定です。
+代わりに以下のモジュールを使用してください:
+- データベース設定: backend.config.database_config
+- データベース接続: backend.database.connection
+
+後方互換性のために残されています。
 """
-import os
-from typing import Dict, List, Optional
-from google.cloud import secretmanager
-from google.auth import default
-from dotenv import load_dotenv
 
-# 開発環境の場合のみ .env を読み込み
-if os.getenv("ENVIRONMENT") != "production":
-    load_dotenv()
+import warnings
+import logging
+from typing import Dict, Any
 
-class Config:
-    # GCP Project 設定
-    PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-    REGION = os.getenv("GCP_REGION", "asia-northeast1")
+# 非推奨警告を表示
+warnings.warn(
+    "backend.database モジュールは非推奨です。代わりに backend.config.database_config と "
+    "backend.database.connection を使用してください。",
+    DeprecationWarning,
+    stacklevel=2
+)
 
-    @staticmethod
-    def get_secret(secret_id: str) -> str:
-        """
-        Secret Manager から機密情報を取得
-        """
-        try:
-            credentials, project = default()
-            client = secretmanager.SecretManagerServiceClient()
-            name = f"projects/{Config.PROJECT_ID}/secrets/{secret_id}/versions/latest"
-            response = client.access_secret_version(request={"name": name})
-            return response.payload.data.decode("UTF-8")
-        except Exception:
-            # 開発環境用のフォールバック
-            return os.getenv(secret_id, "")
+# ロガーの設定
+logger = logging.getLogger(__name__)
+logger.warning(
+    "backend.database モジュールは非推奨です。新しいコードでは "
+    "backend.config.database_config と backend.database.connection を使用してください。"
+)
 
-    # 認証設定
-    SECRET_KEY = get_secret("JWT_SECRET_KEY")
-    ALGORITHM = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-    # Google Forms設定
-    FORMS_CONFIG: Dict[str, Optional[str]] = {
-        "INITIAL_CONSULTATION": os.getenv("INITIAL_CONSULTATION_FORM_ID", None),
-        "LATEST_CONSULTATION": os.getenv("LATEST_CONSULTATION_FORM_ID", None),
-        "TREATMENT_EFFECT": os.getenv("TREATMENT_EFFECT_FORM_ID", None)
-    }
-
-    # Google Cloud Storage設定
-    BUCKET_NAME = f"{PROJECT_ID}-storage"
-    UPLOAD_FOLDER = "uploads"
-
-    # Firebase Admin SDK設定
-    FIREBASE_ADMIN_CREDENTIALS = os.getenv(
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        os.path.join(os.path.dirname(__file__), 'credentials', 'firebase-admin-sdk.json')
+# 新しいモジュールからの互換性インポート
+try:
+    from backend.config.database_config import (
+        DatabaseConfig,
+        DevelopmentDatabaseConfig,
+        ProductionDatabaseConfig,
+        TestingDatabaseConfig,
+        current_database_config as current_config
     )
 
-    # Firestore設定
-    FIRESTORE_COLLECTIONS = {
-        "USERS": "users",
-        "CONSULTATIONS": "consultations",
-        "TREATMENTS": "treatments",
-        "ANALYTICS": "analytics"
+    class DatabaseManager:
+        """
+        [非推奨] DatabaseManagerクラス
+
+        このクラスは後方互換性のために残されています。
+        新しいコードでは backend.database.connection.DatabaseManager を使用してください。
+        """
+        def __new__(cls, *args, **kwargs):
+            from backend.database.connection import DatabaseManager as NewDatabaseManager
+            warnings.warn(
+                "backend.database.DatabaseManager は非推奨です。"
+                "代わりに backend.database.connection.DatabaseManager を使用してください。",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            return NewDatabaseManager(*args, **kwargs)
+
+    # その他の互換性関数
+    def get_firestore_client():
+        """[非推奨] Firestoreクライアントを取得する互換性関数"""
+        from backend.database.connection import get_firestore_client as new_get_firestore_client
+        return new_get_firestore_client()
+
+    def get_db_session():
+        """[非推奨] SQLセッションを取得する互換性関数"""
+        from backend.database.connection import get_db_session as new_get_db_session
+        return new_get_db_session()
+
+except ImportError as e:
+    logger.error(f"新しいデータベースモジュールのインポートに失敗しました: {str(e)}")
+    # 失敗した場合は互換性のためのスタブを提供
+
+    class DatabaseConfig:
+        """DatabaseConfigスタブクラス"""
+        DATABASE_URL = "sqlite:///./test.db"
+        FIREBASE_ADMIN_CONFIG = None
+        FIRESTORE_COLLECTIONS = {
+            "USERS": "users",
+            "CONSULTATIONS": "consultations",
+            "TREATMENTS": "treatments",
+            "ANALYTICS": "analytics"
+        }
+
+    class DevelopmentDatabaseConfig(DatabaseConfig):
+        """開発環境用のデータベース設定"""
+        pass
+
+    class ProductionDatabaseConfig(DatabaseConfig):
+        """本番環境用のデータベース設定"""
+        pass
+
+    class TestingDatabaseConfig(DatabaseConfig):
+        """テスト環境用のデータベース設定"""
+        DATABASE_URL = "sqlite:///./test.db"
+
+    # 現在の環境に基づいて設定を選択
+    import os
+
+    config = {
+        "development": DevelopmentDatabaseConfig,
+        "production": ProductionDatabaseConfig,
+        "testing": TestingDatabaseConfig
     }
 
-    # Firebase Client設定
-    FIREBASE_CONFIG = {
-        "apiKey": get_secret("FIREBASE_API_KEY"),
-        "authDomain": f"{PROJECT_ID}.firebaseapp.com",
-        "projectId": PROJECT_ID,
-        "storageBucket": f"{PROJECT_ID}.appspot.com",
-        "messagingSenderId": get_secret("FIREBASE_MESSAGING_SENDER_ID"),
-        "appId": get_secret("FIREBASE_APP_ID"),
-        "measurementId": get_secret("FIREBASE_MEASUREMENT_ID")
-    }
+    current_config = config[os.getenv("ENVIRONMENT", "development")]()
 
-    # Vertex AI (Gemini) 設定
-    VERTEX_AI_LOCATION = REGION
-    VERTEX_AI_MODEL_NAME = "gemini-pro"
-    AI_MODELS: List[str] = [
-        "gemini-pro",
-        "text-bison",
-        "chat-bison",
-    ]
-
-    # アプリケーション設定
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-    API_V1_PREFIX = "/api/v1"
-    PROJECT_NAME = "Startup Wellness Analytics"
-    VERSION = "1.0.0"
-
-    # Cloud Logging 設定
-    ENABLE_CLOUD_LOGGING = os.getenv("ENVIRONMENT") == "production"
-
-    # フォームタイプの定義
-    FORM_TYPES = {
-        "INITIAL": "initial_consultation",
-        "LATEST": "latest_consultation",
-        "TREATMENT": "treatment_effect"
-    }
-
-# 環境別の設定クラスを定義
-class DevelopmentConfig(Config):
-    DEBUG = True
-    FIRESTORE_EMULATOR_HOST = os.getenv("FIRESTORE_EMULATOR_HOST", "localhost:8080")
-
-class ProductionConfig(Config):
-    DEBUG = False
-
-class TestingConfig(Config):
-    TESTING = True
-    DEBUG = True
-    FIRESTORE_EMULATOR_HOST = "localhost:8080"
-
-# 環境に応じた設定を選択
-config = {
-    "development": DevelopmentConfig,
-    "production": ProductionConfig,
-    "testing": TestingConfig
-}
-
-# 現在の環境の設定を取得
-current_config = config[os.getenv("ENVIRONMENT", "development")]()
+    class DatabaseManager:
+        """DatabaseManagerスタブクラス"""
+        @classmethod
+        def get_firestore_client(cls):
+            """Firestoreクライアントを取得するスタブメソッド"""
+            logger.warning("スタブのDatabaseManager.get_firestore_clientが呼び出されました")
+            return None

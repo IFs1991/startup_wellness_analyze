@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-モデル評価と改善のFirestoreサービス
-予測モデルの精度を監視し、評価結果をFirestoreに保存します。
+モデル評価マネージャー
+異なる予測モデルのパフォーマンス評価と比較を行います。
 """
-from typing import Dict, Any, Optional, List, Union
-import logging
-from datetime import datetime
+from typing import Dict, Any, Optional, List, Union, Tuple
 import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from google.cloud import firestore
-from google.cloud.firestore_v1.document import DocumentReference
-from google.cloud.firestore_v1.query import Query
+import numpy as np
+from datetime import datetime
+import logging
 import asyncio
-from backend.service.firestore.client import get_firestore_client, StorageError
+from google.cloud import firestore
+from google.cloud.firestore import DocumentReference, Query
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, precision_score, recall_score, f1_score
+from service.firestore.client import get_firestore_client, StorageError
 
 # ロギングの設定
 logger = logging.getLogger(__name__)
@@ -224,3 +224,6 @@ class FirestoreModelEvaluator:
         except Exception as e:
             logger.error(f"Error closing FirestoreModelEvaluator: {str(e)}")
             raise ModelEvaluationError(f"Cleanup error: {str(e)}") from e
+
+# クラスの別名を定義
+ModelEvaluator = FirestoreModelEvaluator

@@ -14,7 +14,7 @@ import numpy as np
 from datetime import datetime
 import logging
 from firebase_admin import firestore
-from ..service.firestore.client import FirestoreService, StorageError  # パスを修正
+from service.firestore.client import FirestoreService, StorageError  # 絶対インポートに修正
 
 
 

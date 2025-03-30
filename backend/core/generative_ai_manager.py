@@ -1,12 +1,19 @@
+# -*- coding: utf-8 -*-
 """
 Gemini APIとの通信およびレスポンスの永続化を管理するサービス
 """
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import logging
 import requests
 from fastapi import HTTPException, status
+import pandas as pd
+import numpy as np
+import asyncio
+import json
+import re
+from service.firestore.client import FirestoreService
 
 # ロギングの設定
 logger = logging.getLogger(__name__)
@@ -41,7 +48,7 @@ class GenerativeAIManager:
             if self.api_endpoint is None:
                 raise ValueError("GEMINI_API_ENDPOINT が設定されていません。")
 
-            from backend.service.firestore.client import FirestoreService
+            from service.firestore.client import FirestoreService
             self.firestore_service = FirestoreService()
             logger.info("GenerativeAIManager initialized successfully")
 

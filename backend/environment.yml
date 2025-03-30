@@ -1,0 +1,59 @@
+name: startup_wellness_analyze
+channels:
+  - defaults       # デフォルトチャンネルを最初に
+  - conda-forge    # 次に conda-forge
+  - pytorch        # 特定のパッケージのために
+dependencies:
+  # 基本環境
+  - python=3.11
+  - pip
+  - pyyaml=6.0     # YAMLパーサー（コンパイル済みバイナリとして追加）
+  # 科学計算基盤（コンパイル済み最適化ライブラリ）
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  # 高性能計算ライブラリ（システム最適化）
+  - openblas
+  - mkl
+  - libblas
+  - liblapack
+  - numba
+  # 並列処理と大規模データ処理
+  - dask
+  - pyarrow
+  # システムモニタリングとプロファイリング
+  - memory_profiler
+  - psutil
+  # クラウドストレージ連携（最適化バイナリ）
+  - s3fs
+  - gcsfs
+  # 深層学習フレームワーク
+  - pytorch
+  - torchvision
+  - tensorflow
+  - tensorflow-probability
+  - keras
+  # ベイズ推論（システム依存）
+  - pyro-ppl
+  # 分散処理とキャッシュ
+  - redis
+  # コンパイラとビルドツール
+  - cmake
+  - ninja
+  - gcc
+  - gxx
+  - gfortran
+  # pip依存パッケージ（最小限に抑える）
+  - pip:
+    - python-dotenv  # 環境変数設定
+    - flwr>=1.5.0    # Flower連合学習フレームワーク（condaでは提供されていない）
+    - tf-keras        # TensorFlow-Keras（TF 2.xの別パッケージ）
+    - google-generativeai>=0.4.0  # Gemini API
+    - pillow         # 画像処理
+    - httpx          # 非同期HTTP
+# 注意事項:
+# - このファイルはシステム依存パッケージとコンパイル済みバイナリに特化しています
+# - matplotlibやOpenCVの代わりにGemini APIを使用して動的に描画を生成します
+# - アプリケーション固有のライブラリは requirements.txt で管理してください
+# - 開発環境とプロダクション環境で最適なパフォーマンスを得るための構成です

@@ -1,0 +1,1079 @@
+---
+# マンバ/コンダ複合環境を活用した大規模データ処理システム要件定義書
+# 2025年3月12日版
+
+# 1. プロジェクト概要
+project:
+  name: "大規模因果推論分析プラットフォーム"
+  description: "FastAPIベースのウェブアプリケーションをmamba/conda複合環境で効率的に管理・保守・拡張するためのシステム"
+  objectives:
+    - "データ分析、機械学習、因果推論機能の提供"
+    - "保守点検作業の効率化"
+    - "拡張性の高い設計の実現"
+    - "コスト最適化の徹底"
+    - "大規模データ処理への段階的対応"
+  infrastructure: "Google Cloud Platform (GCP)"
+  data_scale:
+    current: "300件/月（120次元データポイント）"
+    target: "10,000件/月（120次元データポイント）"
+    growth_timeline: "1年以内に段階的に増加"
+
+# 2. 環境構成要件
+environment:
+  base:
+    python_version: "3.12"
+    conda_version: "latest"
+    mamba_version: "latest"
+
+  setup:
+    environment_name: "causal-analytics"
+    channels:
+      - "conda-forge"
+      - "defaults"
+      - "pytorch"
+
+    file_structure:
+      environment_yml: true
+      requirements_txt: true
+      setup_scripts: true
+
+  dependencies:
+    frameworks:
+      - name: "fastapi"
+        version: ">=0.115.0"
+        purpose: "ウェブAPIフレームワーク"
+      - name: "dash"
+        version: "==2.18.2"
+        purpose: "インタラクティブダッシュボード"
+
+    data_processing:
+      - name: "pandas"
+        version: ">=2.2.0"
+      - name: "numpy"
+        version: ">=2.0.0"
+      - name: "openpyxl"
+        version: "==3.1.5"
+      - name: "dask"
+        version: "latest"
+        purpose: "大規模データの並列処理"
+
+    machine_learning:
+      - name: "scikit-learn"
+        version: ">=1.3.1,<1.5.0"
+        note: "econmlの制約(scikit-learn<1.5)とmlxtendの制約(>=1.3.1)を満たす"
+      - name: "tensorflow"
+        version: ">=2.8.0"
+        constraints: "GPUサポート検討"
+      - name: "tensorflow-federated"
+        version: ">=0.20.0"
+        purpose: "連合学習の実装"
+
+    causal_inference:
+      - name: "dowhy"
+        version: ">=0.11"
+      - name: "econml"
+        version: ">=0.14.2"
+      - name: "pymc"
+        version: ">=5.10.4"
+      - name: "causalimpact"
+        version: ">=0.2.6"
+
+    visualization:
+      - name: "matplotlib"
+        version: "==3.10.1"
+      - name: "seaborn"
+        version: "==0.13.2"
+      - name: "plotly"
+        version: "==6.0.0"
+
+    cloud_integration:
+      - name: "google-cloud-firestore"
+        version: ">=2.11.0"
+      - name: "google-cloud-bigquery"
+        version: ">=3.11.4"
+      - name: "google-cloud-storage"
+        version: ">=2.8.0"
+      - name: "google-cloud-scheduler"
+        version: "latest"
+        purpose: "東京リージョン割引時間帯での処理スケジューリング"
+
+    data_pipeline:
+      - name: "apache-airflow"
+        version: "==2.10.0"
+        purpose: "ワークフロー自動化と大規模データ処理のオーケストレーション"
+      - name: "prefect"
+        version: "latest"
+        purpose: "モダンなデータフロー管理（代替オプション）"
+
+  dependency_management:
+    strategy: "mamba/conda複合環境"
+    benefits:
+      - "mambaの高速パッケージ解決能力の活用"
+      - "condaの安定したエコシステムの利用"
+      - "Python 3.12対応パッケージの一元管理"
+    conflict_resolution:
+      approach: "バージョンマトリックス管理と互換性テスト"
+
+# 3. アプリケーションアーキテクチャ
+architecture:
+  pattern: "スケーラブルなモジュール化アーキテクチャ"
+  design_principles:
+    - "水平スケーリング可能なコンポーネント設計"
+    - "マイクロサービス指向"
+    - "非同期処理によるスループット最大化"
+    - "段階的拡張を考慮した柔軟なインターフェース"
+
+  components:
+    api:
+      framework: "FastAPI"
+      endpoints:
+        - "causal_inference"
+        - "machine_learning"
+        - "reporting"
+        - "federated_learning"
+      scaling:
+        initial: "2-3インスタンス"
+        growth_plan: "負荷に応じて5-10インスタンスへ拡張"
+
+    dashboard:
+      framework: "Dash"
+      features:
+        - "インタラクティブな可視化"
+        - "レポート生成機能"
+        - "モデル結果表示"
+      caching:
+        strategy: "大規模データ向け階層型キャッシング"
+        implementation: "初期段階からの基盤構築"
+
+    services:
+      - name: "causality"
+        description: "因果推論アルゴリズム実装"
+        submodules:
+          - "dowhy_service"
+          - "econml_service"
+          - "causal_impact_service"
+        scaling_approach: "タスクベースの並列処理"
+
+      - name: "ml"
+        description: "機械学習サービス"
+        submodules:
+          - "prediction_service"
+          - "classification_service"
+          - "clustering_service"
+          - "federated_learning_service"
+        scaling_approach: "データパーティショニングによる分散処理"
+
+      - name: "reporting"
+        description: "レポート生成サービス"
+        submodules:
+          - "pdf_generator"
+          - "excel_exporter"
+          - "visualization_service"
+        optimization: "非同期レンダリングとバッチ処理"
+
+      - name: "data_processing"
+        description: "大規模データ処理パイプライン"
+        submodules:
+          - "etl_pipeline"
+          - "feature_engineering"
+          - "dimension_reduction"
+          - "incremental_processing"
+        implementation_phase:
+          initial: "基本パイプライン構造とワークフロー"
+          growth: "並列処理とストリーミング機能"
+          large_scale: "フル分散処理システム"
+
+  extension_points:
+    - name: "プラグイン設計パターン"
+      description: "新しい因果推論・機械学習アルゴリズムの動的追加"
+
+    - name: "APIインターフェース拡張"
+      description: "新しいエンドポイントと機能の追加"
+
+    - name: "データソース統合"
+      description: "新しいデータソースコネクタの追加"
+
+    - name: "処理モジュール拡張"
+      description: "大規模データ処理用の特殊アルゴリズム追加"
+
+# 4. 保守運用要件
+maintenance:
+  procedures:
+    regular_checks:
+      frequency: "月次"
+      tasks:
+        - "環境の依存関係チェック"
+        - "パッケージの更新確認"
+        - "脆弱性スキャン"
+
+    federated_learning:
+      frequency: "15日ごと"
+      timing: "東京リージョンの割引時間帯を優先（主に夜間帯）"
+      tasks:
+        - "グローバルモデルの更新"
+        - "エッジデバイスへのモデル配布"
+        - "学習結果の集約とモデル評価"
+        - "性能メトリクスの記録"
+
+    dependency_updates:
+      frequency: "四半期"
+      process:
+        - "更新候補のリストアップ"
+        - "更新前のスナップショット作成"
+        - "段階的更新と検証"
+
+    compatibility_management:
+      strategy: "バージョン互換性マトリックス管理"
+      tracking:
+        - "主要依存関係の互換性制約"
+        - "最終検証日の記録"
+
+    performance_monitoring:
+      frequency: "週次"
+      metrics:
+        - "処理時間の変化（データ量の増加と相関付け）"
+        - "リソース使用率の傾向分析"
+        - "ボトルネック検出"
+      alerting:
+        - "閾値を超えたリソース使用率の検出"
+        - "異常なレイテンシの検出"
+        - "障害予測アラート"
+
+  troubleshooting:
+    dependency_conflicts:
+      detection: "mamba list --explicit"
+      resolution_steps:
+        - "conda-forgeチャンネルからの代替バージョン検討"
+        - "互換性のあるバージョンへのダウングレード"
+        - "仮想環境の分離（重大な衝突の場合）"
+
+    environment_restoration:
+      backup_strategy: "定期的なenvironment.ymlスナップショット"
+      restore_process:
+        - "破損環境の削除"
+        - "バックアップからの再作成"
+        - "最新更新の適用"
+
+    large_scale_processing_issues:
+      detection:
+        - "処理時間の異常検出"
+        - "メモリ使用量の監視"
+        - "部分的処理失敗の特定"
+      resolution:
+        - "データパーティショニング戦略の最適化"
+        - "フォールバック処理パイプラインの起動"
+        - "段階的リカバリープロセス"
+
+# 5. テスト・CI/CD要件
+testing:
+  frameworks:
+    - name: "pytest"
+      version: "==8.3.2"
+      purpose: "自動テスト"
+
+    - name: "pytest-asyncio"
+      version: ">=0.23.5"
+      purpose: "非同期テスト"
+
+    - name: "locust"
+      version: "latest"
+      purpose: "負荷テストと大規模データ処理シミュレーション"
+
+  code_quality:
+    - name: "flake8"
+      version: "==7.1.1"
+      purpose: "コード品質チェック"
+
+    - name: "black"
+      version: "==24.8.0"
+      purpose: "コードフォーマット"
+
+    - name: "mypy"
+      version: "==1.11.2"
+      purpose: "静的型チェック"
+
+  large_scale_testing:
+    data_generation:
+      - "シンセティックデータ生成パイプライン"
+      - "実データサブセットの安全な複製"
+      - "スケーラビリティ評価用のデータ拡張"
+
+    performance_benchmarks:
+      - "データ量増加に対する処理時間測定"
+      - "リソース使用効率のプロファイリング"
+      - "スケーリング効率係数の計算"
+
+  ci_cd:
+    platform: "GitHub Actions"
+    workflows:
+      - name: "テストスイート実行"
+        trigger: "プッシュ、PR"
+        steps:
+          - "環境セットアップ"
+          - "テスト実行"
+          - "コード品質チェック"
+
+      - name: "環境一貫性検証"
+        trigger: "スケジュール（週次）"
+        steps:
+          - "環境エクスポート"
+          - "基準との差分検出"
+          - "重大な変更の検出"
+
+      - name: "連合学習ワークフロー"
+        trigger: "スケジュール（15日ごと）"
+        steps:
+          - "グローバルモデルサーバー起動"
+          - "東京リージョン割引時間帯の確認と実行タイミング最適化"
+          - "モデル配布プロセス実行"
+          - "集約結果の検証"
+          - "モデルの性能評価"
+          - "結果レポート生成"
+
+      - name: "スケーラビリティテスト"
+        trigger: "月次または主要リリース時"
+        steps:
+          - "大規模データセットでのパフォーマンステスト"
+          - "ボトルネック分析"
+          - "リソース使用効率のベンチマーク"
+
+# 6. セキュリティ要件
+security:
+  dependency_vulnerability:
+    scanning:
+      tool: "safety"
+      frequency: "週次"
+      automation: true
+
+  environment_isolation:
+    strategy:
+      - "本番/開発/テスト環境の厳格な分離"
+      - "環境変数による設定分離"
+      - "アクセス制御の階層化"
+
+  principle_of_least_privilege:
+    implementation:
+      - "サービスアカウント権限の制限"
+      - "APIキーの範囲制限"
+      - "コンテナ化による追加の分離"
+
+  federated_learning_security:
+    privacy_measures:
+      - "差分プライバシーの実装"
+      - "セキュアアグリゲーションプロトコル"
+      - "勾配圧縮と量子化"
+
+    data_protection:
+      - "ローカルデータの共有回避"
+      - "モデル更新のみの集約"
+      - "モデル構造の暗号化"
+
+  large_scale_data_security:
+    data_encryption:
+      - "保存データの暗号化"
+      - "転送中データの暗号化"
+      - "鍵管理の自動化"
+
+    access_control:
+      - "細粒度アクセス制御"
+      - "一時的アクセス権限の自動失効"
+      - "アクセスログの監査"
+
+  libraries:
+    - name: "pycryptodome"
+      version: "==3.21.0"
+    - name: "bcrypt"
+      version: "==4.2.0"
+    - name: "python-jose[cryptography]"
+      version: ">=3.3.0"
+    - name: "authlib"
+      version: "==1.3.2"
+
+# 7. パフォーマンス最適化要件
+performance:
+  mamba_optimization:
+    benefits:
+      - "高速なパッケージ解決"
+      - "効率的な依存関係管理"
+
+    strategies:
+      - "厳格なチャンネル優先度の利用"
+      - "不要パッケージの削除オプション活用"
+
+  computation_optimization:
+    profiling:
+      - "メモリ使用量監視"
+      - "CPU/GPU使用効率の最適化"
+      - "並列処理の効率化"
+
+    caching:
+      - "中間計算結果のキャッシュ"
+      - "データベースクエリの最適化"
+      - "メモリ内キャッシュの活用"
+
+    large_scale_strategies:
+      initial_implementation:
+        - "基本的なパーティショニング構造"
+        - "シンプルなバッチ処理"
+        - "メモリ効率の高いデータ構造"
+
+      growth_phase:
+        - "並列処理パイプライン"
+        - "分散キャッシング"
+        - "次元削減アルゴリズム"
+
+      large_scale:
+        - "フル分散処理アーキテクチャ"
+        - "GPU/TPU最適化"
+        - "カスタマイズされた高効率アルゴリズム"
+
+  memory_management:
+    strategies:
+      - "DataFrameのメモリ使用量最適化"
+      - "精度調整による効率化"
+      - "メモリ使用状況のリアルタイム監視"
+
+    high_dimensional_data:
+      - "120次元データに対する最適なデータ構造"
+      - "スパース表現の活用"
+      - "次元削減前処理パイプライン"
+      - "レイジーローディングと評価"
+
+    large_volume_strategies:
+      - "ストリーミング処理"
+      - "インクリメンタルな分析"
+      - "オンデマンドの特徴計算"
+
+# 8. 連合学習要件
+federated_learning:
+  architecture:
+    pattern: "クライアント-サーバーモデル"
+    components:
+      - name: "グローバルモデルサーバー"
+        role: "集約モデルの保存・配布"
+        hosting: "GCP Cloud Functions および Cloud Storage"
+
+      - name: "クライアントランタイム"
+        role: "エッジでのモデルトレーニング"
+        implementation: "TensorFlow Federated"
+
+  process:
+    frequency: "15日ごと"
+    timing: "東京リージョンの割引時間帯を優先（主に夜間帯）"
+    phases:
+      - name: "モデル配布"
+        description: "最新のグローバルモデルをクライアントに配布"
+        implementation: "Cloud Storage経由"
+
+      - name: "ローカルトレーニング"
+        description: "クライアントがローカルデータでモデルを訓練"
+        privacy: "データは外部に共有されない"
+
+      - name: "モデル更新集約"
+        description: "クライアントの更新を安全に集約"
+        method: "セキュアアグリゲーション"
+
+      - name: "グローバル更新"
+        description: "集約された更新からグローバルモデルを更新"
+        validation: "性能メトリクスによる検証"
+
+  security_privacy:
+    measures:
+      - "差分プライバシー"
+      - "安全な集約プロトコル"
+      - "クライアント認証"
+
+    compliance:
+      - "GDPR対応"
+      - "データ所在地の法的要件への適合"
+
+  metrics:
+    performance:
+      - "グローバルモデル精度"
+      - "クライアント間の性能分散"
+      - "通信効率"
+
+    monitoring:
+      - "クライアント参加率"
+      - "失敗率"
+      - "収束速度"
+
+  orchestration:
+    tool: "Apache Airflow"
+    workflow:
+      - "学習サイクル開始トリガー (15日ごと)"
+      - "東京リージョン割引時間帯の確認と実行タイミング最適化"
+      - "クライアント参加確認"
+      - "モデル配布ステータス監視"
+      - "更新集約完了確認"
+      - "バージョン管理とロールバックメカニズム"
+
+  large_scale_adaptation:
+    initial_implementation:
+      - "基本的な連合学習フレームワーク構築"
+      - "小規模テスト用クライアントセット"
+      - "モニタリング基盤"
+
+    scaling_strategy:
+      - "クライアント数の段階的増加"
+      - "モデル圧縮技術の導入"
+      - "効率的な通信プロトコル"
+
+# 9. GCPインフラストラクチャ最適化
+gcp_infrastructure:
+  compute:
+    instance_types:
+      - type: "n2-standard-2"
+        purpose: "APIサーバー"
+        count: 2
+      - type: "n2-standard-4"
+        purpose: "計算ワーカー"
+        count: "自動スケーリング (2-10)"
+      - type: "n2-standard-8"
+        purpose: "連合学習グローバルサーバー"
+        count: 1
+        schedule: "15日ごとの連合学習時に稼働"
+      - type: "n2-standard-16"
+        purpose: "大規模データ処理"
+        count: "需要に応じて0-5"
+        implementation_phase: "データ量5,000件/月以上"
+
+    region_preferences:
+      primary_region: "asia-northeast1 (東京)"
+      justification: "ユーザー近接性とレイテンシ最適化"
+
+    scheduling_optimization:
+      ml_workloads:
+        preferred_time: "GCP割引時間帯 (主に夜間・早朝)"
+        reason: "Sustained Use割引と時間帯別料金の最大活用"
+        implementation: "Cloud Schedulerによる自動化"
+
+    optimization:
+      - strategy: "プリエンプティブルVM活用"
+        target: "非クリティカルワークロード"
+        savings: "50-70%"
+
+      - strategy: "コミットメント割引"
+        term: "1年または3年"
+        resources:
+          - "vCPU (32)"
+          - "メモリ (128GB)"
+        savings: "20-40%"
+        implementation_phase: "データ量2,000件/月以上"
+
+      - strategy: "自動スケーリング"
+        metrics:
+          - "CPU使用率 (70%目標)"
+          - "キューサイズ"
+        cooldown_periods:
+          scale_in: 300
+          scale_out: 60
+
+      - strategy: "コンテナ化とKubernetes"
+        purpose: "リソース効率の最適化"
+        implementation_phase: "初期から基盤構築、段階的拡張"
+
+  storage:
+    buckets:
+      - name: "analytics-data-lake"
+        location: "ASIA"
+        class: "ライフサイクル管理付き"
+
+    optimization:
+      - strategy: "ストレージクラス自動最適化"
+        rules:
+          - "30日以上アクセスなし: NEARLINE"
+          - "90日以上アクセスなし: COLDLINE"
+          - "365日以上アクセスなし: ARCHIVE"
+
+      - strategy: "オブジェクトライフサイクル管理"
+        implementation: "自動ポリシー設定"
+        phase: "初期段階から導入"
+
+    large_scale_strategies:
+      - "階層型ストレージアーキテクチャ"
+      - "データパーティショニング"
+      - "アクセスパターンに基づく最適化"
+
+  networking:
+    optimization:
+      - strategy: "Cloud CDN活用"
+        assets: "静的アセット"
+        ttl: 3600
+        phase: "ユーザー拡大フェーズ（2,000件/月以上）"
+
+      - strategy: "リージョン最適化"
+        approach: "ユーザー分布に基づく配置"
+        phase: "初期段階から東京リージョン優先"
+
+    large_scale_strategies:
+      - "効率的なデータ転送パターン"
+      - "バッチ転送の最適化"
+      - "圧縮アルゴリズムの活用"
+
+  bigquery:
+    optimization:
+      - strategy: "クエリコスト最適化"
+        techniques:
+          - "SELECT * の回避"
+          - "パーティショニングの活用"
+          - "クラスタリングの活用"
+        phase: "初期段階から導入（基盤設計）"
+
+      - strategy: "パーティション最適化"
+        threshold: "1GB以上のテーブル"
+        phase: "データ量1,000件/月以上"
+
+    large_scale_strategies:
+      - "マテリアライズドビュー"
+      - "複雑なクエリの最適化"
+      - "BI Engine活用"
+      - "費用対効果の高いスロット予約"
+
+  cost_monitoring:
+    tools:
+      - name: "Cloud Monitoringアラート"
+        thresholds:
+          - "予算の90%到達時"
+          - "異常な支出パターン検出時"
+
+      - name: "BigQueryエクスポート"
+        dataset: "billing_export"
+        analysis_frequency: "日次"
+
+    dashboard:
+      metrics:
+        - "サービス別コスト内訳"
+        - "日別コストトレンド"
+        - "プロジェクト別コスト"
+      update_frequency: "日次"
+
+    implementation_phase: "初期段階から導入"
+
+# 10. コスト最適化戦略
+cost_optimization:
+  compute_resources:
+    strategies:
+      - name: "自動スケーリング"
+        implementation: "負荷に基づく動的調整"
+        savings_target: "20-30%"
+        phase: "初期段階から基盤実装"
+
+      - name: "コンテナ化"
+        benefits:
+          - "リソース使用効率向上"
+          - "管理オーバーヘッド削減"
+        phase: "初期段階から導入"
+
+  development_efficiency:
+    strategies:
+      - name: "環境構築の自動化"
+        implementation: "スクリプト化されたセットアップ"
+        savings: "開発時間の25%削減"
+        phase: "初期段階から導入"
+
+      - name: "モジュール化"
+        benefits:
+          - "開発効率向上"
+          - "並行開発の実現"
+        phase: "初期段階からのアーキテクチャ設計"
+
+  processing_optimization:
+    strategies:
+      - name: "遅延評価と並列処理"
+        implementation: "Daskおよび並列処理の活用"
+        benefits: "大規模データ処理の効率化"
+        phase: "基盤を初期段階から準備、データ量増加時に拡張"
+
+      - name: "メモリ最適化"
+        implementation: "DataFrameの型最適化"
+        savings: "メモリ使用量30-50%削減"
+        phase: "初期段階から導入"
+
+      - name: "次元削減前処理"
+        implementation: "PCA、特徴量選択"
+        benefits: "120次元データの効率的処理"
+        phase: "基盤を初期から導入、データ量2,000件/月時に本格活用"
+
+  cloud_resources:
+    strategies:
+      - name: "GCPオートスケーリング"
+        implementation: "負荷ベースの自動調整"
+        target_utilization: 70
+        phase: "初期段階から設計"
+
+      - name: "スポットインスタンス"
+        implementation: "多様なインスタンスタイプの利用"
+        savings: "50-70%のコスト削減"
+        phase: "データ量500件/月以上"
+
+      - name: "リージョン・時間最適化"
+        implementation: "東京リージョン(asia-northeast1)の割引時間帯に機械学習処理をスケジュール"
+        benefits:
+          - "Sustained Use割引の最大活用"
+          - "時間帯別料金の最適化"
+          - "処理効率の向上"
+        tools: "Cloud Scheduler と Pub/Sub による自動化"
+        phase: "初期段階から導入"
+
+  large_scale_data_strategies:
+    initial_phase:
+      - name: "基盤アーキテクチャの構築"
+        implementation: "スケーラブルなデータパイプライン設計"
+        benefits: "将来の拡張を容易にする"
+
+      - name: "自動化パイプラインの構築"
+        implementation: "Airflowによるワークフロー自動化"
+        benefits: "手動作業の削減と一貫性確保"
+
+      - name: "モニタリング基盤の構築"
+        implementation: "コストと性能のリアルタイム監視"
+        benefits: "早期の問題検出と最適化"
+
+    growth_phase:
+      - name: "インクリメンタル処理導入"
+        threshold: "データ量2,000件/月以上"
+        benefits: "全データの再処理回避によるコスト削減"
+
+      - name: "データパーティショニング高度化"
+        threshold: "データ量5,000件/月以上"
+        benefits: "並列処理効率の向上"
+
+    large_scale_phase:
+      - name: "分散処理アーキテクチャ導入"
+        threshold: "データ量7,000件/月以上"
+        benefits: "線形スケーリングの実現"
+
+      - name: "リソース予約とコミットメント"
+        threshold: "データ量10,000件/月"
+        benefits: "長期的なコスト削減"
+
+  roi_maximization:
+    priority_matrix:
+      high_priority:
+        - "データインポートAPI拡張"
+        - "レポート自動生成機能"
+        - "分析結果エクスポート"
+        - "基盤アーキテクチャの拡張性確保"
+
+      medium_priority:
+        - "因果推論可視化ダッシュボード"
+        - "マルチテナント対応"
+        - "次元削減パイプライン"
+
+      low_priority:
+        - "高度なベイズモデリング"
+        - "リアルタイムデータ処理"
+        - "複雑なクエリ最適化"
+
+    implementation_phases:
+      - name: "フェーズ1 (〜500件/月)"
+        focus: "基盤強化と高ROI機能"
+        cost_savings: "約20%"
+        key_initiatives:
+          - "東京リージョン割引時間帯活用"
+          - "基本的なパイプライン自動化"
+          - "コンテナ化とCI/CD"
+
+      - name: "フェーズ2 (500〜2,000件/月)"
+        focus: "ユーザー体験向上と効率化"
+        cost_savings: "約15%"
+        key_initiatives:
+          - "スポットインスタンスの部分的導入"
+          - "次元削減前処理の実装"
+          - "BigQueryパーティショニング最適化"
+
+      - name: "フェーズ3 (2,000〜5,000件/月)"
+        focus: "スケーラビリティ強化"
+        cost_savings: "約10%"
+        key_initiatives:
+          - "分散処理アーキテクチャの導入"
+          - "増分処理パイプラインの実装"
+          - "データストレージの階層化"
+
+      - name: "フェーズ4 (5,000〜10,000件/月)"
+        focus: "大規模処理の最適化"
+        cost_savings: "約20%"
+        key_initiatives:
+          - "フル分散処理環境"
+          - "高度なキャッシング戦略"
+          - "複雑なオートスケーリング"
+
+# 11. ドキュメント要件
+documentation:
+  developer:
+    - name: "環境セットアップガイド"
+      sections:
+        - "mamba/condaの初期構築手順"
+        - "開発環境の構築"
+        - "依存関係の管理方法"
+      phase: "初期段階から作成"
+
+    - name: "アーキテクチャドキュメント"
+      sections:
+        - "システム全体構成図"
+        - "モジュール間の依存関係"
+        - "拡張ポイントの説明"
+        - "大規模データ処理のためのスケーリングプラン"
+      phase: "初期段階から作成、段階的に拡充"
+
+    - name: "APIリファレンス"
+      sections:
+        - "エンドポイント仕様"
+        - "リクエスト/レスポンス例"
+        - "エラーハンドリング"
+        - "パフォーマンス考慮事項"
+      phase: "初期段階からの基盤作成、継続的更新"
+
+  operations:
+    - name: "デプロイメントガイド"
+      sections:
+        - "環境構築手順"
+        - "設定パラメータ"
+        - "スケーリング戦略"
+        - "大規模データ対応のインフラ調整手順"
+      phase: "初期段階から作成、段階的に詳細化"
+
+    - name: "メンテナンスマニュアル"
+      sections:
+        - "定期的なメンテナンスタスク"
+        - "バックアップと復元手順"
+        - "トラブルシューティングガイド"
+        - "大規模データ処理時の障害対応"
+      phase: "初期から基本作成、実運用で拡充"
+
+    - name: "監視システム設計"
+      sections:
+        - "主要メトリクス一覧"
+        - "アラート設定"
+        - "パフォーマンスベンチマーク"
+        - "スケーリングトリガーと閾値"
+      phase: "初期から設計、データ量増加時に拡充"
+
+  end_user:
+    - name: "APIユーザーガイド"
+      sections:
+        - "認証と認可"
+        - "リソース利用制限"
+        - "大規模リクエスト最適化"
+      phase: "APIリリースと同時に作成"
+
+    - name: "ダッシュボード利用ガイド"
+      sections:
+        - "データ可視化機能"
+        - "レポート生成"
+        - "大規模データセット操作のベストプラクティス"
+      phase: "ダッシュボードリリースと同時に作成"
+
+# 12. リスク管理
+risk_management:
+  assessment_matrix:
+    - risk: "依存パッケージの互換性問題"
+      impact: "高"
+      probability: "中"
+      mitigation: "バージョンピン留め、事前テスト"
+      phase: "継続的に監視"
+
+    - risk: "計算リソースの不足"
+      impact: "中"
+      probability: "高"
+      mitigation: "スケーリング戦略、分散処理"
+      phase: "データ量2,000件/月から重点監視"
+
+    - risk: "セキュリティ脆弱性"
+      impact: "高"
+      probability: "低"
+      mitigation: "定期的なスキャン、迅速なパッチ適用"
+      phase: "初期段階から対策"
+
+    - risk: "データ整合性の問題"
+      impact: "高"
+      probability: "低"
+      mitigation: "検証テスト、トランザクション処理"
+      phase: "初期段階から対策"
+
+    - risk: "大規模データ処理の失敗"
+      impact: "高"
+      probability: "中"
+      mitigation: "段階的処理、チェックポイント、自動リトライ"
+      phase: "データ量5,000件/月から重点対策"
+
+  recovery_plan:
+    backup_strategy:
+      - "環境定義ファイルの定期バックアップ"
+      - "データのスナップショット取得"
+      - "設定情報の履歴管理"
+      - "大規模処理のチェックポイント保存"
+
+    incident_response:
+      - "エスカレーションマトリックス"
+      - "復旧手順の文書化"
+      - "回復時間目標の設定"
+      - "段階的リカバリープロセス"
+
+    large_scale_data_recovery:
+      - "処理状態の永続化"
+      - "部分的障害からの継続処理"
+      - "データ整合性検証プロセス"
+
+# 13. 持続的改善プロセス
+continuous_improvement:
+  technical_debt:
+    monitoring:
+      - "コード品質メトリクスの追跡"
+      - "テストカバレッジの維持"
+      - "リファクタリング優先度の評価"
+      - "スケーラビリティボトルネックの特定"
+
+    dependency_updates:
+      - "主要ライブラリのロードマップ追跡"
+      - "アップグレードの計画的実施"
+      - "廃止予定機能の早期対応"
+      - "大規模データ処理対応の新技術評価"
+
+  feedback_loop:
+    metrics:
+      - "エラー率"
+      - "パフォーマンスボトルネック"
+      - "ユーザー体験"
+      - "データ量増加に対する処理効率変化"
+
+    review_cycle:
+      frequency: "四半期"
+      activities:
+        - "技術レビュー"
+        - "改善提案のトラッキング"
+        - "技術革新の評価と導入"
+        - "スケーリング計画の見直し"
+
+  growth_adaptation:
+    thresholds:
+      - level: "〜500件/月"
+        focus: "基本機能と自動化"
+
+      - level: "500〜2,000件/月"
+        focus: "効率化と初期スケーリング"
+
+      - level: "2,000〜5,000件/月"
+        focus: "分散処理とキャッシング"
+
+      - level: "5,000〜10,000件/月"
+        focus: "フル分散アーキテクチャ"
+
+    adaptation_process:
+      - "パフォーマンス指標の継続的監視"
+      - "現在のデータ量に基づく最適化施策の適用"
+      - "次の閾値への準備活動"
+      - "事前スケーリングテスト"
+
+# 14. 段階的実装計画
+implementation_phases:
+  foundation_phase:
+    timeline: "1-2ヶ月"
+    data_volume: "〜500件/月"
+    focus_areas:
+      - "基本インフラ構築（Docker、CI/CD、モニタリング）"
+      - "東京リージョン割引時間帯の利用設定"
+      - "連合学習基盤（15日ごと）"
+      - "自動化パイプラインの骨格構築"
+      - "スケーラブルなアーキテクチャ設計"
+    deliverables:
+      - "基本機能が稼働する最小実用プロダクト"
+      - "自動デプロイメントパイプライン"
+      - "コスト・性能モニタリングダッシュボード"
+
+  growth_phase:
+    timeline: "3-6ヶ月"
+    data_volume: "500〜2,000件/月"
+    focus_areas:
+      - "スポットインスタンスの活用開始"
+      - "次元削減パイプラインの導入"
+      - "キャッシング戦略の実装"
+      - "BigQueryパーティショニング最適化"
+    deliverables:
+      - "効率化されたデータ処理パイプライン"
+      - "詳細なコスト分析レポート"
+      - "ベンチマークと最適化ロードマップ"
+
+  scaling_phase:
+    timeline: "7-9ヶ月"
+    data_volume: "2,000〜5,000件/月"
+    focus_areas:
+      - "分散処理アーキテクチャの導入"
+      - "増分処理パイプラインの実装"
+      - "データストレージの階層化"
+      - "オートスケーリングの高度化"
+    deliverables:
+      - "スケーラブルなデータ処理システム"
+      - "効率的な大規模データ処理パイプライン"
+      - "運用効率化レポート"
+
+  large_scale_phase:
+    timeline: "10-12ヶ月"
+    data_volume: "5,000〜10,000件/月"
+    focus_areas:
+      - "フル分散処理環境の最適化"
+      - "高度なキャッシング戦略"
+      - "複雑なオートスケーリング"
+      - "リソース予約とコミットメント"
+    deliverables:
+      - "大規模データ処理の完全最適化システム"
+      - "長期コスト最適化レポート"
+      - "次世代拡張性評価"
+
+# 15. コスト試算
+cost_estimation:
+  data_scenarios:
+    - volume: "300件/月（120次元）"
+      non_optimized:
+        monthly: "$186.18"
+        yearly: "$2,234.16"
+      optimized:
+        monthly: "$88.51"
+        yearly: "$1,062.12"
+      savings:
+        percentage: "52.5%"
+        yearly_amount: "$1,172.04"
+
+    - volume: "10,000件/月（120次元）"
+      non_optimized:
+        monthly: "$1,415.17"
+        yearly: "$16,982.04"
+      optimized:
+        monthly: "$496.32"
+        yearly: "$5,955.84"
+      savings:
+        percentage: "65%"
+        yearly_amount: "$11,026.20"
+
+  optimization_impact:
+    regional_time_optimization:
+      savings: "20%のコンピューティングコスト削減"
+      implementation_cost: "低（初期段階からの導入）"
+      roi_timeline: "1ヶ月以内"
+
+    spot_instances:
+      savings: "50-70%の対象インスタンスコスト削減"
+      implementation_cost: "中（自動障害復旧機能が必要）"
+      roi_timeline: "2-3ヶ月"
+
+    dimension_reduction:
+      savings: "計算コスト25%削減"
+      implementation_cost: "中（アルゴリズム最適化が必要）"
+      roi_timeline: "3-4ヶ月"
+
+    distributed_processing:
+      savings: "大規模データ処理で40%のコスト削減"
+      implementation_cost: "高（アーキテクチャ変更が必要）"
+      roi_timeline: "6-8ヶ月"
+
+  growth_planning:
+    incremental_investment:
+      foundation: "初期設定コスト（1-2ヶ月）"
+      growth: "段階的な最適化投資（3-6ヶ月）"
+      scaling: "スケーリングインフラ投資（7-9ヶ月）"
+      large_scale: "大規模データ処理最適化（10-12ヶ月）"
+
+    cost_efficiency_curve:
+      observation: "データ量が増加するほど最適化による節約効果は大きくなる"
+      explanation: "固定コストの分散と規模の経済"

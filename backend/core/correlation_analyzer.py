@@ -3,7 +3,7 @@
 相関分析
 VAS データと損益計算書データの相関関係を分析します。
 """
-from backend.service.firestore.client import FirestoreService
+from service.firestore.client import FirestoreService
 import pandas as pd
 from typing import Dict, List, Optional
 from datetime import datetime

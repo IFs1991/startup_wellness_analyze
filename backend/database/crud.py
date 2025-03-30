@@ -1,23 +1,27 @@
 # -- coding: utf-8 --
 """
-CRUD 操作
-Firebaseに対するCRUD操作 (Create, Read, Update, Delete) を定義します。
+Firestore CRUD 操作
+Firestoreに対するCRUD操作 (Create, Read, Update, Delete) を定義します。
 """
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from firebase_admin import firestore
 from . import models
+from .database import get_firestore_client, DatabaseManager, DataCategory
 
-db = firestore.client()
+# Firestoreクライアント取得
+db = get_firestore_client()
 
 # ユーザー関連のCRUD操作
 def get_user(user_id: str) -> Optional[dict]:
     """ユーザーIDをもとにユーザー情報を取得"""
-    user_doc = db.collection('users').document(user_id).get()
+    collection_name = DatabaseManager.get_collection_name(DataCategory.USER_MASTER)
+    user_doc = db.collection(collection_name).document(user_id).get()
     return user_doc.to_dict() if user_doc.exists else None
 
 def get_user_by_username(username: str) -> Optional[dict]:
     """ユーザー名をもとにユーザー情報を取得"""
-    users_ref = db.collection('users')
+    collection_name = DatabaseManager.get_collection_name(DataCategory.USER_MASTER)
+    users_ref = db.collection(collection_name)
     query = users_ref.where('username', '==', username).limit(1)
     docs = query.stream()
     for doc in docs:

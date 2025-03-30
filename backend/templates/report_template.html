@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+            @top-center {
+                content: "Startup Wellness分析レポート";
+                font-family: sans-serif;
+                font-size: 10pt;
+            }
+            @bottom-center {
+                content: "ページ " counter(page) " / " counter(pages);
+                font-family: sans-serif;
+                font-size: 10pt;
+            }
+        }
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            margin-top: 20px;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 25px;
+            border-left: 4px solid #3498db;
+            padding-left: 10px;
+        }
+        h3 {
+            color: #2980b9;
+            margin-top: 20px;
+        }
+        .summary-box {
+            background-color: #f5f9fa;
+            border: 1px solid #e1e8ed;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .metric {
+            margin-bottom: 10px;
+        }
+        .metric-name {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .metric-value {
+            color: #3498db;
+            font-weight: bold;
+        }
+        .chart-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .footer {
+            margin-top: 30px;
+            font-size: 12px;
+            color: #7f8c8d;
+            text-align: center;
+            border-top: 1px solid #ecf0f1;
+            padding-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f6f8;
+            color: #2c3e50;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ title }}</h1>
+        <p>生成日時: {{ generated_at }}</p>
+        <p>
+            <span class="metric-name">スコア:</span>
+            <span class="metric-value">{{ overall_score }}/100</span>
+        </p>
+    </header>
+
+    <div class="summary-box">
+        <h2>エグゼクティブサマリー</h2>
+        <p>{{ summary }}</p>
+    </div>
+
+    {% if financial_metrics %}
+    <section>
+        <h2>財務指標分析</h2>
+        {% for metric in financial_metrics %}
+        <div class="metric">
+            <span class="metric-name">{{ metric.name }}:</span>
+            <span class="metric-value">{{ metric.value }}</span>
+            {% if metric.description %}
+            <p>{{ metric.description }}</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if market_analysis %}
+    <section>
+        <h2>市場分析</h2>
+        <p>{{ market_analysis.summary }}</p>
+
+        {% if market_analysis.trends %}
+        <h3>トレンド</h3>
+        <ul>
+            {% for trend in market_analysis.trends %}
+            <li>{{ trend }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if market_analysis.competitors %}
+        <h3>競合分析</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>競合</th>
+                    <th>強み</th>
+                    <th>弱み</th>
+                    <th>市場シェア</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for competitor in market_analysis.competitors %}
+                <tr>
+                    <td>{{ competitor.name }}</td>
+                    <td>{{ competitor.strengths }}</td>
+                    <td>{{ competitor.weaknesses }}</td>
+                    <td>{{ competitor.market_share }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if team_analysis %}
+    <section>
+        <h2>チーム分析</h2>
+        <p>{{ team_analysis.summary }}</p>
+
+        {% if team_analysis.strengths %}
+        <h3>チームの強み</h3>
+        <ul>
+            {% for strength in team_analysis.strengths %}
+            <li>{{ strength }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if team_analysis.areas_for_improvement %}
+        <h3>改善領域</h3>
+        <ul>
+            {% for area in team_analysis.areas_for_improvement %}
+            <li>{{ area }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if growth_projection %}
+    <section>
+        <h2>成長予測</h2>
+        <p>{{ growth_projection.summary }}</p>
+
+        {% if growth_projection.scenarios %}
+        <h3>シナリオ分析</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>シナリオ</th>
+                    <th>1年後</th>
+                    <th>3年後</th>
+                    <th>5年後</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for scenario in growth_projection.scenarios %}
+                <tr>
+                    <td>{{ scenario.name }}</td>
+                    <td>{{ scenario.year_1 }}</td>
+                    <td>{{ scenario.year_3 }}</td>
+                    <td>{{ scenario.year_5 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if recommendations %}
+    <section>
+        <h2>推奨事項</h2>
+        <ul>
+            {% for recommendation in recommendations %}
+            <li>
+                <strong>{{ recommendation.title }}</strong>: {{ recommendation.description }}
+                {% if recommendation.priority %}
+                <span class="metric-name">優先度:</span> <span class="metric-value">{{ recommendation.priority }}</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    <div class="footer">
+        <p>このレポートはStartup Wellness分析プラットフォームにより自動生成されました。</p>
+        <p>&copy; {{ current_year }} Startup Wellness Analytics</p>
+    </div>
+</body>
+</html>

@@ -1,0 +1,122 @@
+# スタートアップウェルネス分析プラットフォーム - Prometheus設定
+global:
+  scrape_interval: 15s     # デフォルトのスクレイプ間隔
+  evaluation_interval: 15s # デフォルトの評価間隔
+  scrape_timeout: 10s      # スクレイプのタイムアウト
+
+# Alertmanagerの設定
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      # - alertmanager:9093
+
+# ルールファイルとアラート設定
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# スクレイプの設定
+scrape_configs:
+  # Prometheusサーバー自体からメトリクスを収集
+  - job_name: 'prometheus'
+    static_configs:
+    - targets: ['localhost:9090']
+
+  # バックエンドサービスからメトリクスを収集
+  - job_name: 'backend'
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+    static_configs:
+    - targets: ['backend:8000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.*):.*'
+        replacement: $1
+
+  # Nodeエクスポーターからシステムメトリクスを収集（将来の拡張用）
+  - job_name: 'node'
+    static_configs:
+    - targets: ['node-exporter:9100']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.*):.*'
+        replacement: $1
+
+  # キャッシュサーバー（Redis）の監視
+  - job_name: 'redis'
+    static_configs:
+    - targets: ['redis-exporter:9121']
+
+# カスタムアラートルール
+alerting_rules:
+  groups:
+  - name: discount_hours
+    rules:
+    - alert: HighCPUDuringDiscountHours
+      expr: |
+        (hour() >= 22 or hour() < 8 or day_of_week() >= 5) and
+        (avg by(instance) (rate(process_cpu_seconds_total[5m])) * 100 > 80)
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "割引時間帯中のCPU使用率が高い ({{ $labels.instance }})"
+        description: "インスタンス {{ $labels.instance }} のCPU使用率が80%を超えています。割引時間帯なのでリソースを増やすことを検討してください。"
+
+  - name: resource_usage
+    rules:
+    - alert: HighMemoryUsage
+      expr: avg by(instance) (process_resident_memory_bytes / container_memory_usage_bytes * 100) > 85
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "メモリ使用率が高い ({{ $labels.instance }})"
+        description: "インスタンス {{ $labels.instance }} のメモリ使用率が85%を超えています。"
+
+    - alert: HighCPUUsageNonDiscountHours
+      expr: |
+        (hour() < 22 and hour() >= 8 and day_of_week() < 5) and
+        (avg by(instance) (rate(process_cpu_seconds_total[5m])) * 100 > 70)
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "非割引時間帯中のCPU使用率が高い ({{ $labels.instance }})"
+        description: "インスタンス {{ $labels.instance }} のCPU使用率が70%を超えています。非割引時間帯なのでリソース最適化を検討してください。"
+
+  - name: api_monitoring
+    rules:
+    - alert: HighAPILatency
+      expr: http_request_duration_seconds{quantile="0.95"} > 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "API応答時間が遅い ({{ $labels.instance }})"
+        description: "インスタンス {{ $labels.instance }} のAPI応答時間（95パーセンタイル）が1秒を超えています。"
+
+    - alert: APIErrorRateHigh
+      expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "APIエラー率が高い ({{ $labels.instance }})"
+        description: "インスタンス {{ $labels.instance }} のAPIエラー率が5%を超えています。"
+
+  - name: discount_hours_scheduling
+    rules:
+    - alert: LongRunningJobOutsideDiscountHours
+      expr: |
+        (hour() < 22 and hour() >= 8 and day_of_week() < 5) and
+        (job_duration_seconds > 3600)
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "非割引時間帯に長時間実行ジョブが動作中"
+        description: "非割引時間帯に1時間以上実行されているジョブがあります。割引時間帯に実行するようにスケジュールを調整してください。"

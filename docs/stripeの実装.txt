@@ -1,0 +1,1162 @@
+Stripe決済と二段階トライアルの実装プロンプト
+以下は、B2B SaaS製品「Startup Wellness」のStripe決済と二段階トライアルアプローチを実装するためのプロンプトです。
+プロジェクト概要
+Startup Wellnessは以下の機能を持つB2B SaaS製品です：
+
+VASデータと財務データの分析
+時系列分析、主成分分析、テキスト分析などの高度な分析機能
+ダッシュボード作成と可視化
+PDFレポート生成
+グローバル展開を視野に入れた設計
+
+実装要件
+
+二段階トライアルアプローチの導入：
+
+第1段階：7日間の機能制限付き無料トライアル（クレジットカード不要）
+第2段階：14日間のフル機能トライアル（クレジットカード必須、Stripe連携）
+
+
+Stripe決済システムの統合：
+
+サブスクリプション管理
+クレジットカード登録・決済処理
+グローバル対応（複数通貨・地域別価格）
+
+
+トライアル終了時の転換施策：
+
+パーソナライズされたプラン推奨
+段階的な通知システム
+特別オファーの生成
+
+
+
+技術スタック
+
+バックエンド：FastAPI、Python 3.9
+データベース：Firestore
+認証：Firebase Authentication
+クラウド：Google Cloud Platform
+決済：Stripe API
+フロントエンド：React（実装は含まれていません）
+
+実装コード
+1. Stripeサービスの実装
+pythonCopy# backend/service/stripe/client.py
+import stripe
+import logging
+import os
+from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
+
+class StripeService:
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Stripeサービスを初期化
+        
+        Args:
+            api_key: Stripe APIキー（デフォルトでは環境変数から取得）
+        """
+        try:
+            self.api_key = api_key or os.getenv("STRIPE_API_KEY")
+            if not self.api_key:
+                raise ValueError("Stripe APIキーが設定されていません")
+                
+            stripe.api_key = self.api_key
+            logger.info("Stripeサービスが正常に初期化されました")
+        except Exception as e:
+            logger.error(f"Stripeサービスの初期化に失敗しました: {str(e)}")
+            raise
+    
+    async def create_customer(self, email: str, name: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        新しいStripeカスタマーを作成
+        
+        Args:
+            email: カスタマーのメールアドレス
+            name: カスタマーの名前
+            metadata: 追加のメタデータ
+            
+        Returns:
+            Dict: Stripeカスタマーオブジェクト
+        """
+        try:
+            customer = stripe.Customer.create(
+                email=email,
+                name=name,
+                metadata=metadata or {}
+            )
+            return customer
+        except Exception as e:
+            logger.error(f"Stripeカスタマーの作成エラー: {str(e)}")
+            raise
+    
+    async def create_subscription(
+        self, 
+        customer_id: str, 
+        price_id: str,
+        trial_end: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        カスタマーのサブスクリプションを作成
+        
+        Args:
+            customer_id: Stripeカスタマーのid
+            price_id: Stripe価格のid
+            trial_end: トライアル終了のタイムスタンプ（Noneで無料トライアルなし）
+            metadata: 追加のメタデータ
+            
+        Returns:
+            Dict: Stripeサブスクリプションオブジェクト
+        """
+        try:
+            subscription = stripe.Subscription.create(
+                customer=customer_id,
+                items=[{"price": price_id}],
+                trial_end=trial_end,
+                metadata=metadata or {}
+            )
+            return subscription
+        except Exception as e:
+            logger.error(f"サブスクリプション作成エラー: {str(e)}")
+            raise
+    
+    async def create_checkout_session(
+        self,
+        price_id: str,
+        customer_id: Optional[str] = None,
+        success_url: str = "https://your-website.com/success",
+        cancel_url: str = "https://your-website.com/cancel",
+        trial_days: int = 0
+    ) -> Dict[str, Any]:
+        """
+        サブスクリプション登録用のチェックアウトセッションを作成
+        
+        Args:
+            price_id: Stripe価格ID
+            customer_id: オプションのStripeカスタマーID
+            success_url: 支払い成功時のリダイレクトURL
+            cancel_url: ユーザーがキャンセルした場合のリダイレクトURL
+            trial_days: トライアル期間の日数（0でトライアルなし）
+            
+        Returns:
+            Dict: チェックアウトセッションの詳細
+        """
+        try:
+            subscription_data = {"items": [{"price": price_id}]}
+            
+            if trial_days > 0:
+                subscription_data["trial_period_days"] = trial_days
+                
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                payment_method_types=["card"],
+                mode="subscription",
+                subscription_data=subscription_data
+            )
+            return session
+        except Exception as e:
+            logger.error(f"チェックアウトセッション作成エラー: {str(e)}")
+            raise
+2. サブスクリプションモデルの実装
+pythonCopy# backend/database/models.py に追加
+class SubscriptionModel(FirestoreModel):
+    """サブスクリプションモデル"""
+    user_id: str = Field(...)
+    stripe_customer_id: str = Field(...)
+    stripe_subscription_id: str = Field(...)
+    plan_type: str = Field(...)  # 'free', 'basic', 'premium' など
+    status: str = Field(...)  # 'active', 'trialing', 'canceled', 'past_due'
+    trial_start: Optional[datetime] = Field(default=None)
+    trial_end: Optional[datetime] = Field(default=None)
+    current_period_start: datetime = Field(...)
+    current_period_end: datetime = Field(...)
+    cancel_at: Optional[datetime] = Field(default=None)
+    canceled_at: Optional[datetime] = Field(default=None)
+
+    @classmethod
+    def collection_name(cls) -> str:
+        return "subscriptions"
+3. サブスクリプションAPIルーターの実装
+pythonCopy# backend/api/routers/subscription.py
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
+from typing import Dict, Any, Optional, List
+from pydantic import BaseModel
+from datetime import datetime, timedelta
+import time
+import stripe
+from ..dependencies import get_current_user
+from ...service.stripe.client import StripeService
+from ...service.firestore.client import FirestoreService
+
+router = APIRouter(
+    prefix="/subscriptions",
+    tags=["subscriptions"],
+    responses={404: {"description": "Not found"}}
+)
+
+stripe_service = StripeService()
+firestore_service = FirestoreService()
+
+# モデル
+class SubscriptionPlan(BaseModel):
+    id: str
+    name: str
+    price_id: str
+    price: float
+    currency: str
+    interval: str
+    description: str
+    features: List[str]
+
+# プラン設定
+SUBSCRIPTION_PLANS = {
+    "basic": SubscriptionPlan(
+        id="basic",
+        name="ベーシックプラン",
+        price_id="price_basic123",  # 実際のStripeの価格IDに置き換えてください
+        price=9.99,
+        currency="USD",
+        interval="month",
+        description="基本的な分析機能",
+        features=["制限付きデータ分析", "基本ダッシュボード", "週次レポート"]
+    ),
+    "premium": SubscriptionPlan(
+        id="premium",
+        name="プレミアムプラン",
+        price_id="price_premium456",  # 実際のStripeの価格IDに置き換えてください
+        price=29.99,
+        currency="USD",
+        interval="month",
+        description="すべての機能を含む高度な分析",
+        features=["無制限のデータ分析", "高度なダッシュボード", "日次レポート", "APIアクセス"]
+    )
+}
+
+@router.get("/plans")
+async def get_subscription_plans():
+    """利用可能なサブスクリプションプランを取得"""
+    return list(SUBSCRIPTION_PLANS.values())
+
+@router.post("/register/free-trial")
+async def register_free_trial(user_data: UserRegistration):
+    """無料トライアルに登録（クレジットカード不要）"""
+    try:
+        # Firebase Authでユーザー作成
+        user = await create_firebase_user(user_data.email, user_data.password)
+        
+        # 無料プランのユーザーデータを作成
+        user_profile = {
+            'uid': user.uid,
+            'email': user_data.email,
+            'tier': 'free',
+            'trial_start': datetime.now(),
+            'trial_end': datetime.now() + timedelta(days=7),  # 7日間の無料トライアル
+        }
+        
+        await firestore_service.save_results(
+            results=[user_profile],
+            collection_name='users'
+        )
+        
+        return {"status": "success", "message": "無料トライアルにご登録いただきました"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"登録処理に失敗しました: {str(e)}"
+        )
+
+@router.post("/checkout")
+async def create_checkout_session(
+    plan_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Stripeのチェックアウトセッションを作成（有料トライアル向け）"""
+    try:
+        # プランの検証
+        if plan_id not in SUBSCRIPTION_PLANS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"無効なプランID: {plan_id}"
+            )
+        
+        plan = SUBSCRIPTION_PLANS[plan_id]
+        
+        # ユーザーのStripeカスタマーIDを取得または作成
+        user_data = await firestore_service.fetch_documents(
+            collection_name='users',
+            conditions=[{'field': 'id', 'operator': '==', 'value': current_user['uid']}],
+            limit=1
+        )
+        
+        stripe_customer_id = None
+        if user_data and 'stripe_customer_id' in user_data[0]:
+            stripe_customer_id = user_data[0]['stripe_customer_id']
+        else:
+            # Stripeカスタマーを作成
+            customer = await stripe_service.create_customer(
+                email=current_user.get('email', ''),
+                name=current_user.get('name', ''),
+                metadata={'firebase_uid': current_user['uid']}
+            )
+            stripe_customer_id = customer['id']
+            
+            # ユーザー情報を更新
+            await firestore_service.update_document(
+                collection_name='users',
+                document_id=current_user['uid'],
+                data={'stripe_customer_id': stripe_customer_id}
+            )
+        
+        # 14日間の有料トライアル付きチェックアウトセッションを作成
+        session = await stripe_service.create_checkout_session(
+            price_id=plan.price_id,
+            customer_id=stripe_customer_id,
+            success_url=f"https://your-website.com/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url="https://your-website.com/plans",
+            trial_days=14  # 14日間の有料トライアル
+        )
+        
+        # ユーザープロフィールを更新
+        await firestore_service.update_document(
+            collection_name='users',
+            document_id=current_user['uid'],
+            data={
+                'stripe_customer_id': stripe_customer_id,
+                'tier': 'trial'
+            }
+        )
+        
+        return {"checkout_url": session.url}
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"チェックアウトセッション作成失敗: {str(e)}"
+        )
+
+@router.post("/webhook", include_in_schema=False)
+async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
+    """StripeウェブフックエンドポイントでイベントをハンドリングするAPI"""
+    # Webhookシークレットの取得
+    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    
+    try:
+        # リクエストボディを取得
+        payload = await request.body()
+        sig_header = request.headers.get('stripe-signature')
+        
+        # イベントを検証
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+        
+        # イベントタイプに応じた処理
+        if event['type'] == 'checkout.session.completed':
+            session = event['data']['object']
+            background_tasks.add_task(handle_successful_subscription, session)
+        elif event['type'] == 'customer.subscription.updated':
+            subscription = event['data']['object']
+            background_tasks.add_task(update_subscription_status, subscription)
+        elif event['type'] == 'customer.subscription.deleted':
+            subscription = event['data']['object']
+            background_tasks.add_task(handle_subscription_deleted, subscription)
+            
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Webhookエラー: {str(e)}"
+        )
+
+async def handle_successful_subscription(session: Dict[str, Any]):
+    """サブスクリプション開始処理"""
+    try:
+        subscription_id = session['subscription']
+        customer_id = session['customer']
+        
+        # サブスクリプション詳細を取得
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        
+        # ユーザーを取得
+        users = await firestore_service.fetch_documents(
+            collection_name='users',
+            conditions=[{'field': 'stripe_customer_id', 'operator': '==', 'value': customer_id}],
+            limit=1
+        )
+        
+        if not users:
+            logger.error(f"StripeカスタマーIDに対応するユーザーが見つかりません: {customer_id}")
+            return
+            
+        user_id = users[0]['id']
+        
+        # サブスクリプションデータを保存
+        subscription_data = {
+            'user_id': user_id,
+            'stripe_customer_id': customer_id,
+            'stripe_subscription_id': subscription_id,
+            'plan_type': subscription['items']['data'][0]['price']['metadata'].get('plan_type', 'basic'),
+            'status': subscription['status'],
+            'trial_start': datetime.fromtimestamp(subscription['trial_start']) if subscription.get('trial_start') else None,
+            'trial_end': datetime.fromtimestamp(subscription['trial_end']) if subscription.get('trial_end') else None,
+            'current_period_start': datetime.fromtimestamp(subscription['current_period_start']),
+            'current_period_end': datetime.fromtimestamp(subscription['current_period_end']),
+            'cancel_at': datetime.fromtimestamp(subscription['cancel_at']) if subscription.get('cancel_at') else None,
+            'canceled_at': datetime.fromtimestamp(subscription['canceled_at']) if subscription.get('canceled_at') else None,
+            'created_at': datetime.now()
+        }
+        
+        await firestore_service.save_results(
+            results=[subscription_data],
+            collection_name='subscriptions'
+        )
+        
+    except Exception as e:
+        logger.error(f"サブスクリプション処理エラー: {str(e)}")
+4. 機能制限ミドルウェアの実装
+pythonCopy# backend/middleware/subscription.py
+from fastapi import Request, HTTPException, status
+from typing import Optional, List, Dict
+from datetime import datetime
+import logging
+from ..service.firestore.client import FirestoreService
+
+logger = logging.getLogger(__name__)
+firestore_service = FirestoreService()
+
+# 無料プランでの機能制限の定義
+FREE_TIER_LIMITS = {
+    'dashboard_widgets': {'max': 5},
+    'reports': {'max': 5, 'period': 'month'},
+    'data_uploads': {'max': 3, 'size_limit_mb': 5},
+    'data_export_rows': {'max': 100},
+    'analysis_types': {'allowed': ['basic_stats', 'correlation']},
+    'historical_data_days': {'max': 30},
+    'users': {'max': 2}
+}
+
+async def verify_subscription(
+    request: Request, 
+    allowed_plans: Optional[List[str]] = None,
+    allow_trial: bool = True
+):
+    """
+    ユーザーがアクティブなサブスクリプションを持っているか確認
+    
+    Args:
+        request: FastAPIリクエスト
+        allowed_plans: このエンドポイントにアクセスできるプランのリスト
+        allow_trial: トライアル中のユーザーを許可するかどうか
+    """
+    # リクエストステートからユーザーを取得（認証ミドルウェアによって設定）
+    user = request.state.user
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="認証されていません"
+        )
+    
+    # サブスクリプションを確認
+    subscriptions = await firestore_service.fetch_documents(
+        collection_name='subscriptions',
+        conditions=[
+            {'field': 'user_id', 'operator': '==', 'value': user['uid']},
+            {'field': 'status', 'operator': 'in', 'value': ['active', 'trialing']}
+        ],
+        limit=1
+    )
+    
+    if not subscriptions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="アクティブなサブスクリプションが見つかりません"
+        )
+    
+    subscription = subscriptions[0]
+    
+    # トライアル中かどうかとトライアルが許可されているかを確認
+    if subscription['status'] == 'trialing' and not allow_trial:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="この機能はトライアル期間中は利用できません"
+        )
+    
+    # プランタイプの制限を確認
+    if allowed_plans and subscription['plan_type'] not in allowed_plans:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"この機能には次のいずれかのプランが必要です: {', '.join(allowed_plans)}"
+        )
+    
+    # 後で使用するためにリクエストステートにサブスクリプションを追加
+    request.state.subscription = subscription
+
+async def check_feature_access(
+    request: Request,
+    feature: str,
+    required_tier: str = "free"  # "free", "trial", "paid"
+):
+    """特定の機能へのアクセス権をチェック"""
+    user = request.state.user
+    if not user:
+        raise HTTPException(status_code=401, detail="認証が必要です")
+    
+    # ユーザーのサブスクリプション情報を取得
+    subscription_data = await get_user_subscription(user['uid'])
+    tier = subscription_data.get('tier', 'free')
+    
+    # 階層のレベルを数値に変換
+    tier_levels = {
+        'free': 0,
+        'trial': 1,
+        'paid': 2
+    }
+    
+    user_tier_level = tier_levels.get(tier, 0)
+    required_tier_level = tier_levels.get(required_tier, 0)
+    
+    # ユーザーの階層が必要な階層以上かチェック
+    if user_tier_level < required_tier_level:
+        raise HTTPException(
+            status_code=403,
+            detail=f"この機能を使用するには {required_tier} 以上のプランが必要です"
+        )
+    
+    # 無料プランの場合は使用量制限をチェック
+    if tier == 'free':
+        # 機能ごとの使用量制限をチェック
+        usage_limits = FREE_TIER_LIMITS.get(feature, {})
+        if usage_limits:
+            await check_usage_limits(user['uid'], feature, usage_limits)
+    
+    return True
+
+# 使用量制限のチェック
+async def check_usage_limits(user_id: str, feature: str, limits: Dict):
+    """無料プランの使用量制限をチェック"""
+    # 例: レポート数の制限をチェック
+    if feature == 'reports':
+        # 今月作成したレポート数を取得
+        this_month_reports = await count_user_reports_this_month(user_id)
+        if this_month_reports >= limits['max']:
+            raise HTTPException(
+                status_code=403,
+                detail=f"無料プランでは月に最大{limits['max']}件のレポートまで作成できます"
+            )
+5. トライアル終了通知とプラン案内の実装
+pythonCopy# backend/service/notification/trial_notification.py
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timedelta
+import logging
+from ...service.firestore.client import FirestoreService
+from ...service.email.client import EmailService
+
+logger = logging.getLogger(__name__)
+firestore_service = FirestoreService()
+email_service = EmailService()
+
+async def schedule_trial_notifications(user_id: str, trial_end_date: datetime):
+    """ユーザーのトライアル終了通知をスケジュール"""
+    
+    now = datetime.now()
+    days_remaining = (trial_end_date - now).days
+    
+    notifications = [
+        # 無料トライアル（7日間）の通知スケジュール
+        {'days_before': 3, 'template': 'free_trial_ending_soon'},
+        {'days_before': 1, 'template': 'free_trial_last_day'},
+        {'days_before': 0, 'template': 'free_trial_ended'},
+        
+        # 有料トライアル（14日間）の通知スケジュール
+        {'days_before': 7, 'template': 'paid_trial_halfway'},
+        {'days_before': 3, 'template': 'paid_trial_ending_soon'},
+        {'days_before': 1, 'template': 'paid_trial_last_day'},
+        {'days_before': 0, 'template': 'paid_trial_ended'}
+    ]
+    
+    for notification in notifications:
+        if days_remaining == notification['days_before']:
+            await send_trial_notification(
+                user_id=user_id,
+                template=notification['template'],
+                trial_end_date=trial_end_date
+            )
+
+async def send_trial_notification(user_id: str, template: str, trial_end_date: datetime):
+    """トライアル関連の通知メールを送信"""
+    
+    # ユーザーデータの取得
+    user_data = await firestore_service.fetch_documents(
+        collection_name='users',
+        conditions=[{'field': 'id', 'operator': '==', 'value': user_id}],
+        limit=1
+    )
+    
+    if not user_data:
+        logger.error(f"通知メール送信失敗: ユーザー {user_id} が見つかりません")
+        return
+    
+    user = user_data[0]
+    email = user.get('email')
+    
+    if not email:
+        logger.error(f"通知メール送信失敗: ユーザー {user_id} のメールアドレスがありません")
+        return
+    
+    # ユーザーの使用状況データ
+    usage_data = await analyze_user_trial_usage(user_id)
+    
+    # テンプレートに基づいて適切なメール内容を構築
+    email_content = await build_email_content(
+        template=template,
+        user=user,
+        usage_data=usage_data,
+        trial_end_date=trial_end_date
+    )
+    
+    # 特典オファーの生成（必要に応じて）
+    if template in ['free_trial_ended', 'paid_trial_ended', 'paid_trial_last_day']:
+        special_offer = await generate_conversion_offer(user_id)
+        email_content['special_offer'] = special_offer
+    
+    # メール送信
+    await email_service.send_email(
+        to_email=email,
+        subject=email_content['subject'],
+        template_id=email_content['template_id'],
+        template_data=email_content['data']
+    )
+    
+    # 送信記録の保存
+    await firestore_service.save_results(
+        results=[{
+            'user_id': user_id,
+            'email': email,
+            'template': template,
+            'sent_at': datetime.now(),
+            'status': 'sent'
+        }],
+        collection_name='email_notifications'
+    )
+6. パーソナライズされたプラン案内の実装
+pythonCopy# backend/api/routers/pricing.py
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from typing import Dict, Any, Optional
+from ..dependencies import get_current_user
+from ...service.firestore.client import FirestoreService
+from ...service.analysis.usage_analyzer import analyze_user_trial_usage
+
+router = APIRouter(
+    prefix="/pricing",
+    tags=["pricing"],
+    responses={404: {"description": "Not found"}}
+)
+
+firestore_service = FirestoreService()
+
+@router.get("/personalized")
+async def get_personalized_pricing(
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    """ユーザーの使用状況に基づいてパーソナライズされた価格ページのデータを取得"""
+    
+    # ユーザーの使用状況分析
+    usage_stats = await analyze_user_trial_usage(current_user['uid'])
+    
+    # ユーザーの地域と言語の取得
+    user_region = await get_user_region(current_user['uid'])
+    user_locale = get_locale_from_request(request)
+    
+    # ユーザーの使用パターンに基づく最適プランの選定
+    recommended_plan = determine_best_plan(usage_stats)
+    
+    # 地域に基づく価格設定の調整
+    localized_plans = await get_localized_plans(user_region)
+    
+    # ユーザーの活用状況に基づくROI計算
+    roi_metrics = calculate_potential_roi(usage_stats, recommended_plan)
+    
+    # セールスポイントの選定（ユーザーが最も利用した機能に基づく）
+    key_features = identify_valuable_features(usage_stats)
+    
+    # 特別オファーの生成
+    special_offer = await generate_conversion_offer(current_user['uid'])
+    
+    # トライアル終了日の取得
+    trial_end_date = await get_trial_end_date(current_user['uid'])
+    days_remaining = (trial_end_date - datetime.now()).days if trial_end_date else 0
+    
+    return {
+        "user_usage_summary": usage_stats,
+        "recommended_plan": recommended_plan,
+        "plans": localized_plans,
+        "roi_projection": roi_metrics,
+        "key_features": key_features,
+        "testimonials": select_relevant_testimonials(key_features),
+        "special_offer": special_offer,
+        "trial_status": {
+            "end_date": trial_end_date,
+            "days_remaining": max(0, days_remaining)
+        }
+    }
+
+@router.get("/trial-status")
+async def get_trial_status(current_user: dict = Depends(get_current_user)):
+    """ユーザーのトライアル状態とメッセージを取得"""
+    
+    user_data = await firestore_service.fetch_documents(
+        collection_name='users',
+        conditions=[{'field': 'id', 'operator': '==', 'value': current_user['uid']}],
+        limit=1
+    )
+    
+    if not user_data:
+        raise HTTPException(status_code=404, detail="ユーザーが見つかりません")
+    
+    user = user_data[0]
+    trial_end = user.get('trial_end')
+    tier = user.get('tier', 'free')
+    
+    if not trial_end:
+        return {"has_trial_message": False}
+    
+    now = datetime.now()
+    days_remaining = (trial_end - now).days
+    
+    # トライアル終了が近い場合、または終了した場合にメッセージを表示
+    if days_remaining <= 3:
+        plans_data = await get_subscription_plans_for_user(current_user['uid'])
+        
+        return {
+            "has_trial@router.get("/trial-status")
+async def get_trial_status(current_user: dict = Depends(get_current_user)):
+    """ユーザーのトライアル状態とメッセージを取得"""
+    
+    user_data = await firestore_service.fetch_documents(
+        collection_name='users',
+        conditions=[{'field': 'id', 'operator': '==', 'value': current_user['uid']}],
+        limit=1
+    )
+    
+    if not user_data:
+        raise HTTPException(status_code=404, detail="ユーザーが見つかりません")
+    
+    user = user_data[0]
+    trial_end = user.get('trial_end')
+    tier = user.get('tier', 'free')
+    
+    if not trial_end:
+        return {"has_trial_message": False}
+    
+    now = datetime.now()
+    days_remaining = (trial_end - now).days
+    
+    # トライアル終了が近い場合、または終了した場合にメッセージを表示
+    if days_remaining <= 3:
+        plans_data = await get_subscription_plans_for_user(current_user['uid'])
+        
+        return {
+            "has_trial_message": True,
+            "days_remaining": max(0, days_remaining),
+            "trial_ended": days_remaining <= 0,
+            "message_type": "trial_ending" if days_remaining > 0 else "trial_ended",
+            "tier": tier,
+            "recommended_plan": plans_data["recommended_plan"],
+            "all_plans": plans_data["plans"],
+            "special_offer": await generate_conversion_offer(current_user['uid']) if days_remaining <= 1 else None
+        }
+    
+    return {"has_trial_message": False}
+7. トライアル使用状況分析の実装
+pythonCopy# backend/service/analysis/usage_analyzer.py
+from typing import Dict, Any, List
+from datetime import datetime
+import logging
+from ...service.firestore.client import FirestoreService
+
+logger = logging.getLogger(__name__)
+firestore_service = FirestoreService()
+
+async def analyze_user_trial_usage(user_id: str) -> Dict[str, Any]:
+    """ユーザーのトライアル期間中の使用状況を分析"""
+    
+    # 各機能の使用状況を集計
+    usage_metrics = {}
+    
+    # レポート生成回数
+    reports = await count_user_generated_reports(user_id)
+    usage_metrics['reports_count'] = reports
+    
+    # データアップロード量
+    uploads = await get_user_data_uploads(user_id)
+    usage_metrics['upload_count'] = len(uploads)
+    usage_metrics['upload_size_total'] = sum(upload.get('size', 0) for upload in uploads)
+    
+    # 分析実行数（タイプ別）
+    analyses = await get_user_analyses(user_id)
+    analysis_types = {}
+    for analysis in analyses:
+        analysis_type = analysis.get('type', 'unknown')
+        analysis_types[analysis_type] = analysis_types.get(analysis_type, 0) + 1
+    usage_metrics['analyses'] = analysis_types
+    
+    # ダッシュボード使用状況
+    dashboard_usage = await get_user_dashboard_usage(user_id)
+    usage_metrics['dashboard_views'] = dashboard_usage.get('views', 0)
+    usage_metrics['widget_count'] = dashboard_usage.get('widget_count', 0)
+    
+    # ユーザーセッション数とアクティブ時間
+    sessions = await get_user_sessions(user_id)
+    usage_metrics['session_count'] = len(sessions)
+    usage_metrics['total_active_time_minutes'] = sum(session.get('duration_minutes', 0) for session in sessions)
+    
+    # 主要な使用パターンの識別
+    usage_metrics['primary_features'] = identify_primary_features(usage_metrics)
+    
+    # トライアルの価値計算
+    usage_metrics['trial_value'] = calculate_trial_value(usage_metrics)
+    
+    return usage_metrics
+
+def identify_primary_features(usage_metrics: Dict[str, Any]) -> List[str]:
+    """ユーザーが最も利用している機能を特定"""
+    primary_features = []
+    
+    # レポート使用の評価
+    if usage_metrics.get('reports_count', 0) > 3:
+        primary_features.append('reporting')
+    
+    # 分析使用の評価
+    analyses = usage_metrics.get('analyses', {})
+    if analyses.get('time_series', 0) > 2:
+        primary_features.append('time_series_analysis')
+    if analyses.get('correlation', 0) > 2:
+        primary_features.append('correlation_analysis')
+    if analyses.get('pca', 0) > 1:
+        primary_features.append('advanced_analytics')
+    
+    # ダッシュボード使用の評価
+    if usage_metrics.get('widget_count', 0) > 5:
+        primary_features.append('dashboarding')
+    
+    # データ量の評価
+    if usage_metrics.get('upload_size_total', 0) > 10 * 1024 * 1024:  # 10MB
+        primary_features.append('data_storage')
+    
+    # セッション数の評価
+    if usage_metrics.get('session_count', 0) > 10:
+        primary_features.append('regular_usage')
+    
+    return primary_features
+
+def calculate_trial_value(usage_metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """トライアル期間中に生成された価値を計算"""
+    
+    value_metrics = {}
+    
+    # 作成されたレポート数
+    reports = usage_metrics.get('reports_count', 0)
+    value_metrics['reports_saved'] = reports
+    value_metrics['reports_value'] = reports * 30  # 1レポートあたり30分の時間節約と仮定
+    
+    # 実行された分析数
+    analyses = usage_metrics.get('analyses', {})
+    total_analyses = sum(analyses.values())
+    value_metrics['analyses_performed'] = total_analyses
+    value_metrics['analyses_value'] = total_analyses * 45  # 1分析あたり45分の時間節約と仮定
+    
+    # ダッシュボード使用による洞察
+    widget_count = usage_metrics.get('widget_count', 0)
+    value_metrics['dashboard_insights'] = widget_count * 3  # 1ウィジェットあたり3つの洞察と仮定
+    
+    # 合計時間節約（分）
+    total_time_saved = (
+        value_metrics['reports_value'] + 
+        value_metrics['analyses_value']
+    )
+    value_metrics['total_time_saved_hours'] = round(total_time_saved / 60, 1)
+    
+    # 金銭的価値の概算（時給$50と仮定）
+    value_metrics['estimated_value_usd'] = round(total_time_saved / 60 * 50, 2)
+    
+    return value_metrics
+
+def determine_best_plan(usage_metrics: Dict[str, Any]) -> str:
+    """使用状況に基づいて最適なプランを決定"""
+    
+    # 基本的なロジック例（実際にはより複雑なロジックを実装）
+    if usage_metrics.get('reports_count', 0) > 10 or usage_metrics.get('widget_count', 0) > 8:
+        return 'premium'
+    elif usage_metrics.get('analyses', {}).get('advanced', 0) > 5:
+        return 'professional'
+    elif usage_metrics.get('session_count', 0) > 20:
+        return 'standard'
+    else:
+        return 'basic'
+8. 特別オファー生成の実装
+pythonCopy# backend/service/promotion/offer_generator.py
+from typing import Dict, Any
+from datetime import datetime, timedelta
+import logging
+from ...service.firestore.client import FirestoreService
+from ...service.analysis.usage_analyzer import analyze_user_trial_usage
+
+logger = logging.getLogger(__name__)
+firestore_service = FirestoreService()
+
+async def generate_conversion_offer(user_id: str) -> Dict[str, Any]:
+    """ユーザーの特性に基づいて変換オファーを生成"""
+    
+    # ユーザーの使用状況と地域
+    usage = await analyze_user_trial_usage(user_id)
+    user_region = await get_user_region(user_id)
+    
+    offers = {
+        # 基本的なオファー（すべてのユーザーに適用可能）
+        'basic': {
+            'type': 'discount',
+            'value': '20%',
+            'duration': '最初の3ヶ月間',
+            'code': 'TRIAL20',
+            'expires_in_days': 7
+        },
+        
+        # ヘビーユーザー向け
+        'heavy_user': {
+            'type': 'discount',
+            'value': '25%',
+            'duration': '最初の6ヶ月間',
+            'code': 'POWER25',
+            'expires_in_days': 7
+        },
+        
+        # チームユーザー向け
+        'team': {
+            'type': 'seats',
+            'value': '追加3ユーザー無料',
+            'duration': '1年間',
+            'code': 'TEAM3FREE',
+            'expires_in_days': 7
+        },
+        
+        # 年間契約インセンティブ
+        'annual': {
+            'type': 'discount',
+            'value': '33%',
+            'duration': '年間契約時',
+            'code': 'ANNUAL33',
+            'expires_in_days': 7
+        }
+    }
+    
+    # ユーザーの使用パターンに基づいて最適なオファーを選択
+    if usage.get('session_count', 0) > 25 or usage.get('total_active_time_minutes', 0) > 300:
+        offer_type = 'heavy_user'
+    elif len(await get_team_members(user_id)) > 1:
+        offer_type = 'team'
+    else:
+        # 地域に基づいて判断（特定の地域では年間契約が好まれる）
+        if user_region in ['north_america', 'europe']:
+            offer_type = 'annual'
+        else:
+            offer_type = 'basic'
+    
+    selected_offer = offers[offer_type]
+    
+    # オファーの有効期限を設定
+    expiry_date = datetime.now() + timedelta(days=selected_offer['expires_in_days'])
+    selected_offer['expires_at'] = expiry_date
+    
+    # オファーをデータベースに保存
+    offer_data = {
+        'user_id': user_id,
+        'offer_type': offer_type,
+        'offer_details': selected_offer,
+        'created_at': datetime.now(),
+        'expires_at': expiry_date,
+        'status': 'active'
+    }
+    
+    await firestore_service.save_results(
+        results=[offer_data],
+        collection_name='special_offers'
+    )
+    
+    return selected_offer
+9. メインアプリケーションへの統合
+pythonCopy# backend/main.py（既存ファイルに追加）
+
+# Stripeサービスの初期化
+from service.stripe.client import StripeService
+stripe_service = StripeService()
+
+# 追加ルーターのインポート
+from api.routers import subscription, pricing
+
+# ルーターの追加
+app.include_router(
+    subscription.router,
+    prefix="/api/subscriptions",
+    tags=["subscriptions"],
+)
+
+app.include_router(
+    pricing.router,
+    prefix="/api/pricing",
+    tags=["pricing"],
+)
+
+# バックグラウンドタスクのスケジューリング
+@app.on_event("startup")
+async def schedule_background_tasks():
+    # トライアル通知スケジューラーの起動
+    background_tasks.add_task(run_trial_notification_scheduler)
+    
+    # サブスクリプションステータス同期の実行
+    background_tasks.add_task(run_subscription_sync_scheduler)
+
+async def run_trial_notification_scheduler():
+    """トライアル通知のスケジューラーを実行"""
+    while True:
+        try:
+            # トライアル中のユーザーを取得
+            trial_users = await firestore_service.fetch_documents(
+                collection_name='users',
+                conditions=[
+                    {'field': 'tier', 'operator': 'in', 'value': ['free', 'trial']},
+                    {'field': 'trial_end', 'operator': '>', 'value': datetime.now()}
+                ]
+            )
+            
+            # 各ユーザーに対する通知をスケジュール
+            for user in trial_users:
+                await schedule_trial_notifications(
+                    user_id=user['id'],
+                    trial_end_date=user['trial_end']
+                )
+                
+        except Exception as e:
+            logger.error(f"トライル通知スケジューラーエラー: {str(e)}")
+        
+        # 1時間ごとに実行
+        await asyncio.sleep(3600)
+
+async def run_subscription_sync_scheduler():
+    """サブスクリプション状態を定期的にStripeと同期"""
+    while True:
+        try:
+            # サブスクリプションを持つユーザーを取得
+            subscriptions = await firestore_service.fetch_documents(
+                collection_name='subscriptions',
+                conditions=[
+                    {'field': 'status', 'operator': 'in', 'value': ['active', 'trialing', 'past_due']}
+                ]
+            )
+            
+            # 各サブスクリプションを同期
+            for subscription in subscriptions:
+                stripe_subscription_id = subscription.get('stripe_subscription_id')
+                if stripe_subscription_id:
+                    await sync_subscription_status(stripe_subscription_id)
+                
+        except Exception as e:
+            logger.error(f"サブスクリプション同期エラー: {str(e)}")
+        
+        # 6時間ごとに実行
+        await asyncio.sleep(21600)
+
+async def sync_subscription_status(stripe_subscription_id: str):
+    """サブスクリプションの状態をStripeと同期"""
+    try:
+        # Stripeからサブスクリプション情報を取得
+        subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        
+        # Firestoreのサブスクリプション情報を更新
+        subscriptions = await firestore_service.fetch_documents(
+            collection_name='subscriptions',
+            conditions=[
+                {'field': 'stripe_subscription_id', 'operator': '==', 'value': stripe_subscription_id}
+            ],
+            limit=1
+        )
+        
+        if subscriptions:
+            update_data = {
+                'status': subscription['status'],
+                'current_period_start': datetime.fromtimestamp(subscription['current_period_start']),
+                'current_period_end': datetime.fromtimestamp(subscription['current_period_end']),
+                'cancel_at': datetime.fromtimestamp(subscription['cancel_at']) if subscription.get('cancel_at') else None,
+                'canceled_at': datetime.fromtimestamp(subscription['canceled_at']) if subscription.get('canceled_at') else None,
+                'updated_at': datetime.now()
+            }
+            
+            await firestore_service.update_document(
+                collection_name='subscriptions',
+                document_id=subscriptions[0]['id'],
+                data=update_data
+            )
+            
+            logger.info(f"サブスクリプション {stripe_subscription_id} を同期しました")
+            
+    except Exception as e:
+        logger.error(f"サブスクリプション同期エラー {stripe_subscription_id}: {str(e)}")
+設定と環境変数
+プロジェクトには以下の環境変数が必要です：
+Copy# Stripe関連
+STRIPE_API_KEY=sk_test_your_test_key
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
+
+# Firebase関連
+GOOGLE_APPLICATION_CREDENTIALS=path/to/your/serviceAccount.json
+FIREBASE_API_KEY=your_firebase_api_key
+
+# アプリケーション設定
+GCP_PROJECT_ID=your_project_id
+GCP_REGION=asia-northeast1
+ENVIRONMENT=development  # development, production, testing
+実装上の注意点
+
+セキュリティ:
+
+Stripe APIキーは環境変数として保存し、コードには直接記載しない
+webhookシークレットを使用してStripeからのリクエストを検証する
+ユーザー認証とサブスクリプション検証を組み合わせて機能アクセスを制御
+
+
+グローバル展開:
+
+地域に応じた価格設定とトライアル期間のカスタマイズを実装
+多言語対応のメール通知テンプレートを用意
+地域ごとの法規制に対応（VAT、税金など）
+
+
+エラーハンドリング:
+
+すべての決済処理で適切な例外処理とログ記録を実装
+非同期タスクの失敗時のリトライメカニズムを組み込む
+ユーザー向けのエラーメッセージは明確でわかりやすいものにする
+
+
+テスト:
+
+Stripeのテストモードを使用して開発およびテスト環境を設定
+webhookのエミュレーターを使用してローカル開発時にwebhookをテスト
+本番環境に移行する前に、実際の支払いフローをエンドツーエンドでテスト
+
+
+
+最後に
+この実装プランは以下の機能を提供します：
+
+7日間の機能制限付き無料トライアル（クレジットカード不要）
+14日間のフル機能有料トライアル（Stripe連携、クレジットカード必須）
+トライアル終了時のパーソナライズされたプラン推奨
+使用状況に基づく特別オファーの生成
+グローバル展開を視野に入れた設計
+
+これらの実装によって、リード生成から有料契約へのコンバージョンまでのユーザージャーニーをシームレスに管理できるようになります。_

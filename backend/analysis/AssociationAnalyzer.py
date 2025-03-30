@@ -2,6 +2,9 @@ from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from dataclasses import dataclass
 import logging
+import pandas as pd
+import numpy as np
+from mlxtend.frequent_patterns import apriori, association_rules
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -13,6 +16,81 @@ class AggregationConfig:
     group_by_columns: List[str]
     agg_functions: Dict[str, str]
     conditions: Optional[str] = None
+
+class AssociationAnalyzer:
+    """
+    アソシエーション分析を行うクラス
+    """
+    def __init__(self):
+        """
+        コンストラクタ
+        """
+        logger.info("AssociationAnalyzerが初期化されました")
+
+    def analyze(self,
+                data: pd.DataFrame,
+                min_support: float = 0.01,
+                min_confidence: float = 0.5,
+                min_lift: float = 1.0) -> Dict[str, Any]:
+        """
+        アソシエーション分析を実行します
+
+        Args:
+            data (pd.DataFrame): 分析対象データ
+            min_support (float): 最小サポート値
+            min_confidence (float): 最小確信度
+            min_lift (float): 最小リフト値
+
+        Returns:
+            Dict[str, Any]: 分析結果
+
+        Raises:
+            ValueError: パラメータが無効な場合
+        """
+        if data.empty:
+            raise ValueError("入力データが空です")
+
+        try:
+            # アソシエーション分析の実行
+            logger.info(f"アソシエーション分析を実行します: サンプル数={len(data)}")
+
+            # 頻出アイテムセットの抽出
+            frequent_itemsets = apriori(
+                data,
+                min_support=min_support,
+                use_colnames=True
+            )
+
+            # アソシエーションルールの生成
+            rules = association_rules(
+                frequent_itemsets,
+                metric="confidence",
+                min_threshold=min_confidence
+            )
+
+            # リフトでフィルタリング
+            rules = rules[rules['lift'] >= min_lift]
+
+            # 結果を整形
+            result = {
+                'frequent_itemsets': frequent_itemsets.to_dict('records'),
+                'rules': rules.to_dict('records'),
+                'stats': {
+                    'itemset_count': len(frequent_itemsets),
+                    'rule_count': len(rules),
+                    'min_support': min_support,
+                    'min_confidence': min_confidence,
+                    'min_lift': min_lift
+                }
+            }
+
+            logger.info(f"アソシエーション分析が完了しました: ルール数={len(rules)}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"アソシエーション分析でエラーが発生しました: {str(e)}")
+            raise RuntimeError(f"アソシエーション分析の実行に失敗しました: {str(e)}")
 
 class DataQueries:
     """データ取得用のクエリビルダー"""

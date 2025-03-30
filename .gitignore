@@ -1,0 +1,86 @@
+# 環境変数ファイル
+.env
+.env.*
+!.env.example
+
+# Python関連
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Gemini APIキャッシュ
+storage/
+cache/
+reports/
+*/cache/
+*/storage/
+*/reports/
+
+# ログファイル
+logs/
+*.log
+
+# 一時ファイル
+tmp/
+.tmp/
+.DS_Store
+*.swp
+*~
+
+# テスト
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Docker関連
+.docker/
+
+# venv/conda環境
+venv/
+.venv/
+ENV/
+.conda/
+
+# エディタ関連
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# Node関連
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnp/
+.pnp.js
+
+# 本番環境ビルド
+/build
+/dist
+
+# その他
+.history/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

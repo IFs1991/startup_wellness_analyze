@@ -1,0 +1,810 @@
+# スタートアップ分析プラットフォーム: 連合学習システム完全アーキテクチャ
+
+# システム全体の構成
+system:
+  name: "startup-analytics-platform"
+  version: "2.1.0"  # バージョン更新
+  description: "Flowerを活用した高度なスタートアップ分析プラットフォーム"
+  environment: "production"
+  maintainers:
+    - name: "システム管理者"
+      email: "admin@example.com"
+
+# データベース構成
+databases:
+  main:
+    type: "postgresql"
+    version: "17"
+    host: "${DB_HOST}"
+    port: 5432
+    database: "startup_analytics"
+    schema:
+      - name: "raw_data"        # 生データを格納
+      - name: "anonymized"      # 匿名化されたデータ
+      - name: "metadata"        # メタデータリポジトリ
+      - name: "benchmarks"      # 業界ベンチマーク
+      - name: "ml_models"       # 機械学習モデルとパラメータ
+      - name: "federated"       # 連合学習関連データ
+    security:
+      encryption:
+        at_rest: true
+        in_transit: true
+      access_control:
+        role_based: true
+        roles:
+          - name: "admin"
+            permissions: ["read", "write", "create", "delete"]
+          - name: "analyst"
+            permissions: ["read", "execute_model"]
+          - name: "customer"
+            permissions: ["read_own"]
+          - name: "federated_client"
+            permissions: ["read_model", "submit_update"]
+
+# 匿名化モジュール
+anonymization:
+  module_name: "data_anonymizer"
+  techniques:
+    - name: "id_hashing"
+      algorithm: "sha256"
+      salt: "${HASH_SALT}"
+    - name: "data_normalization"
+      method: "z-score"
+    - name: "k_anonymity"
+      k_value: 5
+    - name: "differential_privacy"
+      epsilon: 0.1
+      delta: 0.00001
+      mechanism: "gaussian"
+  database_views:
+    - name: "anonymized_financial_data"
+      source_table: "raw_data.financial_data"
+      sql: |
+        CREATE OR REPLACE VIEW anonymized.financial_data AS
+        SELECT
+          md5(company_id::text || '${HASH_SALT}') AS anonymous_id,
+          industry_type,
+          company_size_category,
+          funding_stage,
+          date_trunc('month', report_date) AS report_month,
+          revenue / (SELECT AVG(revenue) FROM raw_data.financial_data WHERE date_trunc('year', report_date) = date_trunc('year', fd.report_date)) AS normalized_revenue,
+          burn_rate / (SELECT AVG(burn_rate) FROM raw_data.financial_data WHERE date_trunc('year', report_date) = date_trunc('year', fd.report_date)) AS normalized_burn_rate,
+          gross_margin,
+          customer_acquisition_cost,
+          lifetime_value,
+          monthly_recurring_revenue,
+          churn_rate
+        FROM raw_data.financial_data fd;
+    - name: "anonymized_vas_data"
+      source_table: "raw_data.vas_data"
+      sql: |
+        CREATE OR REPLACE VIEW anonymized.vas_data AS
+        SELECT
+          md5(company_id::text || '${HASH_SALT}') AS anonymous_id,
+          industry_type,
+          role_category,
+          date_trunc('month', assessment_date) AS assessment_month,
+          COUNT(DISTINCT employee_id) AS employee_count,
+          AVG(performance_score) AS avg_performance_score,
+          STDDEV(performance_score) AS std_performance_score,
+          AVG(health_score) AS avg_health_score,
+          STDDEV(health_score) AS std_health_score
+        FROM raw_data.vas_data
+        GROUP BY
+          md5(company_id::text || '${HASH_SALT}'),
+          industry_type,
+          role_category,
+          date_trunc('month', assessment_date);
+  update_schedule:
+    frequency: "daily"
+    time: "01:00"
+
+# メタデータリポジトリ
+metadata_repository:
+  tables:
+    - name: "metadata.financial_metrics"
+      columns:
+        - name: "metadata_id"
+          type: "SERIAL PRIMARY KEY"
+        - name: "anonymous_id"
+          type: "TEXT"
+        - name: "industry_type"
+          type: "TEXT"
+        - name: "company_size_category"
+          type: "TEXT"
+        - name: "funding_stage"
+          type: "TEXT"
+        - name: "metric_name"
+          type: "TEXT"
+        - name: "metric_value"
+          type: "FLOAT"
+        - name: "time_period"
+          type: "DATE"
+        - name: "confidence_score"
+          type: "FLOAT"
+      indexes:
+        - columns: ["anonymous_id"]
+        - columns: ["industry_type", "funding_stage"]
+        - columns: ["metric_name", "time_period"]
+    - name: "metadata.vas_metrics"
+      columns:
+        - name: "metadata_id"
+          type: "SERIAL PRIMARY KEY"
+        - name: "anonymous_id"
+          type: "TEXT"
+        - name: "industry_type"
+          type: "TEXT"
+        - name: "role_category"
+          type: "TEXT"
+        - name: "metric_name"
+          type: "TEXT"
+        - name: "metric_value"
+          type: "FLOAT"
+        - name: "time_period"
+          type: "DATE"
+        - name: "sample_size"
+          type: "INTEGER"
+      indexes:
+        - columns: ["anonymous_id"]
+        - columns: ["industry_type", "role_category"]
+  procedures:
+    - name: "update_financial_metadata"
+      schedule: "daily"
+      sql: |
+        CREATE OR REPLACE FUNCTION metadata.update_financial_metadata()
+        RETURNS void AS $$
+        BEGIN
+          TRUNCATE TABLE metadata.financial_metrics;
+
+          INSERT INTO metadata.financial_metrics
+            (anonymous_id, industry_type, company_size_category, funding_stage,
+            metric_name, metric_value, time_period, confidence_score)
+          SELECT
+            anonymous_id,
+            industry_type,
+            company_size_category,
+            funding_stage,
+            'normalized_revenue' as metric_name,
+            normalized_revenue as metric_value,
+            report_month as time_period,
+            1.0 as confidence_score
+          FROM anonymized.financial_data;
+
+          -- 他の指標も同様に挿入
+          INSERT INTO metadata.financial_metrics
+            (anonymous_id, industry_type, company_size_category, funding_stage,
+            metric_name, metric_value, time_period, confidence_score)
+          SELECT
+            anonymous_id,
+            industry_type,
+            company_size_category,
+            funding_stage,
+            'normalized_burn_rate' as metric_name,
+            normalized_burn_rate as metric_value,
+            report_month as time_period,
+            1.0 as confidence_score
+          FROM anonymized.financial_data;
+
+          -- 以下同様に各指標を追加
+        END;
+        $$ LANGUAGE plpgsql;
+
+# 業界ベンチマーク生成
+benchmarks:
+  materialized_views:
+    - name: "benchmarks.financial_benchmarks"
+      refresh_schedule: "daily"
+      definition: |
+        CREATE MATERIALIZED VIEW IF NOT EXISTS benchmarks.financial_benchmarks AS
+        SELECT
+          industry_type,
+          company_size_category,
+          funding_stage,
+          metric_name,
+          AVG(metric_value) AS avg_value,
+          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY metric_value) AS median_value,
+          PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY metric_value) AS percentile_25,
+          PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY metric_value) AS percentile_75,
+          STDDEV(metric_value) AS std_deviation,
+          COUNT(DISTINCT anonymous_id) AS company_count
+        FROM metadata.financial_metrics
+        GROUP BY industry_type, company_size_category, funding_stage, metric_name
+        HAVING COUNT(DISTINCT anonymous_id) >= 5;
+
+# 連合学習システム
+federated_learning:
+  system_architecture:
+    type: "cross-silo"  # 企業間での連合学習
+    topology: "star"    # 中央サーバーと複数クライアント
+    communication: "secure_aggregation"
+
+  # 中央サーバー設定 - 更新
+  central_server:
+    name: "federated_aggregation_server"
+    framework: "flower"  # TensorFlow Federatedから変更
+    version: "1.5.0"     # Flowerの最新バージョン
+    kubernetes:
+      deployment_name: "fl-central-server"
+      replicas: 3
+      resources:
+        cpu: "3"         # リソース要件削減
+        memory: "12Gi"   # リソース要件削減
+        gpu: "1"
+    security:
+      authentication:
+        client_certificates: true
+        token_based: true
+      encryption:
+        in_transit: true
+        model_parameters: true
+    conda_integration:   # 追加
+      enabled: true
+      channels:
+        - "conda-forge"
+      environment_name: "flower-server"
+      mamba_accelerated: true
+
+  # クライアント設定 - 更新
+  client:
+    name: "federated_client"
+    deployment:
+      type: "docker"
+      image: "startup-analytics/flower-client:v1.0"  # イメージ名更新
+      resources:
+        min_cpu: "1"     # リソース要件削減
+        min_memory: "2Gi"  # リソース要件削減
+    data_access:
+      local_only: true
+      required_tables:
+        - "raw_data.financial_data"
+        - "raw_data.vas_data"
+    security:
+      model_isolation:
+        containerized: true
+        memory_protection: true
+    framework_settings:  # 追加: Flower固有の設定
+      virtual_client_engine: true
+      connection_retries: 3
+      secure_connection: true
+    conda_integration:   # 追加
+      enabled: true
+      channels:
+        - "conda-forge"
+      environment_name: "flower-client"
+      mamba_accelerated: true
+
+  # モデル設定 - 更新
+  models:
+    - name: "financial_performance_predictor"
+      type: "bayesian_neural_network"
+      # フレームワーク中立性を活かす
+      framework_options:  # 複数フレームワークをサポート
+        - name: "tensorflow_probability"
+          version: "0.19.0"
+        - name: "pytorch"
+          version: "2.0.0"
+        - name: "jax"
+          version: "0.4.10"
+      architecture:
+        input_dim: 25
+        hidden_layers: [64, 32, 16]
+        output_dim: 5
+        activation: "relu"
+        final_activation: "linear"
+      training:
+        loss: "mean_squared_error"
+        optimizer: "adam"
+        learning_rate: 0.001
+        local_epochs: 5
+        batch_size: 32
+      federated_settings:
+        aggregation_strategy: "fedavg"  # Flower用の名称に変更
+        min_available_clients: 3
+        sample_fraction: 0.8
+        num_rounds: 50
+        # Flower特有の設定を追加
+        fit_metrics_aggregation_fn: "weighted_average"
+        evaluate_metrics_aggregation_fn: "weighted_average"
+        fit_config:
+          timeout: 600  # 10分タイムアウト
+        convergence_criteria:
+          metric: "validation_loss"
+          patience: 5
+          min_delta: 0.001
+
+    - name: "team_health_predictor"
+      type: "bayesian_neural_network"
+      # フレームワーク中立性を活かす
+      framework_options:  # 複数フレームワークをサポート
+        - name: "tensorflow_probability"
+          version: "0.19.0"
+        - name: "pytorch"
+          version: "2.0.0"
+      architecture:
+        input_dim: 15
+        hidden_layers: [32, 16]
+        output_dim: 3
+        activation: "relu"
+        final_activation: "linear"
+      training:
+        loss: "mean_squared_error"
+        optimizer: "adam"
+        learning_rate: 0.001
+        local_epochs: 5
+        batch_size: 32
+      federated_settings:
+        aggregation_strategy: "fedavg"  # Flower用の名称に変更
+        min_available_clients: 3
+        sample_fraction: 0.8
+        num_rounds: 50
+        # Flower特有の設定を追加
+        fit_metrics_aggregation_fn: "weighted_average"
+        evaluate_metrics_aggregation_fn: "weighted_average"
+
+  # 差分プライバシー設定 - 更新
+  differential_privacy:
+    enabled: true
+    mechanism: "gaussian"
+    client_level:
+      noise_multiplier: 1.1
+      l2_norm_clip: 3.0
+      target_epsilon: 3.0
+      target_delta: 1e-5
+    model_level:
+      enabled: true
+      epsilon_per_round: 0.1
+    # Flower特有の実装
+    flower_implementation:
+      dp_strategy: "DPFedAvg"
+      accountant: "rdp"
+
+  # セキュア集約設定 - 更新
+  secure_aggregation:
+    enabled: true
+    protocol: "secure_aggregation"  # Flower固有の用語に変更
+    crypto_provider: "paillier"
+    key_rotation:
+      frequency: "daily"
+      storage: "vault"
+    # Flower特有の設定を追加
+    flower_specific:
+      secure_aggregation_min_clients: 3
+      secure_aggregation_threshold: 2
+
+  # 連合学習データベース設定
+  database:
+    tables:
+      - name: "federated.model_registry"
+        columns:
+          - name: "model_id"
+            type: "SERIAL PRIMARY KEY"
+          - name: "model_name"
+            type: "TEXT"
+          - name: "version"
+            type: "TEXT"
+          - name: "created_at"
+            type: "TIMESTAMP"
+          - name: "status"
+            type: "TEXT"
+          - name: "metrics"
+            type: "JSONB"
+          - name: "parameters_location"
+            type: "TEXT"
+          - name: "client_count"
+            type: "INTEGER"
+          - name: "rounds_completed"
+            type: "INTEGER"
+      - name: "federated.client_registry"
+        columns:
+          - name: "client_id"
+            type: "TEXT PRIMARY KEY"
+          - name: "client_name"
+            type: "TEXT"
+          - name: "industry_type"
+            type: "TEXT"
+          - name: "data_size"
+            type: "INTEGER"
+          - name: "last_active"
+            type: "TIMESTAMP"
+          - name: "models_participated"
+            type: "JSONB"
+      - name: "federated.training_rounds"
+        columns:
+          - name: "round_id"
+            type: "SERIAL PRIMARY KEY"
+          - name: "model_id"
+            type: "INTEGER REFERENCES federated.model_registry(model_id)"
+          - name: "round_number"
+            type: "INTEGER"
+          - name: "started_at"
+            type: "TIMESTAMP"
+          - name: "completed_at"
+            type: "TIMESTAMP"
+          - name: "client_count"
+            type: "INTEGER"
+          - name: "metrics"
+            type: "JSONB"
+          - name: "aggregation_method"
+            type: "TEXT"
+      # Flower特有のテーブルを追加
+      - name: "federated.flower_strategy_config"
+        columns:
+          - name: "strategy_id"
+            type: "SERIAL PRIMARY KEY"
+          - name: "strategy_name"
+            type: "TEXT"
+          - name: "parameters"
+            type: "JSONB"
+          - name: "created_at"
+            type: "TIMESTAMP"
+
+  # 連合学習APIエンドポイント - 更新
+  api:
+    - path: "/api/v1/federated/models"
+      method: "GET"
+      description: "利用可能なモデル一覧の取得"
+      authentication: true
+    - path: "/api/v1/federated/models/{model_id}/download"
+      method: "GET"
+      description: "最新のグローバルモデルをダウンロード"
+      authentication: true
+    - path: "/api/v1/federated/models/{model_id}/update"
+      method: "POST"
+      description: "ローカルで訓練したモデル更新を提出"
+      authentication: true
+      rate_limit: 10
+    - path: "/api/v1/federated/status"
+      method: "GET"
+      description: "現在の訓練ステータスを確認"
+      authentication: true
+    # Flower特有のエンドポイントを追加
+    - path: "/api/v1/federated/clients/register"
+      method: "POST"
+      description: "新規クライアントの登録"
+      authentication: true
+    - path: "/api/v1/federated/strategies"
+      method: "GET"
+      description: "利用可能な集約戦略の一覧取得"
+      authentication: true
+
+  # モデル評価と検証 - 更新
+  evaluation:
+    metrics:
+      - name: "mse"
+        description: "Mean Squared Error"
+      - name: "mae"
+        description: "Mean Absolute Error"
+      - name: "r2"
+        description: "R-squared"
+    validation:
+      global_validation:
+        enabled: true
+        holdout_data_source: "validation_dataset"
+        frequency: "every_round"
+      local_validation:
+        enabled: true
+        cross_validation_folds: 5
+        metrics_aggregation: "secure_aggregation"
+    # Flower特有の評価機能を追加
+    flower_evaluation:
+      distributed_evaluation: true
+      evaluation_fraction: 0.2
+      strategy_adaptation: true
+
+# オーケストレーションとワークフロー - 更新
+orchestration:
+  workflow_manager:
+    type: "airflow"
+    version: "2.3.0"
+    dags:
+      - name: "federated_learning_workflow"
+        schedule: "0 1 * * 1"  # 毎週月曜日午前1時
+        tasks:
+          - name: "prepare_global_model"
+            type: "python_operator"
+            python_callable: "prepare_flower_model"  # 関数名更新
+          - name: "notify_clients"
+            type: "http_operator"
+            endpoint: "/api/notify/training_round"
+            dependencies: ["prepare_global_model"]
+          - name: "wait_for_client_updates"
+            type: "sensor_operator"
+            mode: "poke"
+            timeout: 86400  # 24時間
+            dependencies: ["notify_clients"]
+          - name: "aggregate_model_updates"
+            type: "python_operator"
+            python_callable: "flower_aggregate_model_updates"  # 関数名更新
+            dependencies: ["wait_for_client_updates"]
+          - name: "evaluate_global_model"
+            type: "python_operator"
+            python_callable: "evaluate_flower_model"  # 関数名更新
+            dependencies: ["aggregate_model_updates"]
+          - name: "register_model_version"
+            type: "python_operator"
+            python_callable: "register_model_version"
+            dependencies: ["evaluate_global_model"]
+      - name: "model_deployment_workflow"
+        schedule: "0 3 * * 2"  # 毎週火曜日午前3時
+        tasks:
+          - name: "validate_latest_model"
+            type: "python_operator"
+            python_callable: "validate_latest_model"
+          - name: "canary_deployment"
+            type: "kubernetes_operator"
+            action: "apply"
+            manifest: "k8s/canary_model_deployment.yaml"
+            dependencies: ["validate_latest_model"]
+          - name: "monitor_canary"
+            type: "sensor_operator"
+            mode: "poke"
+            timeout: 3600  # 1時間
+            dependencies: ["canary_deployment"]
+          - name: "full_deployment"
+            type: "kubernetes_operator"
+            action: "apply"
+            manifest: "k8s/full_model_deployment.yaml"
+            dependencies: ["monitor_canary"]
+
+# モデルサービング - 更新
+model_serving:
+  framework: "torchserve"  # TensorFlow ServingからTorchServeに変更
+  version: "0.8.0"
+  deployment:
+    type: "kubernetes"
+    service_name: "model-serving"
+    replicas: 3
+    autoscaling:
+      enabled: true
+      min_replicas: 2
+      max_replicas: 10
+      target_cpu_utilization: 70
+    resources:
+      cpu: "2"
+      memory: "4Gi"
+      gpu: "1"
+  monitoring:
+    prometheus_integration: true
+    metrics:
+      - "prediction_latency"
+      - "throughput"
+      - "error_rate"
+  endpoints:
+    - path: "/v1/models/{model_name}:predict"
+      method: "POST"
+      description: "モデル予測API"
+      authentication: true
+      rate_limit: 100
+    - path: "/v1/models/{model_name}/metadata"
+      method: "GET"
+      description: "モデルメタデータ取得API"
+      authentication: true
+  # マルチフレームワークサポート - 追加
+  multi_framework_support:
+    enabled: true
+    adapters:
+      - framework: "tensorflow"
+        adapter: "tf_adapter"
+      - framework: "pytorch"
+        adapter: "torch_handler"
+      - framework: "jax"
+        adapter: "jax_converter"
+
+# セキュリティと暗号化
+security:
+  encryption:
+    data_at_rest:
+      provider: "postgresql_pgcrypto"
+      key_management: "aws_kms"
+    model_parameters:
+      algorithm: "AES-256-GCM"
+      key_rotation: "weekly"
+  authentication:
+    service_accounts:
+      provider: "kubernetes_service_account"
+      jwt_validation: true
+    client_authentication:
+      certificate_based: true
+      token_based: true
+      multi_factor: true
+  network_security:
+    tls_required: true
+    tls_version: "1.3"
+    mutual_tls: true
+    ip_allowlist: true
+  model_protection:
+    tamper_detection: true
+    inference_monitoring: true
+    adversarial_detection: true
+
+# モニタリングと通知 - 更新
+monitoring:
+  federated_learning_metrics:
+    - name: "client_participation_rate"
+      description: "連合学習ラウンドに参加したクライアントの割合"
+      warning_threshold: 0.7
+      critical_threshold: 0.5
+    - name: "model_convergence_rate"
+      description: "モデル収束の速度"
+      warning_threshold: 0.01
+      critical_threshold: 0.005
+    - name: "cross_client_variance"
+      description: "クライアント間のモデル更新の分散"
+      warning_threshold: 0.2
+      critical_threshold: 0.4
+    # Flower特有のメトリクス - 追加
+    - name: "communication_efficiency"
+      description: "通信効率性（ラウンドあたりの転送データ量）"
+      warning_threshold: 10000000  # 10MB
+      critical_threshold: 50000000  # 50MB
+    - name: "client_resource_usage"
+      description: "クライアントリソース使用率"
+      warning_threshold: 0.8
+      critical_threshold: 0.9
+  alerting:
+    providers:
+      - type: "slack"
+        webhook: "${SLACK_WEBHOOK_URL}"
+      - type: "email"
+        recipients: ["alerts@example.com"]
+    rules:
+      - name: "low_client_participation"
+        condition: "client_participation_rate < 0.7"
+        severity: "warning"
+        message: "連合学習の参加クライアント率が低下しています"
+      - name: "model_divergence"
+        condition: "cross_client_variance > 0.3"
+        severity: "critical"
+        message: "クライアント間のモデル分散が大きくなっています"
+      # Flower特有のアラート - 追加
+      - name: "high_communication_overhead"
+        condition: "communication_efficiency > 30000000"
+        severity: "warning"
+        message: "通信オーバーヘッドが大きくなっています"
+
+# 展開とスケーリング計画 - 更新
+deployment:
+  infrastructure:
+    provider: "kubernetes"
+    regions:
+      - name: "tokyo"
+        primary: true
+      - name: "osaka"
+        disaster_recovery: true
+    networking:
+      load_balancer: "nginx_ingress"
+      service_mesh: "istio"
+  scaling:
+    central_server:
+      auto_scaling:
+        enabled: true
+        min_replicas: 3
+        max_replicas: 10
+    client_onboarding:
+      max_clients_per_month: 75  # 増加（元は50）
+      automated_provisioning: true
+      self_service_portal: true
+    # Flower特有のスケーリング - 追加
+    flower_scaling:
+      horizontal_scaling: true
+      vertical_partitioning: true
+      max_concurrent_clients: 200
+
+# 実装タイムライン - 更新
+implementation_timeline:
+  phases:
+    - name: "Phase 1: 基本データ匿名化とメタデータシステム"
+      duration: "4週間"
+      tasks:
+        - "PostgreSQL匿名化ビューの作成"
+        - "メタデータリポジトリ構築"
+        - "ベンチマーク自動生成"
+        - "初期APIエンドポイント"
+    - name: "Phase 2: 連合学習フレームワーク基盤"
+      duration: "6週間"
+      tasks:
+        - "Flowerフレームワーク環境構築"  # 変更
+        - "マルチフレームワーク対応クライアントライブラリ開発"  # 変更
+        - "Flowerセキュアアグリゲーション実装"  # 変更
+        - "差分プライバシーフレームワーク実装"
+        - "Conda/Mambaとの統合最適化"  # 追加
+      dependencies: ["Phase 1"]
+    - name: "Phase 3: モデル開発と訓練パイプライン"
+      duration: "4週間"
+      tasks:
+        - "マルチフレームワーク対応ベイジアンニューラルネットワークモデル開発"  # 変更
+        - "連合訓練ワークフロー実装"
+        - "モデル評価フレームワーク構築"
+        - "Airflowパイプライン構築"
+      dependencies: ["Phase 2"]
+    - name: "Phase 4: セキュリティ強化とスケーリング"
+      duration: "3週間"
+      tasks:
+        - "暗号化層の実装"
+        - "クライアント認証システム"
+        - "モデル保護メカニズム"
+        - "スケーリング設定"
+      dependencies: ["Phase 3"]
+    - name: "Phase 5: モデルサービングとモニタリング"
+      duration: "3週間"
+      tasks:
+        - "マルチフレームワーク対応モデルサービング構築"  # 変更
+        - "モニタリングシステム構築"
+        - "アラートとダッシュボード"
+        - "パフォーマンス最適化"
+      dependencies: ["Phase 4"]
+    - name: "Phase 6: 本番リリースとクライアントオンボーディング"
+      duration: "4週間"
+      tasks:
+        - "本番環境デプロイ"
+        - "クライアントオンボーディング自動化"
+        - "ドキュメント作成"
+        - "サポート体制構築"
+      dependencies: ["Phase 5"]
+  total_duration: "24週間"
+
+# 予想されるROI - 更新
+roi_estimation:
+  implementation_cost:
+    development: "中～高（Flowerへの移行により削減）"  # 変更
+    infrastructure: "中（リソース効率化による削減）"  # 変更
+    timeline: "6ヶ月（完全実装）"
+  expected_benefits:
+    prediction_accuracy_improvement: "40-50%（単一企業データと比較）"
+    privacy_protection: "大幅に向上（生データ共有が不要）"
+    data_efficiency: "5-10倍（メタデータのみの場合と比較）"
+    competitive_advantage: "非常に高い（技術的障壁を構築）"
+    resource_efficiency: "30-50%向上（TFFと比較）"  # 追加
+    client_onboarding_speed: "40%向上（実装の簡素化により）"  # 追加
+  breakeven_point: "導入後15-20ヶ月"  # 改善（元は18-24ヶ月）
+  scaling_economics:
+    client_addition_cost: "大幅に逓減（Flowerの効率的なスケーリングにより）"  # 変更
+    accuracy_improvement_per_client: "対数的に向上（10社:20%、50社:35%、100社:45%）"
+    max_client_capacity: "200社以上（TFFより拡大）"  # 追加
+
+# 移行計画詳細 - 新規追加
+migration_plan:
+  strategy: "段階的移行"
+  phases:
+    - name: "準備フェーズ"
+      duration: "2週間"
+      tasks:
+        - "Flower環境のセットアップとテスト"
+        - "既存TFFコードとの互換性分析"
+        - "プロトタイプ開発"
+        - "移行リスク分析"
+    - name: "コンポーネント移行フェーズ"
+      duration: "3週間"
+      tasks:
+        - "中央サーバーコードの移行"
+        - "クライアントライブラリの移行"
+        - "モデル集約戦略の移行"
+        - "差分プライバシー実装の変換"
+      dependencies: ["準備フェーズ"]
+    - name: "統合とテストフェーズ"
+      duration: "1週間"
+      tasks:
+        - "コンポーネント統合"
+        - "エンドツーエンドテスト"
+        - "パフォーマンス検証"
+        - "セキュリティ監査"
+      dependencies: ["コンポーネント移行フェーズ"]
+  risks_and_mitigations:
+    - risk: "既存モデルとの互換性問題"
+      severity: "高"
+      mitigation: "抽象化レイヤーを導入し、複数フレームワークでテスト"
+    - risk: "パフォーマンス低下"
+      severity: "中"
+      mitigation: "継続的ベンチマークを実施し、ボトルネックを検出・最適化"
+    - risk: "データパイプラインの中断"
+      severity: "高"
+      mitigation: "段階的移行とフォールバックメカニズムの実装"
+  expected_improvements:
+    - name: "クライアントリソース使用量"
+      reduction: "30-50%"
+    - name: "実装の複雑さ"
+      reduction: "25-35%"
+    - name: "通信効率"
+      improvement: "25-40%"
+    - name: "スケーラビリティ"
+      improvement: "最大2倍のクライアント数対応"

@@ -11,6 +11,8 @@ import logging
 from pandas import DataFrame, Series
 from pandas._libs.missing import NAType
 from pandas.api.types import is_numeric_dtype
+# 循環インポートを避けるため、遅延インポートに変更
+# from service.firestore.client import FirestoreService
 
 # 型変数の定義
 T = TypeVar('T')
@@ -32,16 +34,73 @@ class DataPreprocessingError(Exception):
 
 class DataPreprocessor:
     """
-    Firestoreから取得したデータを前処理するためのクラス
+    データの前処理と整形を行うクラス
+    このクラスはシングルトンパターンで実装されており、アプリケーション全体で一貫したインスタンスを提供します。
     """
-    def __init__(self):
+    _instance = None
+    _firestore_service = None
+
+    def __new__(cls):
+        """シングルトンパターンによるインスタンス生成"""
+        if cls._instance is None:
+            cls._instance = super(DataPreprocessor, cls).__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+
+    def _initialize(self):
+        """初期化処理"""
+        # FirestoreServiceは必要なときに遅延ロードする
+        pass
+
+    def _get_firestore_service(self):
+        """FirestoreServiceを遅延ロードして返す"""
+        if self._firestore_service is None:
+            # 必要なときに初めてインポート
+            from service.firestore.client import FirestoreService
+            self._firestore_service = FirestoreService()
+            logger.info("FirestoreServiceを初期化しました")
+        return self._firestore_service
+
+    async def get_data(
+        self,
+        collection_name: str,
+        conditions: Optional[List[Dict[str, Any]]] = None,
+        as_dataframe: bool = True
+    ) -> Union[pd.DataFrame, List[Dict[str, Any]]]:
         """
-        DataPreprocessorの初期化
+        Firestoreからデータを取得し、必要に応じてDataFrameに変換します。
+
+        Args:
+            collection_name: 取得するコレクション名
+            conditions: クエリ条件のリスト
+            as_dataframe: DataFrameに変換するかどうか
+
+        Returns:
+            DataFrame または ドキュメントのリスト
         """
-        self.required_columns = {
-            'vas_data': ['startup_id', 'timestamp', 'score'],
-            'financial_data': ['startup_id', 'timestamp', 'revenue']
-        }
+        try:
+            # FirestoreServiceを遅延ロード
+            firestore_service = self._get_firestore_service()
+
+            # Firestoreからデータを取得
+            results = await firestore_service.fetch_documents(
+                collection_name=collection_name,
+                conditions=conditions
+            )
+
+            if not results:
+                logger.warning(f"コレクション {collection_name} からデータが見つかりませんでした。")
+                return pd.DataFrame() if as_dataframe else []
+
+            if as_dataframe:
+                return pd.DataFrame(results)
+            else:
+                return results
+
+        except Exception as e:
+            error_msg = f"データ取得中にエラーが発生しました: {str(e)}"
+            logger.error(error_msg)
+            raise DataPreprocessingError(error_msg) from e
 
     def preprocess_firestore_data(
         self,

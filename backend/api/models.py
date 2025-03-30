@@ -5,7 +5,7 @@ Startup Wellness データ分析システムで使用されるデータモデル
 Firestoreを使用したデータの永続化を提供します。
 """
 from typing import Dict, Optional, Any, Sequence, TypeVar, Type, Mapping, List
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
 import asyncio
 import logging
@@ -188,7 +188,8 @@ class VASDataModel(FirestoreModel):
     other: float = Field(...)
     free_text: Optional[str] = Field(default=None)
 
-    @validator('physical_symptoms', 'mental_state', 'motivation', 'communication', 'other')
+    @field_validator('physical_symptoms', 'mental_state', 'motivation', 'communication', 'other')
+    @classmethod
     def validate_scores(cls, v: float) -> float:
         if not 0 <= v <= 100:
             raise ValueError("Score must be between 0 and 100")
@@ -217,7 +218,8 @@ class FinancialDataModel(FirestoreModel):
     employee_count: int = Field(...)
     turnover_rate: float = Field(...)
 
-    @validator('year')
+    @field_validator('year')
+    @classmethod
     def validate_year(cls, v: int) -> int:
         if not 1900 <= v <= datetime.now().year + 1:
             raise ValueError(f"Year must be between 1900 and {datetime.now().year + 1}")

@@ -5,14 +5,25 @@ Startup Wellness データ分析システムの設定情報を定義します。
 GCP/Firebase環境に最適化されています。
 """
 import os
+import sys
 from typing import Dict, List, Optional
 from google.cloud import secretmanager
 from google.auth import default
 from dotenv import load_dotenv
 
+# プロジェクトルートへのパスを取得
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# ルートの.envファイルのパスを設定
+ENV_PATH = os.path.join(ROOT_DIR, '.env')
+
 # 開発環境の場合のみ .env を読み込み
 if os.getenv("ENVIRONMENT") != "production":
-    load_dotenv()
+    # 優先的にルートの.envファイルを読み込む
+    if os.path.exists(ENV_PATH):
+        load_dotenv(ENV_PATH)
+    else:
+        # ルートの.envが見つからない場合は現在のディレクトリの.envを試す
+        load_dotenv()
 
 class Config:
     # GCP Project 設定
@@ -23,7 +34,14 @@ class Config:
     def get_secret(secret_id: str) -> str:
         """
         Secret Manager から機密情報を取得
+        開発環境では環境変数から読み込み
         """
+        # 環境変数に設定されている場合は、その値を優先して使用
+        env_value = os.getenv(secret_id)
+        if env_value:
+            return env_value
+
+        # 環境変数に設定されていない場合、Secret Managerから取得を試みる
         try:
             credentials, project = default()
             client = secretmanager.SecretManagerServiceClient()
@@ -32,7 +50,7 @@ class Config:
             return response.payload.data.decode("UTF-8")
         except Exception:
             # 開発環境用のフォールバック
-            return os.getenv(secret_id, "")
+            return ""
 
     # 認証設定
     SECRET_KEY = get_secret("JWT_SECRET_KEY")
@@ -66,13 +84,13 @@ class Config:
 
     # Firebase Client設定
     FIREBASE_CONFIG = {
-        "apiKey": get_secret("FIREBASE_API_KEY"),
-        "authDomain": f"{PROJECT_ID}.firebaseapp.com",
-        "projectId": PROJECT_ID,
-        "storageBucket": f"{PROJECT_ID}.appspot.com",
-        "messagingSenderId": get_secret("FIREBASE_MESSAGING_SENDER_ID"),
-        "appId": get_secret("FIREBASE_APP_ID"),
-        "measurementId": get_secret("FIREBASE_MEASUREMENT_ID")
+        "apiKey": os.getenv("FIREBASE_API_KEY", ""),
+        "authDomain": f"{os.getenv('FIREBASE_PROJECT_ID', PROJECT_ID)}.firebaseapp.com",
+        "projectId": os.getenv("FIREBASE_PROJECT_ID", PROJECT_ID),
+        "storageBucket": f"{os.getenv('FIREBASE_PROJECT_ID', PROJECT_ID)}.appspot.com",
+        "messagingSenderId": os.getenv("FIREBASE_MESSAGING_SENDER_ID", ""),
+        "appId": os.getenv("FIREBASE_APP_ID", ""),
+        "measurementId": os.getenv("FIREBASE_MEASUREMENT_ID", "")
     }
 
     # Vertex AI (Gemini) 設定

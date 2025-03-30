@@ -12,7 +12,6 @@ from datetime import datetime
 import asyncio
 from firebase_admin import firestore
 from google.cloud.firestore_v1.document import DocumentReference
-from backend.service.firestore.client import get_firestore_client
 
 # ロギングの設定
 logger = logging.getLogger(__name__)
@@ -23,6 +22,20 @@ if not logger.handlers:
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+
+# 柔軟なインポート
+try:
+    # 標準パス（ローカル環境）
+    from backend.service.firestore.client import get_firestore_client
+except ImportError:
+    try:
+        # Dockerパス
+        from service.firestore.client import get_firestore_client
+    except ImportError:
+        # 最後の手段
+        import sys
+        logger.error(f"モジュールパス: {sys.path}")
+        raise ImportError("get_firestore_clientをインポートできません。パス設定を確認してください。")
 
 class SurvivalAnalysisError(Exception):
     """生存時間分析に関するエラー"""
