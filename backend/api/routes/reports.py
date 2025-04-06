@@ -17,8 +17,19 @@ import hashlib
 from backend.utils.gemini_wrapper import GeminiWrapper
 from backend.core.config import Settings, get_settings
 
-# .envファイルを読み込む
-load_dotenv()
+# backend/.envファイルを読み込む
+# プロジェクトルートからのパスを構築
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+ENV_PATH = os.path.join(ROOT_DIR, 'backend', '.env')
+if os.path.exists(ENV_PATH):
+    load_dotenv(ENV_PATH)
+else:
+    # フォールバック: 現在のディレクトリ相対パスで試す
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.abspath(os.path.join(current_dir, '../..'))
+    ENV_PATH = os.path.join(backend_dir, '.env')
+    if os.path.exists(ENV_PATH):
+        load_dotenv(ENV_PATH)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])

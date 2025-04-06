@@ -77,3 +77,7 @@ docs/
 !credentials/
 !backend/credentials/
 !frontend/credentials/
+!backend/.env
+
+# ルートの環境変数ファイルは除外
+.env

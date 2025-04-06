@@ -3,22 +3,37 @@ import { Card } from "@/components/ui/card";
 
 interface DashboardCardProps {
   title: string;
-  description: string;
-  buttonText: string;
-  onClick?: () => void;
+  subtitle?: string;
+  actionText?: string;
+  actionIcon?: React.ReactNode;
+  children?: React.ReactNode;
 }
 
-export function DashboardCard({ title, description, buttonText, onClick }: DashboardCardProps) {
+export function DashboardCard({
+  title,
+  subtitle,
+  actionText,
+  actionIcon,
+  children
+}: DashboardCardProps) {
   return (
     <Card className="p-6 shadow-sm hover:shadow-md transition-shadow">
-      <h2 className="text-[#212121] text-xl font-semibold mb-4">{title}</h2>
-      <p className="text-[#757575] mb-4">{description}</p>
-      <Button 
-        className="w-full bg-[#4285F4] hover:bg-[#3367D6] text-white"
-        onClick={onClick}
-      >
-        {buttonText}
-      </Button>
+      <div className="flex justify-between items-start mb-4">
+        <div>
+          <h2 className="text-[#212121] text-xl font-semibold">{title}</h2>
+          {subtitle && <p className="text-[#757575] mt-1">{subtitle}</p>}
+        </div>
+        {actionText && actionIcon && (
+          <Button
+            variant="ghost"
+            className="flex items-center gap-2"
+          >
+            {actionText}
+            {actionIcon}
+          </Button>
+        )}
+      </div>
+      {children}
     </Card>
   );
 }

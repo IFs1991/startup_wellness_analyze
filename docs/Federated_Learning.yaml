@@ -1,10 +1,10 @@
-# スタートアップ分析プラットフォーム: 連合学習システム完全アーキテクチャ
+# スタートアップ分析プラットフォーム: Flower連合学習システムアーキテクチャ (v3.0)
 
 # システム全体の構成
 system:
   name: "startup-analytics-platform"
-  version: "2.0.0"
-  description: "連合学習を活用した高度なスタートアップ分析プラットフォーム"
+  version: "3.0.0" # Federated_Learning.yaml と統一
+  description: "Flower連合学習を活用した高度なスタートアップ分析プラットフォーム (Python 3.11ベース)"
   environment: "production"
   maintainers:
     - name: "システム管理者"
@@ -211,7 +211,7 @@ benchmarks:
         GROUP BY industry_type, company_size_category, funding_stage, metric_name
         HAVING COUNT(DISTINCT anonymous_id) >= 5;
 
-# 連合学習システム
+# 連合学習システム (Flowerベース)
 federated_learning:
   system_architecture:
     type: "cross-silo"  # 企業間での連合学習
@@ -221,8 +221,8 @@ federated_learning:
   # 中央サーバー設定
   central_server:
     name: "federated_aggregation_server"
-    framework: "tensorflow_federated"
-    version: "0.20.0"
+    framework: "flower"
+    version: ">=1.5.0" # environment.yml と整合
     kubernetes:
       deployment_name: "fl-central-server"
       replicas: 3
@@ -243,10 +243,10 @@ federated_learning:
     name: "federated_client"
     deployment:
       type: "docker"
-      image: "startup-analytics/federated-client:v1.0"
+      image: "startup-analytics/flower-client:v1.0" # Federated_Learning.yaml と統一
       resources:
-        min_cpu: "2"
-        min_memory: "4Gi"
+        min_cpu: "1" # Federated_Learning.yaml と統一
+        min_memory: "2Gi" # Federated_Learning.yaml と統一
     data_access:
       local_only: true
       required_tables:
@@ -261,7 +261,12 @@ federated_learning:
   models:
     - name: "financial_performance_predictor"
       type: "bayesian_neural_network"
-      framework: "tensorflow_probability"
+      # フレームワークオプション (Flowerはバックエンドに依存しない)
+      framework_options:
+        - name: "tensorflow_probability"
+          version: ">=0.17.0" # requirements.txt と整合
+        - name: "pytorch"
+          version: "" # condaで管理
       architecture:
         input_dim: 25
         hidden_layers: [64, 32, 16]
@@ -275,10 +280,14 @@ federated_learning:
         local_epochs: 5
         batch_size: 32
       federated_settings:
-        aggregation_method: "federated_averaging"
-        min_clients_per_round: 3
-        client_sampling_rate: 0.8
-        communication_rounds: 50
+        aggregation_strategy: "fedavg"  # Flowerの戦略例
+        min_available_clients: 3       # Flowerのパラメータ
+        sample_fraction: 0.8           # Flowerのパラメータ
+        num_rounds: 50
+        fit_metrics_aggregation_fn: "weighted_average" # Flower固有
+        evaluate_metrics_aggregation_fn: "weighted_average" # Flower固有
+        fit_config:
+          timeout: 600
         convergence_criteria:
           metric: "validation_loss"
           patience: 5
@@ -286,7 +295,11 @@ federated_learning:
 
     - name: "team_health_predictor"
       type: "bayesian_neural_network"
-      framework: "tensorflow_probability"
+      framework_options:
+        - name: "tensorflow_probability"
+          version: ">=0.17.0"
+        - name: "pytorch"
+          version: ""
       architecture:
         input_dim: 15
         hidden_layers: [32, 16]
@@ -300,10 +313,12 @@ federated_learning:
         local_epochs: 5
         batch_size: 32
       federated_settings:
-        aggregation_method: "federated_averaging"
-        min_clients_per_round: 3
-        client_sampling_rate: 0.8
-        communication_rounds: 50
+        aggregation_strategy: "fedavg"
+        min_available_clients: 3
+        sample_fraction: 0.8
+        num_rounds: 50
+        fit_metrics_aggregation_fn: "weighted_average"
+        evaluate_metrics_aggregation_fn: "weighted_average"
 
   # 差分プライバシー設定
   differential_privacy:
@@ -317,12 +332,18 @@ federated_learning:
     model_level:
       enabled: true
       epsilon_per_round: 0.1
+    # Flower特有の実装
+    flower_implementation:
+      dp_strategy: "DPFedAvg" # Flowerの戦略例
+      accountant: "rdp"       # Flowerの会計士例
+      library: "opacus"
+      version: "==1.4.0"      # requirements.txt と整合
 
   # セキュア集約設定
   secure_aggregation:
     enabled: true
-    protocol: "secure_sum"
-    crypto_provider: "paillier"
+    protocol: "secure_aggregation" # Flower固有の用語
+    crypto_provider: "paillier"     # 例
     key_rotation:
       frequency: "daily"
       storage: "vault"
@@ -382,6 +403,17 @@ federated_learning:
             type: "JSONB"
           - name: "aggregation_method"
             type: "TEXT"
+      # Flower特有のテーブルを追加
+      - name: "federated.flower_strategy_config"
+        columns:
+          - name: "strategy_id"
+            type: "SERIAL PRIMARY KEY"
+          - name: "strategy_name"
+            type: "TEXT"
+          - name: "parameters"
+            type: "JSONB"
+          - name: "created_at"
+            type: "TIMESTAMP"
 
   # 連合学習APIエンドポイント
   api:
@@ -421,19 +453,24 @@ federated_learning:
         enabled: true
         cross_validation_folds: 5
         metrics_aggregation: "secure_aggregation"
+    # Flower特有の評価機能を追加
+    flower_evaluation:
+      distributed_evaluation: true
+      evaluation_fraction: 0.2
+      strategy_adaptation: true
 
 # オーケストレーションとワークフロー
 orchestration:
   workflow_manager:
     type: "airflow"
-    version: "2.3.0"
+    version: "2.7.1" # requirements.txt のコメントに従う
     dags:
       - name: "federated_learning_workflow"
         schedule: "0 1 * * 1"  # 毎週月曜日午前1時
         tasks:
           - name: "prepare_global_model"
             type: "python_operator"
-            python_callable: "prepare_global_model"
+            python_callable: "prepare_flower_model" # Flower用に変更
           - name: "notify_clients"
             type: "http_operator"
             endpoint: "/api/notify/training_round"
@@ -445,11 +482,11 @@ orchestration:
             dependencies: ["notify_clients"]
           - name: "aggregate_model_updates"
             type: "python_operator"
-            python_callable: "aggregate_model_updates"
+            python_callable: "flower_aggregate_model_updates" # Flower用に変更
             dependencies: ["wait_for_client_updates"]
           - name: "evaluate_global_model"
             type: "python_operator"
-            python_callable: "evaluate_global_model"
+            python_callable: "evaluate_flower_model" # Flower用に変更
             dependencies: ["aggregate_model_updates"]
           - name: "register_model_version"
             type: "python_operator"
@@ -479,8 +516,8 @@ orchestration:
 
 # モデルサービング
 model_serving:
-  framework: "tensorflow_serving"
-  version: "2.8.0"
+  framework: "torchserve" # Flowerは特定フレームワークに依存しないが、ここではTorchServeを選択
+  version: "0.8.0"      # 例
   deployment:
     type: "kubernetes"
     service_name: "model-serving"
@@ -500,16 +537,25 @@ model_serving:
       - "prediction_latency"
       - "throughput"
       - "error_rate"
+    authentication: true
+    rate_limit: 100
   endpoints:
     - path: "/v1/models/{model_name}:predict"
       method: "POST"
       description: "モデル予測API"
       authentication: true
-      rate_limit: 100
     - path: "/v1/models/{model_name}/metadata"
       method: "GET"
       description: "モデルメタデータ取得API"
       authentication: true
+  # マルチフレームワークサポート (サービング側)
+  multi_framework_support:
+    enabled: true
+    adapters:
+      - framework: "tensorflow"
+        adapter: "tf_adapter"
+      - framework: "pytorch"
+        adapter: "torch_handler"
 
 # セキュリティと暗号化
 security:
@@ -553,6 +599,15 @@ monitoring:
       description: "クライアント間のモデル更新の分散"
       warning_threshold: 0.2
       critical_threshold: 0.4
+    # Flower特有のメトリクスを追加
+    - name: "communication_efficiency"
+      description: "通信効率性（ラウンドあたりの転送データ量）"
+      warning_threshold: 10000000  # 10MB
+      critical_threshold: 50000000  # 50MB
+    - name: "client_resource_usage"
+      description: "クライアントリソース使用率"
+      warning_threshold: 0.8
+      critical_threshold: 0.9
   alerting:
     providers:
       - type: "slack"
@@ -568,6 +623,11 @@ monitoring:
         condition: "cross_client_variance > 0.3"
         severity: "critical"
         message: "クライアント間のモデル分散が大きくなっています"
+      # Flower特有のアラートを追加
+      - name: "high_communication_overhead"
+        condition: "communication_efficiency > 30000000"
+        severity: "warning"
+        message: "通信オーバーヘッドが大きくなっています"
 
 # 展開とスケーリング計画
 deployment:
@@ -588,9 +648,14 @@ deployment:
         min_replicas: 3
         max_replicas: 10
     client_onboarding:
-      max_clients_per_month: 50
+      max_clients_per_month: 75 # Federated_Learning.yaml と統一
       automated_provisioning: true
       self_service_portal: true
+    # Flower特有のスケーリング
+    flower_scaling:
+      horizontal_scaling: true
+      vertical_partitioning: true
+      max_concurrent_clients: 200
 
 # 実装タイムライン
 implementation_timeline:
@@ -602,19 +667,20 @@ implementation_timeline:
         - "メタデータリポジトリ構築"
         - "ベンチマーク自動生成"
         - "初期APIエンドポイント"
-    - name: "Phase 2: 連合学習フレームワーク基盤"
+    - name: "Phase 2: 連合学習フレームワーク基盤 (Flower)"
       duration: "6週間"
       tasks:
-        - "TensorFlow Federated環境構築"
-        - "クライアントライブラリ開発"
-        - "セキュアアグリゲーション実装"
-        - "差分プライバシーフレームワーク実装"
+        - "Flowerフレームワーク環境構築"
+        - "マルチフレームワーク対応クライアントライブラリ開発"
+        - "Flowerセキュアアグリゲーション実装"
+        - "差分プライバシーフレームワーク実装 (Opacus統合)"
+        - "Conda/Mambaとの統合最適化"
       dependencies: ["Phase 1"]
     - name: "Phase 3: モデル開発と訓練パイプライン"
       duration: "4週間"
       tasks:
-        - "ベイジアンニューラルネットワークモデル開発"
-        - "連合訓練ワークフロー実装"
+        - "マルチフレームワーク対応ベイジアンニューラルネットワークモデル開発"
+        - "連合訓練ワークフロー実装 (Flowerベース)"
         - "モデル評価フレームワーク構築"
         - "Airflowパイプライン構築"
       dependencies: ["Phase 2"]
@@ -629,7 +695,7 @@ implementation_timeline:
     - name: "Phase 5: モデルサービングとモニタリング"
       duration: "3週間"
       tasks:
-        - "TensorFlow Servingデプロイ"
+        - "マルチフレームワーク対応モデルサービング構築 (TorchServe)"
         - "モニタリングシステム構築"
         - "アラートとダッシュボード"
         - "パフォーマンス最適化"
@@ -644,18 +710,21 @@ implementation_timeline:
       dependencies: ["Phase 5"]
   total_duration: "24週間"
 
-# 予想されるROI
+# 予想されるROI (Flowerベース)
 roi_estimation:
   implementation_cost:
-    development: "高（連合学習の専門知識が必要）"
-    infrastructure: "中～高（クラウドリソースが必要）"
+    development: "中～高 (Flowerの専門知識が必要)"
+    infrastructure: "中 (効率的なリソース利用)"
     timeline: "6ヶ月（完全実装）"
   expected_benefits:
     prediction_accuracy_improvement: "40-50%（単一企業データと比較）"
     privacy_protection: "大幅に向上（生データ共有が不要）"
     data_efficiency: "5-10倍（メタデータのみの場合と比較）"
     competitive_advantage: "非常に高い（技術的障壁を構築）"
-  breakeven_point: "導入後18-24ヶ月"
+    resource_efficiency: "30-50%向上 (見込み)"
+    client_onboarding_speed: "40%向上 (見込み)"
+  breakeven_point: "導入後15-20ヶ月"
   scaling_economics:
-    client_addition_cost: "逓減（システム構築後は低コスト）"
+    client_addition_cost: "大幅に逓減（Flowerの効率的なスケーリング）"
     accuracy_improvement_per_client: "対数的に向上（10社:20%、50社:35%、100社:45%）"
+    max_client_capacity: "200社以上"

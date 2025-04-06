@@ -1,0 +1,105 @@
+# バックエンドコンポーネント仕様
+
+version: 1.0.0
+last_updated: 2025-04-06
+
+# モジュール構成
+modules:
+  # データ処理最適化モジュール
+  dask_optimizer:
+    file_path: backend/utils/dask_optimizer.py
+    description: Daskを活用した大規模データ処理最適化ユーティリティ
+    primary_class: DaskOptimizer
+    features:
+      - 大規模データセットの並列処理
+      - メモリ使用量の最適化
+      - データ型最適化によるメモリ削減
+      - CSVファイルの効率的な読み込み
+      - 処理タスクの進行状況モニタリング
+    initialization_params:
+      - n_workers: ワーカー数（Noneの場合はCPUコア数の半分を使用）
+      - threads_per_worker: ワーカーあたりのスレッド数
+      - memory_limit: ワーカーあたりのメモリ制限（例: '4GB'）
+      - temporary_directory: 一時ファイル用ディレクトリ
+    key_methods:
+      - optimize_dataframe_dtypes: DataFrameのデータ型を最適化
+      - parallelize_dataframe: DataFrameを分割して並列処理
+      - read_csv_optimized: メモリ効率の良いCSV読み込み
+      - process_large_dataset: 大規模データセットを効率的に処理
+      - get_dask_diagnostic_info: Dask診断情報の取得
+      - monitor_task_progress: タスク進行状況のモニタリング
+    dependencies:
+      - pandas
+      - numpy
+      - dask
+      - psutil
+
+  # Gemini AI APIラッパーモジュール
+  gemini_wrapper:
+    file_path: backend/utils/gemini_wrapper.py
+    description: Google Gemini APIを使用するためのラッパークラス
+    primary_class: GeminiWrapper
+    features:
+      - テキスト生成
+      - データ可視化
+      - レポート生成
+      - テキスト分析
+    initialization_params:
+      - api_key: Gemini APIキー（Noneの場合は環境変数から取得）
+      - model_name: 使用するモデル名（デフォルト: 'gemini-1.5-pro'）
+    key_methods:
+      - generate_content: コンテンツを同期的に生成
+      - generate_content_async: コンテンツを非同期で生成
+      - generate_visualization: データ可視化画像を生成
+      - generate_report_html: レポートのHTML形式を生成
+      - analyze_text: テキスト分析を実行
+    dependencies:
+      - google.generativeai
+      - asyncio
+      - dotenv
+
+  # PDFコンバータモジュール
+  pdf_converter:
+    file_path: backend/utils/pdf_converter.js
+    description: HTMLからPDFへ変換するPuppeteerを使用したコンバーター
+    type: Node.js スクリプト
+    usage: node pdf_converter.js <input_html_path> <output_pdf_path>
+    features:
+      - HTMLファイルのPDF変換
+      - カスタムヘッダーとフッターの設定
+      - 自動ページネーション
+      - 背景色とスタイルのサポート
+    pdf_options:
+      - format: A4
+      - margin: 1cm（上下左右）
+      - header: スタートアップウェルネス分析レポート
+      - footer: ページ番号表示
+    dependencies:
+      - puppeteer
+      - fs
+      - path
+
+# ユニットテスト構成
+unit_tests:
+  directories:
+    - backend/unit
+
+# ロギング設定
+logging:
+  file_path: backend/unit/logging_config.py
+  description: アプリケーション全体のロギング設定
+
+# 環境要件
+environment:
+  python: ">=3.8"
+  node: ">=14.0.0"
+  dependencies:
+    python:
+      - pandas
+      - numpy
+      - dask
+      - google-generativeai
+      - psutil
+      - dotenv
+    node:
+      - puppeteer

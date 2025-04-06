@@ -9,19 +9,19 @@ import sys
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
-# プロジェクトルートへのパスを取得
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-# ルートの.envファイルのパスを設定
-ENV_PATH = os.path.join(ROOT_DIR, '.env')
+# backendディレクトリへのパスを取得
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# backend/.envファイルのパスを設定
+ENV_PATH = os.path.join(BACKEND_DIR, '.env')
 
 # 開発環境の場合のみ .env ファイルを読み込み
 if os.getenv("ENVIRONMENT") != "production":
-    # 優先的にルートの.envファイルを読み込む
+    # backend/.envファイルを読み込む
     if os.path.exists(ENV_PATH):
         load_dotenv(ENV_PATH)
     else:
-        # ルートの.envが見つからない場合は現在のディレクトリの.envを試す
-        load_dotenv()
+        # ENVファイルが見つからない場合はログ出力
+        print(f"Warning: .env file not found at {ENV_PATH}")
 
 # 環境に応じた設定
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -1,0 +1,274 @@
+# スタートアップ分析プラットフォーム: フェデレーテッド学習システム
+system:
+  name: "federated-learning-system"
+  version: "2.0.0"
+  description: "スタートアップの健康とパフォーマンスデータを安全に学習・分析するためのフェデレーテッド学習システム"
+  framework: "flower"
+
+overview:
+  features:
+    - "マルチフレームワーク対応 (TensorFlow, PyTorch)"
+    - "差分プライバシーによるデータ保護"
+    - "セキュア集約によるモデル更新保護"
+    - "ベイジアンニューラルネットワークによる不確実性の定量化"
+    - "クラウドリソースの最適スケジューリング"
+
+architecture:
+  diagram: |
+    +-------------------+       +----------------------+
+    |   フェデレーテッド    |       |   フェデレーテッド     |
+    |   クライアント      |<----->|   サーバー           |
+    +-------------------+       +----------------------+
+           ^                             ^
+           |                             |
+    +-------------------+       +----------------------+
+    |   ローカルモデル     |       |   グローバルモデル     |
+    |   (TF/PyTorch)    |       |   (TF/PyTorch)      |
+    +-------------------+       +----------------------+
+           ^                             ^
+           |                             |
+    +-------------------+       +----------------------+
+    |   ローカルデータ     |       |   モデル更新集約      |
+    +-------------------+       +----------------------+
+
+components:
+  server:
+    - name: "FederatedServer"
+      description: "Flowerベースのフェデレーテッド学習サーバー実装"
+      functions:
+        - "クライアントからのモデル更新を集約"
+        - "グローバルモデルの管理と配布"
+        - "訓練ラウンドの調整"
+        - "クライアント認証と登録管理"
+
+    - name: "SecureAggregator"
+      description: "クライアントの更新を安全に集約するための暗号化機能"
+      functions:
+        - "セキュア集約プロトコル実装"
+        - "暗号化機能（Paillier, RSA対応）"
+        - "クライアント閾値管理"
+
+    - name: "OptimalScheduler"
+      description: "GCPリソースを最適化するスケジューラ"
+      functions:
+        - "割引時間帯（東京リージョン）を活用したスケジューリング"
+        - "ワークフロー自動化"
+        - "コスト最適化"
+
+  client:
+    - name: "FederatedClient"
+      description: "Flowerベースのフェデレーテッド学習クライアント実装"
+      functions:
+        - "ローカルデータでモデルを訓練"
+        - "モデル更新をサーバーに送信"
+        - "サーバーからのグローバルモデル取得"
+
+    - name: "DifferentialPrivacy"
+      description: "差分プライバシーによるデータ保護機能"
+      functions:
+        - "勾配クリッピング"
+        - "ノイズ追加"
+        - "プライバシー予算管理"
+
+  models:
+    - name: "ModelInterface"
+      description: "すべてのモデルが実装すべき基本インターフェース"
+      functions:
+        - "共通API定義"
+        - "フレームワーク非依存設計"
+
+    - name: "FinancialPerformancePredictor"
+      description: "金融パフォーマンス予測モデル"
+      functions:
+        - "ベイジアンニューラルネットワーク実装"
+        - "TensorFlowとPyTorch両実装"
+        - "予測の不確実性定量化"
+
+    - name: "ModelFactory"
+      description: "適切なフレームワーク実装を自動的に選択するファクトリークラス"
+      functions:
+        - "環境に応じた最適フレームワーク選択"
+        - "フォールバックメカニズム"
+
+  adapters:
+    - name: "CoreModelIntegration"
+      description: "コアシステムとフェデレーテッド学習の統合"
+      functions:
+        - "健康スコア計算の強化"
+        - "パフォーマンス予測の統合"
+        - "連合学習モデルの活用"
+
+    - name: "HealthImpactAdapter"
+      description: "健康関連データの統合と調整"
+      functions:
+        - "業界別健康影響重み管理"
+        - "職位レベルに応じた調整"
+        - "モデル重みの健康影響考慮"
+
+  utilities:
+    - name: "ConfigUtils"
+      description: "設定ファイル管理"
+      functions:
+        - "設定読み込みと検証"
+        - "モデル設定取得"
+
+    - name: "DataUtils"
+      description: "データ処理ユーティリティ"
+      functions:
+        - "データ前処理"
+        - "訓練/検証/テスト分割"
+        - "クライアントデータ分割（IID/非IID）"
+
+multi_framework:
+  description: "TensorFlowとPyTorchの両方に対応しており、環境に応じて最適なフレームワークを自動選択"
+  features:
+    - "自動検出機能: 利用可能なフレームワークを検出し最適な実装を選択"
+    - "TensorFlow実装: TensorFlow ProbabilityによるベイジアンNN実装"
+    - "PyTorch実装: PyTorch+PyroによるベイジアンNN実装"
+    - "共通インターフェース: フレームワーク間で統一されたAPI"
+  future_plans:
+    - "JAX対応拡張予定"
+
+security:
+  differential_privacy:
+    description: "ノイズ追加による個人データ保護"
+    features:
+      - "クライアントレベルとモデルレベルの保護"
+      - "プライバシー予算管理"
+    parameters:
+      epsilon: 3.0
+      delta: 0.00001
+      noise_multiplier: 1.1
+      l2_norm_clip: 3.0
+
+  secure_aggregation:
+    description: "暗号化技術を用いた安全なモデル更新集約"
+    features:
+      - "複数の暗号化プロバイダー対応"
+      - "閾値ベースの保護"
+    parameters:
+      protocol: "secure_aggregation"
+      crypto_provider: "paillier"
+      min_clients: 3
+      threshold: 2
+
+  communication:
+    description: "クライアント-サーバー間通信の暗号化"
+    features:
+      - "クライアント認証と登録管理"
+      - "トークンベース認証"
+
+usage_examples:
+  server:
+    code: |
+      from backend.federated_learning.server.federated_server import FederatedServer
+      from backend.federated_learning.models.financial_performance_predictor import FinancialPerformancePredictor, ModelFactory
+
+      # サーバーの初期化
+      server = FederatedServer()
+
+      # モデルの作成（TensorFlowとPyTorchに対応）
+      model = ModelFactory.create_model(framework="auto")
+
+      # モデルの登録
+      server.register_model("financial_performance", model)
+
+      # サーバーの起動
+      server.start_server("financial_performance", host="0.0.0.0", port=8080)
+
+  client:
+    code: |
+      from backend.federated_learning.client.federated_client import FederatedClient
+      from backend.federated_learning.models.financial_performance_predictor import ModelFactory
+      import numpy as np
+
+      # クライアントの初期化
+      client = FederatedClient(client_id="client_1")
+
+      # モデルの作成（TensorFlowとPyTorchに対応）
+      model = ModelFactory.create_model(framework="auto")
+
+      # モデルの登録
+      client.register_model("financial_performance", model)
+
+      # サーバーへの接続
+      client.connect_to_server("localhost:8080")
+
+      # 学習用データの準備
+      X_train = np.random.normal(0, 1, (100, 10))
+      y_train = np.random.normal(0, 1, (100, 1))
+
+      # ローカルトレーニング
+      client.train_local_model("financial_performance", X_train, y_train)
+
+      # モデル更新の送信
+      client.submit_model_update("financial_performance")
+
+  integration:
+    code: |
+      from backend.federated_learning.adapters.core_integration import CoreModelIntegration
+
+      # 統合クライアントの初期化
+      integration = CoreModelIntegration(client_id="core_system")
+
+      # 健康スコア計算の強化
+      enhanced_scores = integration.enhance_wellness_score_calculation(
+          wellness_calculator=wellness_calculator,
+          company_data=company_data,
+          industry_type="tech",
+          use_federated=True
+      )
+
+      # パフォーマンス予測の統合
+      predictions = integration.integrate_with_performance_predictor(
+          performance_predictor=predictor,
+          data=input_data,
+          industry_type="tech"
+      )
+
+config:
+  federated_learning:
+    description: "フェデレーテッド学習設定"
+    parameters:
+      - "集約アルゴリズム（FedAvg）"
+      - "クライアントサンプリング率"
+      - "最小クライアント数"
+      - "ラウンド数"
+
+  model:
+    description: "モデル設定"
+    parameters:
+      - "モデルアーキテクチャ"
+      - "隠れ層構成"
+      - "活性化関数"
+      - "訓練パラメータ"
+
+  security:
+    description: "セキュリティ設定"
+    parameters:
+      - "差分プライバシーパラメータ"
+      - "暗号化アルゴリズム"
+      - "プライバシー保護レベル"
+
+  scheduling:
+    description: "スケジューリング設定"
+    parameters:
+      - "最適実行時間"
+      - "リソース要件"
+      - "スケーリングポリシー"
+
+future_plans:
+  - name: "JAX対応"
+    description: "マルチフレームワーク対応をJAXにも拡張"
+
+  - name: "クロスデバイスフェデレーテッド学習"
+    description: "モバイルおよびエッジデバイス対応"
+
+  - name: "垂直分割フェデレーテッド学習"
+    description: "異なる特徴量セット間での学習"
+
+  - name: "リソース最適化"
+    description: "さらなるコスト削減と効率化"
+
+  - name: "クライアントオンボーディング自動化"
+    description: "セルフサービスポータル"

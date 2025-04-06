@@ -145,7 +145,7 @@ httpx
 
 ### 2. 環境変数の設定
 
-`.env`ファイルまたは環境変数として、以下を設定してください：
+`backend/.env`ファイルまたは環境変数として、以下を設定してください：
 
 ```
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -156,7 +156,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 1. [Google AI Studio](https://makersuite.google.com/)にアクセス
 2. アカウントを作成または既存のGoogleアカウントでログイン
 3. APIキーを生成
-4. 生成されたキーを環境変数にセット
+4. 生成されたキーを環境変数またはbackend/.envファイルに設定
 
 ## 注意事項
 

@@ -5,45 +5,24 @@ services:
   # バックエンドAPI - FastAPIベースのRESTful APIサーバー
   backend:
     build:
-      context: ./backend
+      context: ./backend     # backendディレクトリをコンテキストに
+      dockerfile: Dockerfile # backendディレクトリのDockerfileを使用
     image: startup-wellness-backend:latest
     container_name: startup-wellness-backend
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
-    command: ["/bin/bash", "-c", "pip install fastapi uvicorn pandas numpy psycopg2-binary && cd /app && python -m uvicorn main:app --host 0.0.0.0 --port 8000"]
     env_file:
-      - ./.env
-    environment:
-      # データベース接続情報
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-1spel!2stack3win}@postgres:5432/startup_wellness_analyze
-      - REDIS_URL=redis://startup-wellness-redis:6379/0
-      # Google認証情報 - 環境変数から参照
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/startupwellnessanalyze-445505-bf8634fbd5f3.json
-      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-startupwellnessanalyze-445505}
-      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-startupwellnessanalyze-445505}
-      - GCP_REGION=${GCP_REGION:-asia-northeast1}
-      # アプリケーション設定
-      - TZ=Asia/Tokyo
-      - LOG_LEVEL=debug
-      - APP_ENV=${APP_ENV:-production}
-      - WORKERS=2
-      - ENVIRONMENT=${ENVIRONMENT:-development}
-      # パフォーマンス最適化
-      - MALLOC_TRIM_THRESHOLD_=100000
-      - PYTHONMALLOC=malloc
-      - OMP_NUM_THREADS=4
-      - MKL_NUM_THREADS=4
-      - VECLIB_MAXIMUM_THREADS=4
-      - OPENBLAS_NUM_THREADS=4
-      # モニタリング設定
-      - ENABLE_MEMORY_PROFILING=${ENABLE_MEMORY_PROFILING:-false}
-      - ENABLE_PSUTIL_MONITORING=${ENABLE_PSUTIL_MONITORING:-true}
-      # 開発環境設定
-      - DEV_MODE=${DEV_MODE:-true}
-      - FIRESTORE_EMULATOR_HOST=${USE_EMULATORS:+host.docker.internal:8080}
-      - FIREBASE_AUTH_EMULATOR_HOST=${USE_EMULATORS:+host.docker.internal:9099}
+      - ./backend/app/.env # 正しい.envファイルの場所に修正
+    volumes:
+      # .env ファイルのマウント (読み取り専用) - コンテナ内のパスも修正
+      - ./backend/app/.env:/app/backend/app/.env:ro
+      # Google Cloud 認証情報ファイルのマウント (読み取り専用)
+      # ホスト側のパスは実際のファイルパスに合わせてください
+      - ./credentials/startupwellnessanalyze-445505-bf8634fbd5f3.json:/app/credentials/startupwellnessanalyze-445505-bf8634fbd5f3.json:ro
+      # 永続データ用 (必要に応じて)
+      # - ./data:/app/data
+      # 開発時のコード同期用マウント (必要ならコメント解除)
+      # - ./backend:/app/backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,11 +37,12 @@ services:
           cpus: "${CPU_RESERVATION:-0.25}"
           memory: "${MEMORY_RESERVATION:-512M}"
     healthcheck:
+      # /health エンドポイントを使用
       test: ["CMD", "curl", "-f", "http://localhost:8000/health", "||", "exit", "0"]
       interval: 60s
       timeout: 30s
       retries: 5
-      start_period: 180s
+      start_period: 180s # アプリ起動時間を考慮
     restart: unless-stopped
 
   # フロントエンドアプリケーション - Vite+React/TypeScriptベースのSPA
@@ -71,6 +51,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
+        # ビルド時引数は .env から渡すのが一般的
         - NODE_ENV=${NODE_ENV:-production}
         - VITE_API_URL=${VITE_API_URL:-http://backend:8000/api}
         - VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
@@ -80,20 +61,22 @@ services:
         - VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
         - VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
         - VITE_FIREBASE_MEASUREMENT_ID=${VITE_FIREBASE_MEASUREMENT_ID}
-    image: startup-wellness-frontend:${TAG:-latest}
+    image: startup-wellness-frontend:latest
     container_name: startup-wellness-frontend
     ports:
-      - "3000:80"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "3000:80" # Nginxが80番で動いている想定
+    # --- ↓ 開発時のみマウント (本番ではコメントアウトまたは削除) ---
+    # volumes:
+    #   - ./frontend:/app
+    #   - /app/node_modules # node_modules はコンテナ内のものを使う
+    # --- ↑ 開発時のみマウント ---
     environment:
-      # アプリケーション設定
+      # アプリケーション設定 (ビルド時引数と同じ値を設定することが多い)
       - VITE_API_URL=${VITE_API_URL:-http://backend:8000/api}
       - NODE_ENV=${NODE_ENV:-production}
       - TZ=Asia/Tokyo
       - DEV_MODE=${DEV_MODE:-true}
-      # Firebase環境変数
+      # Firebase環境変数 (ビルド時引数と同じ値を設定することが多い)
       - VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
       - VITE_FIREBASE_AUTH_DOMAIN=${VITE_FIREBASE_AUTH_DOMAIN}
       - VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID}
@@ -101,7 +84,7 @@ services:
       - VITE_FIREBASE_MESSAGING_SENDER_ID=${VITE_FIREBASE_MESSAGING_SENDER_ID}
       - VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
       - VITE_FIREBASE_MEASUREMENT_ID=${VITE_FIREBASE_MEASUREMENT_ID}
-      # Nginxのチューニングパラメーター
+      # Nginxのチューニングパラメーター (必要に応じて .env で設定)
       - NGINX_WORKER_PROCESSES=auto
       - NGINX_WORKER_CONNECTIONS=1024
       - NGINX_WORKER_RLIMIT_NOFILE=4096
@@ -135,7 +118,7 @@ services:
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    profiles:
+    profiles: # monitoring または dev プロファイルが有効な場合に起動
       - monitoring
       - dev
     depends_on:
@@ -180,7 +163,7 @@ services:
           memory: "${POSTGRES_MEMORY_RESERVATION:-128M}"
 
   # Redisキャッシュサーバー
-  startup-wellness-redis:
+  startup-wellness-redis: # サービス名を修正 (ハイフン)
     image: redis:alpine
     container_name: startup-wellness-redis
     command: redis-server --appendonly yes
@@ -206,8 +189,8 @@ services:
 
 # ボリューム定義
 volumes:
-  backend_data:
-    driver: local
+  # backend_data: # backend でマウントしていないので不要かも
+  #   driver: local
   prometheus_data:
     driver: local
   postgres_data:

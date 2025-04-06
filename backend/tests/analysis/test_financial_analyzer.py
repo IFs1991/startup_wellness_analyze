@@ -2,21 +2,23 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import io
-import base64
+# import matplotlib.pyplot as plt # 不要な場合コメントアウト/削除
+# import io # 不要な場合コメントアウト/削除
+# import base64 # 不要な場合コメントアウト/削除
 from typing import Dict, List, Any, Tuple
+from datetime import datetime, timedelta
 
 from backend.analysis.FinancialAnalyzer import FinancialAnalyzer
 
-@pytest.fixture
-def mock_bq_service():
-    """BigQueryServiceのモックを提供します"""
-    service = MagicMock()
-    service.query = AsyncMock()
-    service.query.return_value = pd.DataFrame()
-    service.save_dataframe = AsyncMock()
-    return service
+# bq_service のモックは不要なので削除
+# @pytest.fixture
+# def mock_bq_service():
+#     """BigQueryServiceのモックを提供します"""
+#     service = MagicMock()
+#     service.query = AsyncMock()
+#     service.query.return_value = pd.DataFrame()
+#     service.save_dataframe = AsyncMock()
+#     return service
 
 @pytest.fixture
 def mock_firestore_service():
@@ -27,6 +29,9 @@ def mock_firestore_service():
     service.get_document = AsyncMock()
     service.get_document.return_value = {"id": "test_doc_id", "data": {"test": "data"}}
     service.update_document = AsyncMock()
+    # BaseAnalyzerで使用される可能性のあるメソッドもモックしておく
+    service.query_documents = AsyncMock(return_value=[])
+    service.set_document = AsyncMock(return_value="mock-doc-id")
     return service
 
 @pytest.fixture
@@ -38,21 +43,21 @@ def sample_financial_data():
     periods = 36
     dates = pd.date_range(start='2020-01-01', periods=periods, freq='M')
 
-    # 基本的な財務データを生成
+    # 基本的な財務データを生成（カラム名をFinancialAnalyzerの実装に合わせる）
     data = {
         'date': dates,
-        'revenue': np.random.normal(100000, 15000, periods) * (1 + np.arange(periods) * 0.01),  # 成長傾向
-        'cogs': np.random.normal(50000, 8000, periods) * (1 + np.arange(periods) * 0.008),  # 成長傾向（revenueより小さい率）
+        'revenue': np.random.normal(100000, 15000, periods) * (1 + np.arange(periods) * 0.01),
+        'cogs': np.random.normal(50000, 8000, periods) * (1 + np.arange(periods) * 0.008),
         'operating_expenses': np.random.normal(30000, 5000, periods) * (1 + np.arange(periods) * 0.007),
         'marketing_expenses': np.random.normal(10000, 2000, periods) * (1 + np.arange(periods) * 0.009),
         'r_and_d_expenses': np.random.normal(15000, 3000, periods) * (1 + np.arange(periods) * 0.01),
-        'cash': np.random.normal(200000, 30000, periods) * (1 + np.arange(periods) * 0.005),
+        'cash_balance': np.random.normal(200000, 30000, periods) * (1 + np.arange(periods) * 0.005), # カラム名変更: cash -> cash_balance
         'accounts_receivable': np.random.normal(25000, 5000, periods) * (1 + np.arange(periods) * 0.008),
         'inventory': np.random.normal(30000, 6000, periods) * (1 + np.arange(periods) * 0.006),
         'fixed_assets': np.random.normal(150000, 10000, periods) * (1 + np.arange(periods) * 0.003),
         'accounts_payable': np.random.normal(20000, 4000, periods) * (1 + np.arange(periods) * 0.007),
-        'short_term_debt': np.random.normal(50000, 10000, periods) * (1 - np.arange(periods) * 0.003),  # 減少傾向
-        'long_term_debt': np.random.normal(100000, 20000, periods) * (1 - np.arange(periods) * 0.001),  # ゆっくり減少
+        'short_term_debt': np.random.normal(50000, 10000, periods) * (1 - np.arange(periods) * 0.003),
+        'long_term_debt': np.random.normal(100000, 20000, periods) * (1 - np.arange(periods) * 0.001),
         'equity': np.random.normal(250000, 30000, periods) * (1 + np.arange(periods) * 0.01),
         'capital_expenditure': np.random.normal(8000, 1500, periods),
         'depreciation': np.random.normal(5000, 800, periods),
@@ -60,359 +65,372 @@ def sample_financial_data():
     }
 
     df = pd.DataFrame(data)
+    df = df.set_index('date') # 日付をインデックスに設定
 
-    # 計算フィールドを追加
-    df['gross_profit'] = df['revenue'] - df['cogs']
-    df['operating_profit'] = df['gross_profit'] - df['operating_expenses'] - df['marketing_expenses'] - df['r_and_d_expenses']
-    df['ebit'] = df['operating_profit']
-    df['taxes'] = df['ebit'] * df['tax_rate']
-    df['net_income'] = df['ebit'] - df['taxes']
-
-    # キャッシュフロー関連の計算
-    df['cash_flow_operations'] = df['net_income'] + df['depreciation'] + np.random.normal(0, 2000, periods)
-    df['free_cash_flow'] = df['cash_flow_operations'] - df['capital_expenditure']
+    # 計算フィールドを追加 (必要に応じて)
+    # df['gross_profit'] = df['revenue'] - df['cogs']
+    # df['operating_profit'] = df['gross_profit'] - df['operating_expenses'] - df['marketing_expenses'] - df['r_and_d_expenses']
+    # df['ebit'] = df['operating_profit']
+    # df['taxes'] = df['ebit'] * df['tax_rate']
+    # df['net_income'] = df['ebit'] - df['taxes']
+    # df['cash_flow_operations'] = df['net_income'] + df['depreciation'] + np.random.normal(0, 2000, periods)
+    # df['free_cash_flow'] = df['cash_flow_operations'] - df['capital_expenditure']
 
     return df
 
-@pytest.mark.asyncio
-async def test_analyze_profitability(mock_bq_service, sample_financial_data):
-    """収益性分析機能をテストします"""
-    # BigQueryのクエリ結果をモック
-    mock_bq_service.query.return_value = sample_financial_data
+# ------------------------------------
+# 古いテスト関数を削除（またはコメントアウト）
+# ------------------------------------
+# @pytest.mark.asyncio
+# async def test_analyze_profitability(mock_bq_service, sample_financial_data):
+#     ...
+# @pytest.mark.asyncio
+# async def test_analyze_cash_flow(mock_bq_service, sample_financial_data):
+#     ...
+# @pytest.mark.asyncio
+# async def test_analyze_financial_health(mock_bq_service, sample_financial_data):
+#     ...
+# @pytest.mark.asyncio
+# async def test_calculate_roi(mock_bq_service, sample_financial_data):
+#     ...
+# @pytest.mark.asyncio
+# async def test_forecast_financials(mock_bq_service, sample_financial_data):
+#     ...
+# def test_validate_financial_data():
+#     ...
+# def test_calculate_financial_ratios():
+#     ...
 
-    # 可視化関数をモック
-    with patch('matplotlib.pyplot.figure') as mock_figure, \
-         patch('matplotlib.pyplot.savefig') as mock_savefig, \
-         patch('io.BytesIO') as mock_bytesio, \
-         patch('base64.b64encode') as mock_b64encode:
+# ------------------------------------
+# 新しいテスト関数
+# ------------------------------------
 
-        # 画像データのモック
-        mock_bytesio_instance = MagicMock()
-        mock_bytesio.return_value = mock_bytesio_instance
-        mock_bytesio_instance.getvalue.return_value = b'image_data'
-        mock_b64encode.return_value = b'base64_encoded_image'
+def test_calculate_burn_rate(mock_firestore_service, sample_financial_data):
+    """calculate_burn_rateメソッドをテストします"""
+    # FinancialAnalyzerのインスタンスを作成 (Firestoreモックを使用)
+    analyzer = FinancialAnalyzer(firestore_client=mock_firestore_service)
 
-        # FinancialAnalyzerのインスタンスを作成
-        analyzer = FinancialAnalyzer(bq_service=mock_bq_service)
+    # テストデータ準備
+    test_data = sample_financial_data.copy()
+    # 必要であればテストデータをさらに加工
 
-        # 収益性分析を実行
-        result = await analyzer.analyze_profitability(
-            query="SELECT * FROM dataset.table WHERE date BETWEEN '2020-01-01' AND '2022-12-31'",
-            period="monthly",
-            save_results=False
-        )
+    # メソッド実行 (デフォルト: 月次、現金残高から計算)
+    result_monthly_cash = analyzer.calculate_burn_rate(test_data)
 
-        # 結果の検証
-        assert isinstance(result, dict)
-        assert 'gross_margin' in result
-        assert 'operating_margin' in result
-        assert 'net_profit_margin' in result
-        assert 'roi' in result
-        assert 'trend_analysis' in result
-        assert 'visualization' in result
+    # アサーション (結果の型、主要なキーの存在、値の妥当性など)
+    assert isinstance(result_monthly_cash, dict)
+    assert 'burn_rate' in result_monthly_cash
+    assert 'runway_months' in result_monthly_cash
+    assert 'latest_cash' in result_monthly_cash
+    assert result_monthly_cash['period'] == 'monthly'
+    assert result_monthly_cash['burn_rate'] > 0 # サンプルデータではバーンしているはず
+    assert result_monthly_cash['runway_months'] > 0
+    assert result_monthly_cash['latest_cash'] == test_data['cash_balance'].iloc[-1]
 
-        # 利益率指標の検証
-        assert isinstance(result['gross_margin'], dict)
-        assert 'current' in result['gross_margin']
-        assert 'historical' in result['gross_margin']
-        assert 'industry_benchmark' in result['gross_margin']
+    # メソッド実行 (四半期、費用項目から計算)
+    expense_cols = ['cogs', 'operating_expenses', 'marketing_expenses', 'r_and_d_expenses']
+    test_data['total_expenses'] = test_data[expense_cols].sum(axis=1) # 費用合計カラムを追加しておく
+    result_quarterly_expense = analyzer.calculate_burn_rate(
+        test_data,
+        period='quarterly',
+        cash_column='cash_balance', # 費用から計算する場合でも最新キャッシュのために必要
+        expense_columns=expense_cols # 費用項目を指定
+    )
 
-        # BigQueryのqueryメソッドが呼び出されたことを確認
-        mock_bq_service.query.assert_called_once()
+    assert isinstance(result_quarterly_expense, dict)
+    assert result_quarterly_expense['period'] == 'quarterly'
+    assert result_quarterly_expense['burn_rate'] > 0
+    assert result_quarterly_expense['runway_months'] > 0
 
-        # 保存メソッドが呼び出されていないことを確認
-        mock_bq_service.save_dataframe.assert_not_called()
+    # エラーケースのテスト (例: 不正なperiod)
+    with pytest.raises(ValueError):
+        analyzer.calculate_burn_rate(test_data, period='yearly')
 
-@pytest.mark.asyncio
-async def test_analyze_cash_flow(mock_bq_service, sample_financial_data):
-    """キャッシュフロー分析機能をテストします"""
-    # BigQueryのクエリ結果をモック
-    mock_bq_service.query.return_value = sample_financial_data
+    # エラーケースのテスト (例: インデックスがDatetimeIndexでない)
+    with pytest.raises(ValueError):
+        analyzer.calculate_burn_rate(test_data.reset_index())
 
-    # 可視化関数をモック
-    with patch('matplotlib.pyplot.figure') as mock_figure, \
-         patch('matplotlib.pyplot.savefig') as mock_savefig, \
-         patch('io.BytesIO') as mock_bytesio, \
-         patch('base64.b64encode') as mock_b64encode:
+# TODO: 他のメソッドのテスト関数を追加
+def test_compare_burn_rate_to_benchmarks(mock_firestore_service):
+    """compare_burn_rate_to_benchmarksメソッドをテストします"""
+    analyzer = FinancialAnalyzer(firestore_client=mock_firestore_service)
 
-        # 画像データのモック
-        mock_bytesio_instance = MagicMock()
-        mock_bytesio.return_value = mock_bytesio_instance
-        mock_bytesio_instance.getvalue.return_value = b'image_data'
-        mock_b64encode.return_value = b'base64_encoded_image'
+    # サンプルデータ
+    company_burn_rate = 50000
+    company_runway = 12  # months
+    industry_benchmarks = {
+        'SaaS': {'burn_rate': 60000, 'runway': 10},
+        'FinTech': {'burn_rate': 80000, 'runway': 8},
+        'HealthTech': {'burn_rate': 40000, 'runway': 15},
+    }
+    target_industry = 'SaaS'
 
-        # FinancialAnalyzerのインスタンスを作成
-        analyzer = FinancialAnalyzer(bq_service=mock_bq_service)
+    # メソッド実行 (業界が存在する場合)
+    result_saas = analyzer.compare_burn_rate_to_benchmarks(
+        company_burn_rate, company_runway, industry_benchmarks, target_industry
+    )
 
-        # キャッシュフロー分析を実行
-        result = await analyzer.analyze_cash_flow(
-            query="SELECT * FROM dataset.table WHERE date BETWEEN '2020-01-01' AND '2022-12-31'",
-            period="quarterly",
-            forecast_periods=4,
-            save_results=True,
-            dataset_id="output_dataset",
-            table_id="output_table"
-        )
+    # アサーション (SaaS業界)
+    assert isinstance(result_saas, dict)
+    assert result_saas['industry'] == target_industry
+    assert result_saas['benchmark_burn_rate'] == industry_benchmarks[target_industry]['burn_rate']
+    assert result_saas['benchmark_runway'] == industry_benchmarks[target_industry]['runway']
+    assert 'burn_rate_ratio' in result_saas
+    assert 'runway_ratio' in result_saas
+    assert 'burn_rate_performance' in result_saas
+    assert 'runway_performance' in result_saas
+    assert 'overall_score' in result_saas
+    assert 0 <= result_saas['overall_score'] <= 100
 
-        # 結果の検証
-        assert isinstance(result, dict)
-        assert 'operating_cash_flow' in result
-        assert 'investing_cash_flow' in result
-        assert 'financing_cash_flow' in result
-        assert 'free_cash_flow' in result
-        assert 'cash_conversion_cycle' in result
-        assert 'burn_rate' in result
-        assert 'runway' in result
-        assert 'forecast' in result
-        assert 'visualization' in result
+    # メソッド実行 (業界が存在しない場合 - 平均値を使用)
+    unknown_industry = 'Gaming'
+    result_unknown = analyzer.compare_burn_rate_to_benchmarks(
+        company_burn_rate, company_runway, industry_benchmarks, unknown_industry
+    )
 
-        # BigQueryのクエリと保存メソッドが呼び出されたことを確認
-        mock_bq_service.query.assert_called_once()
-        mock_bq_service.save_dataframe.assert_called_once()
+    # アサーション (平均値)
+    avg_burn = np.mean([b['burn_rate'] for b in industry_benchmarks.values()])
+    avg_runway = np.mean([b['runway'] for b in industry_benchmarks.values()])
+    assert isinstance(result_unknown, dict)
+    assert result_unknown['industry'] == unknown_industry
+    assert result_unknown['benchmark_burn_rate'] == avg_burn
+    assert result_unknown['benchmark_runway'] == avg_runway
+    assert 'overall_score' in result_unknown
+    assert 0 <= result_unknown['overall_score'] <= 100
 
-@pytest.mark.asyncio
-async def test_analyze_financial_health(mock_bq_service, sample_financial_data):
-    """財務健全性分析機能をテストします"""
-    # BigQueryのクエリ結果をモック
-    mock_bq_service.query.return_value = sample_financial_data
+    # エッジケース (ベンチマークが0の場合)
+    zero_benchmark = {'ZeroBurn': {'burn_rate': 0, 'runway': 0}}
+    result_zero = analyzer.compare_burn_rate_to_benchmarks(
+        company_burn_rate, company_runway, zero_benchmark, 'ZeroBurn'
+    )
+    assert result_zero['burn_rate_ratio'] == float('inf')
+    assert result_zero['runway_ratio'] == float('inf')
+    # スコアが妥当な範囲にあることを確認 (tanhにより発散しないはず)
+    assert 0 <= result_zero['overall_score'] <= 100
 
-    # 可視化関数をモック
-    with patch('matplotlib.pyplot.figure') as mock_figure, \
-         patch('matplotlib.pyplot.savefig') as mock_savefig, \
-         patch('io.BytesIO') as mock_bytesio, \
-         patch('base64.b64encode') as mock_b64encode:
+def test_analyze_unit_economics(mock_firestore_service):
+    """analyze_unit_economicsメソッドをテストします"""
+    analyzer = FinancialAnalyzer(firestore_client=mock_firestore_service)
 
-        # 画像データのモック
-        mock_bytesio_instance = MagicMock()
-        mock_bytesio.return_value = mock_bytesio_instance
-        mock_bytesio_instance.getvalue.return_value = b'image_data'
-        mock_b64encode.return_value = b'base64_encoded_image'
+    # サンプルデータの作成
+    customer_ids = [f'cust_{i}' for i in range(100)]
+    acquisition_dates = pd.to_datetime([datetime(2022, 1, 1) + timedelta(days=np.random.randint(0, 365)) for _ in range(100)])
+    # 一部の顧客はチャーン
+    churn_dates = acquisition_dates + pd.to_timedelta(np.random.randint(30, 720), unit='D')
+    churn_dates[np.random.rand(100) > 0.7] = pd.NaT # 約30%がチャーンしていない
 
-        # FinancialAnalyzerのインスタンスを作成
-        analyzer = FinancialAnalyzer(bq_service=mock_bq_service)
-
-        # 財務健全性分析を実行
-        result = await analyzer.analyze_financial_health(
-            query="SELECT * FROM dataset.table WHERE date BETWEEN '2020-01-01' AND '2022-12-31'",
-            period="yearly",
-            save_results=False
-        )
-
-        # 結果の検証
-        assert isinstance(result, dict)
-        assert 'liquidity_ratios' in result
-        assert 'solvency_ratios' in result
-        assert 'efficiency_ratios' in result
-        assert 'z_score' in result
-        assert 'risk_assessment' in result
-        assert 'visualization' in result
-
-        # 財務比率の検証
-        assert isinstance(result['liquidity_ratios'], dict)
-        assert 'current_ratio' in result['liquidity_ratios']
-        assert 'quick_ratio' in result['liquidity_ratios']
-
-        assert isinstance(result['solvency_ratios'], dict)
-        assert 'debt_to_equity' in result['solvency_ratios']
-        assert 'interest_coverage' in result['solvency_ratios']
-
-        # BigQueryのqueryメソッドが呼び出されたことを確認
-        mock_bq_service.query.assert_called_once()
-
-@pytest.mark.asyncio
-async def test_calculate_roi(mock_bq_service, sample_financial_data):
-    """投資収益率計算機能をテストします"""
-    # BigQueryのクエリ結果をモック
-    mock_bq_service.query.return_value = sample_financial_data
-
-    # 可視化関数をモック
-    with patch('matplotlib.pyplot.figure') as mock_figure, \
-         patch('matplotlib.pyplot.savefig') as mock_savefig, \
-         patch('io.BytesIO') as mock_bytesio, \
-         patch('base64.b64encode') as mock_b64encode:
-
-        # 画像データのモック
-        mock_bytesio_instance = MagicMock()
-        mock_bytesio.return_value = mock_bytesio_instance
-        mock_bytesio_instance.getvalue.return_value = b'image_data'
-        mock_b64encode.return_value = b'base64_encoded_image'
-
-        # FinancialAnalyzerのインスタンスを作成
-        analyzer = FinancialAnalyzer(bq_service=mock_bq_service)
-
-        # ROI計算を実行
-        result = await analyzer.calculate_roi(
-            query="SELECT * FROM dataset.table WHERE date BETWEEN '2020-01-01' AND '2022-12-31'",
-            investment_column="capital_expenditure",
-            return_column="net_income",
-            time_period=12,
-            discount_rate=0.08,
-            save_results=False
-        )
-
-        # 結果の検証
-        assert isinstance(result, dict)
-        assert 'roi' in result
-        assert 'payback_period' in result
-        assert 'npv' in result
-        assert 'irr' in result
-        assert 'roi_breakdown' in result
-        assert 'sensitivity_analysis' in result
-        assert 'visualization' in result
-
-        # ROI関連指標の検証
-        assert isinstance(result['roi'], float)
-        assert isinstance(result['npv'], float)
-        assert isinstance(result['payback_period'], float)
-
-        # BigQueryのqueryメソッドが呼び出されたことを確認
-        mock_bq_service.query.assert_called_once()
-
-@pytest.mark.asyncio
-async def test_forecast_financials(mock_bq_service, sample_financial_data):
-    """財務予測機能をテストします"""
-    # BigQueryのクエリ結果をモック
-    mock_bq_service.query.return_value = sample_financial_data
-
-    # 可視化関数をモック
-    with patch('matplotlib.pyplot.figure') as mock_figure, \
-         patch('matplotlib.pyplot.savefig') as mock_savefig, \
-         patch('io.BytesIO') as mock_bytesio, \
-         patch('base64.b64encode') as mock_b64encode, \
-         patch('statsmodels.tsa.arima.model.ARIMA') as mock_arima:
-
-        # ARIMAモックの設定
-        mock_arima_instance = MagicMock()
-        mock_arima_instance.fit.return_value = MagicMock()
-        mock_arima_instance.fit.return_value.forecast.return_value = pd.Series(np.random.normal(120000, 20000, 12))
-        mock_arima.return_value = mock_arima_instance
-
-        # 画像データのモック
-        mock_bytesio_instance = MagicMock()
-        mock_bytesio.return_value = mock_bytesio_instance
-        mock_bytesio_instance.getvalue.return_value = b'image_data'
-        mock_b64encode.return_value = b'base64_encoded_image'
-
-        # FinancialAnalyzerのインスタンスを作成
-        analyzer = FinancialAnalyzer(bq_service=mock_bq_service)
-
-        # 財務予測を実行
-        result = await analyzer.forecast_financials(
-            query="SELECT * FROM dataset.table WHERE date BETWEEN '2020-01-01' AND '2022-12-31'",
-            target_columns=["revenue", "net_income", "cash"],
-            forecast_periods=12,
-            method="arima",
-            save_results=True,
-            dataset_id="output_dataset",
-            table_id="forecast_output"
-        )
-
-        # 結果の検証
-        assert isinstance(result, dict)
-        assert 'forecasts' in result
-        assert 'model_quality' in result
-        assert 'confidence_intervals' in result
-        assert 'seasonal_patterns' in result
-        assert 'visualization' in result
-
-        # 予測結果の検証
-        assert isinstance(result['forecasts'], dict)
-        assert 'revenue' in result['forecasts']
-        assert 'net_income' in result['forecasts']
-        assert 'cash' in result['forecasts']
-
-        # BigQueryのクエリと保存メソッドが呼び出されたことを確認
-        mock_bq_service.query.assert_called_once()
-        mock_bq_service.save_dataframe.assert_called_once()
-
-def test_validate_financial_data():
-    """財務データ検証機能をテストします"""
-    # FinancialAnalyzerのインスタンスを作成
-    analyzer = FinancialAnalyzer(bq_service=MagicMock())
-
-    # 有効なデータ
-    valid_data = pd.DataFrame({
-        'date': pd.date_range(start='2020-01-01', periods=12, freq='M'),
-        'revenue': np.random.normal(100000, 15000, 12),
-        'cogs': np.random.normal(50000, 8000, 12),
-        'operating_expenses': np.random.normal(30000, 5000, 12)
+    customer_data = pd.DataFrame({
+        'customer_id': customer_ids,
+        'acquisition_date': acquisition_dates,
+        'churn_date': churn_dates
     })
 
-    # 無効なデータ（重要な列が不足）
-    invalid_data_missing = pd.DataFrame({
-        'date': pd.date_range(start='2020-01-01', periods=12, freq='M'),
-        'revenue': np.random.normal(100000, 15000, 12),
-        # 'cogs'が不足
-        'operating_expenses': np.random.normal(30000, 5000, 12)
+    cost_data = pd.DataFrame({
+        'customer_id': customer_ids,
+        'acquisition_cost': np.random.normal(100, 20, 100)
     })
 
-    # 無効なデータ（負の値）
-    invalid_data_negative = pd.DataFrame({
-        'date': pd.date_range(start='2020-01-01', periods=12, freq='M'),
-        'revenue': np.random.normal(100000, 15000, 12),
-        'cogs': np.random.normal(-50000, 8000, 12),  # 負の値
-        'operating_expenses': np.random.normal(30000, 5000, 12)
+    revenue_data_list = []
+    for idx, row in customer_data.iterrows():
+        start_date = row['acquisition_date']
+        end_date = row['churn_date'] if pd.notna(row['churn_date']) else datetime.now()
+        num_months = max(1, int((end_date - start_date).days / 30))
+        dates = pd.date_range(start=start_date, periods=num_months, freq='M')
+        revenues = np.random.normal(50, 10, num_months)
+        revenue_data_list.append(pd.DataFrame({
+            'customer_id': row['customer_id'],
+            'date': dates,
+            'revenue': revenues
+        }))
+    revenue_data = pd.concat(revenue_data_list, ignore_index=True)
+
+    # メソッド実行 (デフォルトカラム名)
+    result = analyzer.analyze_unit_economics(
+        revenue_data,
+        customer_data,
+        cost_data
+    )
+
+    # アサーション (デフォルトカラム名)
+    assert isinstance(result, dict)
+    assert 'cac' in result
+    assert 'avg_tenure' in result
+    assert 'arpu' in result
+    assert 'ltv_simple' in result
+    assert 'ltv_dcf' in result
+    assert 'ltv_cac_ratio_simple' in result
+    assert 'ltv_cac_ratio_dcf' in result
+    assert result['cac'] > 0
+    assert result['avg_tenure'] > 0
+    assert result['arpu'] > 0
+    assert result['ltv_simple'] > 0
+    assert result['ltv_dcf'] > 0
+    assert result['ltv_cac_ratio_simple'] > 0
+    assert result['ltv_cac_ratio_dcf'] > 0
+
+    # メソッド実行 (カスタムカラム名)
+    customer_data_custom = customer_data.rename(columns={'customer_id': 'client_id', 'acquisition_date': 'start_dt', 'churn_date': 'end_dt'})
+    cost_data_custom = cost_data.rename(columns={'customer_id': 'client_id', 'acquisition_cost': 'marketing_spend'})
+    revenue_data_custom = revenue_data.rename(columns={'customer_id': 'client_id', 'revenue': 'sales'})
+
+    result_custom = analyzer.analyze_unit_economics(
+        revenue_data_custom,
+        customer_data_custom,
+        cost_data_custom,
+        customer_id_column='client_id',
+        revenue_column='sales',
+        acquisition_cost_column='marketing_spend',
+        acquisition_date_column='start_dt',
+        churn_date_column='end_dt'
+    )
+
+    # アサーション (カスタムカラム名 - 結果がほぼ同じであることを確認)
+    assert isinstance(result_custom, dict)
+    assert np.isclose(result_custom['cac'], result['cac'])
+    assert np.isclose(result_custom['avg_tenure'], result['avg_tenure'])
+    assert np.isclose(result_custom['arpu'], result['arpu'])
+    assert np.isclose(result_custom['ltv_simple'], result['ltv_simple'])
+    assert np.isclose(result_custom['ltv_dcf'], result['ltv_dcf'])
+
+    # エラーケース (必須カラムがない)
+    with pytest.raises(KeyError):
+        analyzer.analyze_unit_economics(revenue_data, customer_data, cost_data.drop(columns=['acquisition_cost']))
+    with pytest.raises(KeyError):
+        analyzer.analyze_unit_economics(revenue_data.drop(columns=['revenue']), customer_data, cost_data)
+    with pytest.raises(KeyError):
+        analyzer.analyze_unit_economics(revenue_data, customer_data.drop(columns=['acquisition_date']), cost_data)
+
+def test_calculate_growth_metrics(mock_firestore_service, sample_financial_data):
+    """calculate_growth_metricsメソッドをテストします"""
+    analyzer = FinancialAnalyzer(firestore_client=mock_firestore_service)
+
+    test_data = sample_financial_data.copy()
+
+    # Rule of 40 テスト用に利益率カラムを追加 (仮の値)
+    test_data['profit_margin'] = np.random.normal(0.15, 0.05, len(test_data)) * 100 # パーセント表示
+
+    # メソッド実行 (デフォルト: revenue)
+    result_revenue = analyzer.calculate_growth_metrics(test_data)
+
+    # アサーション (revenue)
+    assert isinstance(result_revenue, dict)
+    assert 'avg_mom_growth' in result_revenue
+    assert 'avg_qoq_growth' in result_revenue
+    assert 'avg_yoy_growth' in result_revenue
+    assert 'latest_mom_growth' in result_revenue
+    assert 'latest_qoq_growth' in result_revenue
+    assert 'latest_yoy_growth' in result_revenue
+    assert 't2d3_score' in result_revenue
+    assert 'rule_of_40_score' in result_revenue
+    assert result_revenue['rule_of_40_score'] > 0 # 利益率を追加したので計算されるはず
+
+    # メソッド実行 (別の指標: operating_expenses)
+    result_opex = analyzer.calculate_growth_metrics(test_data, metric_column='operating_expenses')
+    assert isinstance(result_opex, dict)
+    assert 'avg_mom_growth' in result_opex # キーの存在を確認
+    # Rule of 40 は metric_column が revenue でなくても計算される (利益率は存在するから)
+    assert 'rule_of_40_score' in result_opex
+
+    # メソッド実行 (ベンチマークデータ付き)
+    benchmark_dates = pd.date_range(start='2020-01-01', periods=36, freq='M')
+    benchmark_data = pd.DataFrame({
+        'date': benchmark_dates,
+        'mom_growth': np.random.normal(0.02, 0.01, 36),
+        'qoq_growth': np.random.normal(0.06, 0.02, 36),
+        'yoy_growth': np.random.normal(0.25, 0.05, 36)
+    }).set_index('date')
+
+    result_benchmark = analyzer.calculate_growth_metrics(test_data, benchmark_data=benchmark_data)
+    assert isinstance(result_benchmark, dict)
+    assert 'mom_vs_benchmark' in result_benchmark
+    assert 'qoq_vs_benchmark' in result_benchmark
+    assert 'yoy_vs_benchmark' in result_benchmark
+
+    # エラーケース (存在しないカラム)
+    with pytest.raises(KeyError):
+        analyzer.calculate_growth_metrics(test_data, metric_column='non_existent')
+
+    # エラーケース (不正なインデックス)
+    with pytest.raises(ValueError, match="Could not convert index to DatetimeIndex"):
+        analyzer.calculate_growth_metrics(test_data.reset_index())
+
+def test_analyze_funding_efficiency(mock_firestore_service):
+    """analyze_funding_efficiencyメソッドをテストします"""
+    analyzer = FinancialAnalyzer(firestore_client=mock_firestore_service)
+
+    # サンプルデータ作成
+    funding_dates = pd.to_datetime(['2021-01-15', '2022-03-20', '2023-06-01'])
+    funding_rounds = ['Seed', 'Series A', 'Series B']
+    funding_amounts = [1_000_000, 5_000_000, 15_000_000]
+    funding_data = pd.DataFrame({
+        'date': funding_dates,
+        'round': funding_rounds,
+        'amount': funding_amounts,
+        'investors': ['VC A', 'VC B, VC C', 'VC D, Growth Fund E'] # 使われていないが形式のため
     })
 
-    # 有効なデータの検証
-    is_valid, error_msg = analyzer._validate_financial_data(valid_data, required_columns=['date', 'revenue', 'cogs'])
-    assert is_valid is True
-    assert error_msg is None
-
-    # 不足データの検証
-    is_valid, error_msg = analyzer._validate_financial_data(invalid_data_missing, required_columns=['date', 'revenue', 'cogs'])
-    assert is_valid is False
-    assert error_msg is not None
-    assert 'required column' in error_msg.lower()
-
-    # 負の値データの検証
-    is_valid, error_msg = analyzer._validate_financial_data(invalid_data_negative, required_columns=['date', 'revenue', 'cogs'], non_negative_columns=['cogs'])
-    assert is_valid is False
-    assert error_msg is not None
-    assert 'negative value' in error_msg.lower()
-
-def test_calculate_financial_ratios():
-    """財務比率計算機能をテストします"""
-    # FinancialAnalyzerのインスタンスを作成
-    analyzer = FinancialAnalyzer(bq_service=MagicMock())
-
-    # テスト用の財務データ
-    financial_data = pd.DataFrame({
-        'revenue': [100000, 110000, 120000],
-        'cogs': [50000, 54000, 58000],
-        'operating_expenses': [30000, 32000, 34000],
-        'net_income': [15000, 18000, 21000],
-        'total_assets': [200000, 220000, 240000],
-        'current_assets': [80000, 90000, 100000],
-        'inventory': [30000, 32000, 34000],
-        'current_liabilities': [40000, 42000, 44000],
-        'total_liabilities': [100000, 105000, 110000],
-        'equity': [100000, 115000, 130000]
+    valuation_dates = pd.to_datetime(['2021-01-10', '2022-03-15', '2023-05-25'])
+    valuations = [5_000_000, 25_000_000, 100_000_000]
+    revenue_multiples = [10, 15, 20] # 使われていないが形式のため
+    valuation_data = pd.DataFrame({
+        'date': valuation_dates,
+        'valuation': valuations,
+        'revenue_multiple': revenue_multiples
     })
 
-    # 財務比率の計算
-    ratios = analyzer._calculate_financial_ratios(financial_data)
+    # 競合データ (オプション)
+    comp_a_funding = pd.DataFrame({
+        'date': pd.to_datetime(['2021-06-01', '2022-09-01']),
+        'round': ['Seed', 'Series A'],
+        'amount': [1_500_000, 7_000_000],
+        'valuation': [6_000_000, 30_000_000] # 競合データにもvaluationが必要
+    })
+    comp_b_funding = pd.DataFrame({
+        'date': pd.to_datetime(['2021-11-01', '2023-02-01']),
+        'round': ['Seed', 'Series A'],
+        'amount': [800_000, 4_000_000],
+        'valuation': [4_000_000, 20_000_000]
+    })
+    competitor_funding = {'Competitor A': comp_a_funding, 'Competitor B': comp_b_funding}
 
-    # 結果の検証
-    assert isinstance(ratios, dict)
+    # メソッド実行 (競合データあり)
+    result_with_comp = analyzer.analyze_funding_efficiency(
+        funding_data, valuation_data, competitor_funding=competitor_funding
+    )
 
-    # 収益性比率
-    assert 'profitability_ratios' in ratios
-    assert 'gross_margin' in ratios['profitability_ratios']
-    assert 'net_profit_margin' in ratios['profitability_ratios']
-    assert 'return_on_assets' in ratios['profitability_ratios']
-    assert 'return_on_equity' in ratios['profitability_ratios']
+    # アサーション (競合データあり)
+    assert isinstance(result_with_comp, dict)
+    assert 'total_raised' in result_with_comp
+    assert 'latest_valuation' in result_with_comp
+    assert 'latest_funding_efficiency' in result_with_comp
+    assert 'avg_dilution_per_round' in result_with_comp
+    assert 'valuation_growth_multiple' in result_with_comp
+    assert 'funding_rounds' in result_with_comp
+    assert len(result_with_comp['funding_rounds']) == len(funding_data)
+    assert 'competitor_comparison' in result_with_comp
+    assert 'Competitor A' in result_with_comp['competitor_comparison']
+    assert 'summary' in result_with_comp['competitor_comparison']
+    assert 'efficiency_percentile' in result_with_comp['competitor_comparison']['summary']
+    assert 'dilution_percentile' in result_with_comp['competitor_comparison']['summary']
 
-    # 流動性比率
-    assert 'liquidity_ratios' in ratios
-    assert 'current_ratio' in ratios['liquidity_ratios']
-    assert 'quick_ratio' in ratios['liquidity_ratios']
+    # メソッド実行 (競合データなし)
+    result_no_comp = analyzer.analyze_funding_efficiency(funding_data, valuation_data)
 
-    # 数値チェック
-    # 粗利益率 = (売上 - 売上原価) / 売上
-    expected_gross_margin = (financial_data['revenue'].mean() - financial_data['cogs'].mean()) / financial_data['revenue'].mean()
-    assert np.isclose(ratios['profitability_ratios']['gross_margin'], expected_gross_margin)
+    # アサーション (競合データなし)
+    assert isinstance(result_no_comp, dict)
+    assert 'total_raised' in result_no_comp
+    assert 'latest_valuation' in result_no_comp
+    assert 'competitor_comparison' in result_no_comp
+    assert not result_no_comp['competitor_comparison'] # 競合比較は空のはず
 
-    # 流動比率 = 流動資産 / 流動負債
-    expected_current_ratio = financial_data['current_assets'].mean() / financial_data['current_liabilities'].mean()
-    assert np.isclose(ratios['liquidity_ratios']['current_ratio'], expected_current_ratio)
+    # エラーケース (必須カラムがない)
+    with pytest.raises(KeyError):
+        analyzer.analyze_funding_efficiency(funding_data.drop(columns=['amount']), valuation_data)
+    with pytest.raises(KeyError):
+        analyzer.analyze_funding_efficiency(funding_data, valuation_data.drop(columns=['valuation']))
+
+    # エッジケース (資金調達が1ラウンドのみ)
+    single_round_funding = funding_data.iloc[:1]
+    single_round_valuation = valuation_data.iloc[:1]
+    result_single = analyzer.analyze_funding_efficiency(single_round_funding, single_round_valuation)
+    assert result_single['valuation_growth_multiple'] == 1.0 # 変化なし

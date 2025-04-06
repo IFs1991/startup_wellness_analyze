@@ -6,16 +6,16 @@ interface MetricCardProps {
   title: string;
   value: string | number;
   change?: number;
-  trend?: 'up' | 'down';
+  trend?: 'up' | 'down' | 'neutral';
   description?: string;
 }
 
-export function MetricCard({ 
-  title, 
-  value, 
-  change, 
+export function MetricCard({
+  title,
+  value,
+  change,
   trend,
-  description 
+  description
 }: MetricCardProps) {
   return (
     <Card className="p-6">
@@ -27,9 +27,13 @@ export function MetricCard({
             {change && (
               <span className={cn(
                 "ml-2 text-sm font-medium",
-                trend === 'up' ? 'text-green-600' : 'text-red-600'
+                trend === 'up' ? 'text-green-600' :
+                trend === 'down' ? 'text-red-600' :
+                'text-gray-600'
               )}>
-                {trend === 'up' ? <ArrowUpIcon className="h-4 w-4 inline" /> : <ArrowDownIcon className="h-4 w-4 inline" />}
+                {trend === 'up' ? <ArrowUpIcon className="h-4 w-4 inline" /> :
+                 trend === 'down' ? <ArrowDownIcon className="h-4 w-4 inline" /> :
+                 <span className="h-4 w-4 inline-block">-</span>}
                 {change}%
               </span>
             )}

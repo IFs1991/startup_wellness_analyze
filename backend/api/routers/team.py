@@ -12,9 +12,10 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 # 分析モジュールのインポート
-from analysis.Team_Analyzer import TeamAnalyzer as AnalysisTeamEngine
-# 非同期操作とFirestore接続のためのコアモジュール
-from core.team_analyzer import TeamAnalyzer as CoreTeamAnalyzer
+from analysis.Team_Analyzer import TeamAnalyzer
+# 削除: from core.team_analyzer import TeamAnalyzer as CoreTeamAnalyzer
+# Firestore Service など、保存に必要なコア機能があればインポート
+# from service.firestore.client import FirestoreService # Example, adjust if needed
 
 # 認証関連のインポート
 from core.auth_manager import User, get_current_active_user, get_current_analyst_user
@@ -63,7 +64,7 @@ router = APIRouter(
 )
 
 # 分析エンジンの初期化
-_analysis_engine = AnalysisTeamEngine()
+# _analysis_engine = TeamAnalyzer() # Instantiate here or use Depends
 
 # ユーザーアクセス権限チェック
 async def _check_team_access(user: User, company_id: str):
@@ -93,6 +94,7 @@ async def _check_team_access(user: User, company_id: str):
 async def evaluate_founding_team(
     request: FoundingTeamRequest,
     current_user: User = Depends(get_current_active_user)
+    # team_analyzer: TeamAnalyzer = Depends(...) # Inject via Depends recommended
 ):
     """
     創業チームの評価を実行する
@@ -100,25 +102,27 @@ async def evaluate_founding_team(
     創業チームの経験、スキルセット、ドメイン知識などを評価し、チーム全体のスコアを算出します。
     """
     try:
-        # アクセス権限のチェック
         await _check_team_access(current_user, request.company_id)
 
-        # 分析エンジンを使用して創業チーム評価（分析ロジックのみ使用）
-        founding_team_results = _analysis_engine.evaluate_founding_team(
+        team_analyzer = TeamAnalyzer() # Instantiate here for now
+        # FirestoreService などの依存関係をコンストラクタに渡す必要がある場合がある
+        # team_analyzer = TeamAnalyzer(db=firestore_service) # Example
+
+        # 分析エンジンを使用して創業チーム評価
+        founding_team_results = await team_analyzer.evaluate_founding_team( # Assuming async method
             request.founder_profiles,
             company_stage=request.company_stage,
             industry=request.industry
         )
 
-        # Firestoreへの保存（コアモジュールを使用）
-        core_analyzer = CoreTeamAnalyzer()
-        analysis_id = await core_analyzer.save_founding_team_analysis(
-            request.company_id,
-            founding_team_results,
-            request.metadata
+        # 結果の保存 (TeamAnalyzerが担うと仮定)
+        analysis_id = await team_analyzer.save_analysis_result(
+            company_id=request.company_id,
+            analysis_type="founding_team",
+            result_data=founding_team_results,
+            metadata=request.metadata
         )
 
-        # レスポンスの作成
         return TeamAnalysisResponse(
             status="success",
             data={
@@ -130,16 +134,17 @@ async def evaluate_founding_team(
         )
 
     except ValueError as e:
-        logger.error(f"創業チーム評価の入力エラー: {str(e)}")
+        logger.error(f"創業チーム評価の入力エラー: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"創業チーム評価中にエラーが発生しました: {str(e)}")
+        logger.error(f"創業チーム評価中にエラーが発生しました: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="創業チーム評価の実行中にエラーが発生しました")
 
 @router.post("/org-growth", response_model=TeamAnalysisResponse)
 async def analyze_org_growth(
     request: OrgGrowthRequest,
     current_user: User = Depends(get_current_active_user)
+    # team_analyzer: TeamAnalyzer = Depends(...)
 ):
     """
     組織成長分析を実行する
@@ -147,29 +152,28 @@ async def analyze_org_growth(
     従業員の成長率、組織構造の変化、部門間のバランスなどを分析します。
     """
     try:
-        # アクセス権限のチェック
         await _check_team_access(current_user, request.company_id)
 
-        # 従業員データをDataFrameに変換
+        team_analyzer = TeamAnalyzer() # Instantiate here for now
+
         employee_df = pd.DataFrame(request.employee_data)
 
-        # 分析エンジンを使用して組織成長分析（分析ロジックのみ使用）
-        org_growth_results = _analysis_engine.analyze_org_growth(
+        # 分析エンジンを使用して組織成長分析
+        org_growth_results = await team_analyzer.analyze_org_growth( # Assuming async
             employee_df,
             timeline=request.timeline,
             company_stage=request.company_stage,
             industry=request.industry
         )
 
-        # Firestoreへの保存（コアモジュールを使用）
-        core_analyzer = CoreTeamAnalyzer()
-        analysis_id = await core_analyzer.save_org_growth_analysis(
-            request.company_id,
-            org_growth_results,
-            request.metadata
+        # 結果の保存 (TeamAnalyzerが担うと仮定)
+        analysis_id = await team_analyzer.save_analysis_result(
+             company_id=request.company_id,
+             analysis_type="org_growth",
+             result_data=org_growth_results,
+             metadata=request.metadata
         )
 
-        # レスポンスの作成
         return TeamAnalysisResponse(
             status="success",
             data={
@@ -181,16 +185,17 @@ async def analyze_org_growth(
         )
 
     except ValueError as e:
-        logger.error(f"組織成長分析の入力エラー: {str(e)}")
+        logger.error(f"組織成長分析の入力エラー: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"組織成長分析中にエラーが発生しました: {str(e)}")
+        logger.error(f"組織成長分析中にエラーが発生しました: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="組織成長分析の実行中にエラーが発生しました")
 
 @router.post("/culture-strength", response_model=TeamAnalysisResponse)
 async def measure_culture_strength(
     request: CultureStrengthRequest,
     current_user: User = Depends(get_current_active_user)
+    # team_analyzer: TeamAnalyzer = Depends(...)
 ):
     """
     企業文化の強さを分析する
@@ -198,30 +203,27 @@ async def measure_culture_strength(
     エンゲージメントデータと従業員サーベイから企業文化の強さと特性を評価します。
     """
     try:
-        # アクセス権限のチェック
         await _check_team_access(current_user, request.company_id)
 
-        # エンゲージメントデータをDataFrameに変換
-        engagement_df = pd.DataFrame(request.engagement_data)
+        team_analyzer = TeamAnalyzer() # Instantiate here for now
 
-        # サーベイ結果があれば変換
+        engagement_df = pd.DataFrame(request.engagement_data)
         survey_df = pd.DataFrame(request.survey_results) if request.survey_results else None
 
-        # 分析エンジンを使用して企業文化強度分析（分析ロジックのみ使用）
-        culture_results = _analysis_engine.measure_culture_strength(
+        # 分析エンジンを使用して企業文化強度分析
+        culture_results = await team_analyzer.measure_culture_strength( # Assuming async
             engagement_df,
             survey_results=survey_df
         )
 
-        # Firestoreへの保存（コアモジュールを使用）
-        core_analyzer = CoreTeamAnalyzer()
-        analysis_id = await core_analyzer.save_culture_strength_analysis(
-            request.company_id,
-            culture_results,
-            request.metadata
+        # 結果の保存 (TeamAnalyzerが担うと仮定)
+        analysis_id = await team_analyzer.save_analysis_result(
+             company_id=request.company_id,
+             analysis_type="culture_strength",
+             result_data=culture_results,
+             metadata=request.metadata
         )
 
-        # レスポンスの作成
         return TeamAnalysisResponse(
             status="success",
             data={
@@ -233,16 +235,17 @@ async def measure_culture_strength(
         )
 
     except ValueError as e:
-        logger.error(f"企業文化分析の入力エラー: {str(e)}")
+        logger.error(f"企業文化分析の入力エラー: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"企業文化分析中にエラーが発生しました: {str(e)}")
+        logger.error(f"企業文化分析中にエラーが発生しました: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="企業文化分析の実行中にエラーが発生しました")
 
 @router.get("/analysis/{analysis_id}", response_model=TeamAnalysisResponse)
 async def get_team_analysis(
     analysis_id: str,
     current_user: User = Depends(get_current_active_user)
+    # team_analyzer: TeamAnalyzer = Depends(...)
 ):
     """
     保存されたチーム分析結果を取得する
@@ -250,29 +253,22 @@ async def get_team_analysis(
     保存されたチーム分析の結果をIDで検索します。
     """
     try:
-        # コアモジュールを使用して保存された分析結果を取得
-        core_analyzer = CoreTeamAnalyzer()
-        analysis_result = await core_analyzer.get_team_analysis(analysis_id)
+        team_analyzer = TeamAnalyzer() # Instantiate here for now
+        # 保存された結果を取得するメソッドが必要 (TeamAnalyzerが担うと仮定)
+        analysis_result = await team_analyzer.get_analysis_result(analysis_id)
 
         if not analysis_result:
-            raise HTTPException(status_code=404, detail="指定されたIDの分析結果が見つかりません")
+            raise HTTPException(status_code=404, detail="指定された分析結果が見つかりません")
 
-        # 分析結果の企業IDを取得
-        company_id = analysis_result.get("company_id")
+        # アクセス権限チェック (取得した結果の company_id を使用)
+        await _check_team_access(current_user, analysis_result.get("company_id"))
 
-        # アクセス権限のチェック
-        await _check_team_access(current_user, company_id)
-
-        # レスポンスの作成
         return TeamAnalysisResponse(
-            status="success",
-            data=analysis_result,
-            analyzed_at=analysis_result.get("created_at", datetime.now()),
-            message="チーム分析結果の取得が完了しました"
+             status="success",
+             data=analysis_result # analysis_result が適切な Dict 形式であると仮定
         )
-
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        raise e # Re-raise HTTPException (e.g., 403, 404)
     except Exception as e:
-        logger.error(f"チーム分析結果の取得中にエラーが発生しました: {str(e)}")
-        raise HTTPException(status_code=500, detail="チーム分析結果の取得中にエラーが発生しました")
+        logger.error(f"チーム分析結果取得エラー (ID: {analysis_id}): {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="分析結果の取得中にエラーが発生しました")

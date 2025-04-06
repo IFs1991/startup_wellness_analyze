@@ -34,19 +34,18 @@ from core.compliance_manager import get_compliance_manager, ComplianceEvent, Com
 from dotenv import load_dotenv
 from database.connection import DatabaseManager, get_db
 
-# プロジェクトルートへのパスを取得
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-# ルートの.envファイルのパスを設定
-ENV_PATH = os.path.join(ROOT_DIR, '.env')
-
 # 環境変数を読み込み
 if os.getenv("ENVIRONMENT") != "production":
-    # 優先的にルートの.envファイルを読み込む
+    # backendディレクトリのパスを取得
+    BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    # backend/.envファイルのパスを設定
+    ENV_PATH = os.path.join(BACKEND_DIR, '.env')
+    # backend/.envファイルを読み込む
     if os.path.exists(ENV_PATH):
         load_dotenv(ENV_PATH)
     else:
-        # ルートの.envが見つからない場合は現在のディレクトリの.envを試す
-        load_dotenv()
+        # ENVファイルが見つからない場合はログ出力
+        print(f"Warning: .env file not found at {ENV_PATH}")
 
 # 絶対インポートを使用する（ベストプラクティス）
 try:

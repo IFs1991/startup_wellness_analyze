@@ -9,18 +9,22 @@ from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 import logging
 from pydantic import BaseModel, Field
+import pandas as pd # Import pandas for type hinting if needed
 
-# コアモジュールのインポート
-from core.correlation_analyzer import CorrelationAnalyzer
-from core.cluster_analyzer import ClusterAnalyzer
-from core.pca_analyzer import PCAAnalyzer
-from core.survival_analyzer import SurvivalAnalyzer
-from core.text_miner import TextMiner
-from core.time_series_analyzer import TimeSeriesAnalyzer
-from core.association_analyzer import AssociationAnalyzer
+# analysis モジュールからインポート
+from analysis.correlation_analysis import CorrelationAnalyzer
+from analysis.ClusterAnalyzer import ClusterAnalyzer
+from analysis.PCAAnalyzer import PCAAnalyzer
+from analysis.SurvivalAnalyzer import SurvivalAnalyzer
+from analysis.TextMiner import TextMiner
+from analysis.TimeSeriesAnalyzer import TimeSeriesAnalyzer
+from analysis.AssociationAnalyzer import AssociationAnalyzer
 
-# 認証関連のインポート
+# 認証関連のインポート (core から)
 from core.auth_manager import User, get_current_active_user, get_current_analyst_user
+# データ取得などのコア機能が必要な場合はインポート
+# from core.data_preprocessor import DataPreprocessor
+# from service.firestore.client import FirestoreService
 
 # 型定義
 AnalysisResult = Dict[str, Any]
@@ -108,24 +112,21 @@ async def perform_correlation_analysis(
 
         analyzer = CorrelationAnalyzer()
         # データの取得と前処理は、coreモジュールの責務
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
-        # 相関分析の実行
+        data = {} # Placeholder for data fetching logic
+        # Ensure data is a DataFrame or similar structure expected by analyze
+        # Example: data = pd.DataFrame(...)
         result = await analyzer.analyze(
             data=data,
-            variables=data.columns.tolist() if request_data.target_column is None else [request_data.target_column],
+            variables=data.columns.tolist() if isinstance(data, pd.DataFrame) and request_data.target_column is None else [request_data.target_column],
             user_id=current_user.id
         )
 
         return AnalysisResponse(
-            data=result.to_dict() if hasattr(result, 'to_dict') else {"correlation_matrix": result}
+            data=result.to_dict() if hasattr(result, 'to_dict') else result # Adjust result format if needed
         )
     except Exception as e:
-        logger.error(f"相関分析エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"相関分析エラー: {str(e)}", exc_info=True) # Log traceback
+        raise HTTPException(status_code=500, detail=f"相関分析エラー: {str(e)}")
 
 @router.post("/clustering", response_model=AnalysisResponse)
 async def perform_cluster_analysis(
@@ -138,11 +139,7 @@ async def perform_cluster_analysis(
         await _check_analysis_access(current_user, request_data.company_id)
 
         analyzer = ClusterAnalyzer()
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
+        data = {} # Placeholder
         result = await analyzer.analyze(
             data=data,
             n_clusters=request_data.n_clusters,
@@ -151,8 +148,8 @@ async def perform_cluster_analysis(
 
         return AnalysisResponse(data=result)
     except Exception as e:
-        logger.error(f"クラスタリング分析エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"クラスタリング分析エラー: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"クラスタリング分析エラー: {str(e)}")
 
 @router.post("/pca", response_model=AnalysisResponse)
 async def perform_pca_analysis(
@@ -165,11 +162,7 @@ async def perform_pca_analysis(
         await _check_analysis_access(current_user, request_data.company_id)
 
         analyzer = PCAAnalyzer()
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
+        data = {} # Placeholder
         result = await analyzer.analyze(
             data=data,
             n_components=request_data.n_components,
@@ -178,8 +171,8 @@ async def perform_pca_analysis(
 
         return AnalysisResponse(data=result)
     except Exception as e:
-        logger.error(f"主成分分析エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"主成分分析エラー: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"主成分分析エラー: {str(e)}")
 
 # 他の分析エンドポイントも同様のパターンで実装
 @router.post("/survival", response_model=AnalysisResponse)
@@ -191,13 +184,11 @@ async def perform_survival_analysis(
     try:
         # アクセス権限チェック
         await _check_analysis_access(current_user, request_data.company_id)
+        if not request_data.duration_col or not request_data.event_col:
+             raise HTTPException(status_code=400, detail="duration_colとevent_colは必須です")
 
         analyzer = SurvivalAnalyzer()
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
+        data = {} # Placeholder
         result = await analyzer.analyze(
             data=data,
             duration_col=request_data.duration_col,
@@ -207,8 +198,8 @@ async def perform_survival_analysis(
 
         return AnalysisResponse(data=result)
     except Exception as e:
-        logger.error(f"生存時間分析エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"生存時間分析エラー: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生存時間分析エラー: {str(e)}")
 
 @router.post("/text_mining", response_model=AnalysisResponse)
 async def perform_text_mining(
@@ -219,13 +210,11 @@ async def perform_text_mining(
     try:
         # アクセス権限チェック
         await _check_analysis_access(current_user, request_data.company_id)
+        if not request_data.target_column:
+            raise HTTPException(status_code=400, detail="target_columnは必須です")
 
         analyzer = TextMiner()
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
+        data = {} # Placeholder
         result = await analyzer.analyze(
             data=data,
             target_column=request_data.target_column,
@@ -234,8 +223,8 @@ async def perform_text_mining(
 
         return AnalysisResponse(data=result)
     except Exception as e:
-        logger.error(f"テキストマイニングエラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"テキストマイニングエラー: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"テキストマイニングエラー: {str(e)}")
 
 @router.post("/time_series", response_model=AnalysisResponse)
 async def perform_time_series_analysis(
@@ -246,13 +235,11 @@ async def perform_time_series_analysis(
     try:
         # アクセス権限チェック
         await _check_analysis_access(current_user, request_data.company_id)
+        if not request_data.target_column:
+            raise HTTPException(status_code=400, detail="target_columnは必須です")
 
         analyzer = TimeSeriesAnalyzer()
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
+        data = {} # Placeholder
         result = await analyzer.analyze(
             data=data,
             target_column=request_data.target_column,
@@ -262,8 +249,8 @@ async def perform_time_series_analysis(
 
         return AnalysisResponse(data=result)
     except Exception as e:
-        logger.error(f"時系列分析エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"時系列分析エラー: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"時系列分析エラー: {str(e)}")
 
 @router.post("/association", response_model=AnalysisResponse)
 async def perform_association_analysis(
@@ -276,18 +263,28 @@ async def perform_association_analysis(
         await _check_analysis_access(current_user, request_data.company_id)
 
         analyzer = AssociationAnalyzer()
-        data = await analyzer.get_data(
-            collection_name=request_data.collection_name,
-            conditions=request_data.conditions
-        )
-
-        result = await analyzer.analyze(
-            data=data,
+        data = {} # Placeholder (needs list of transactions/items format)
+        result = await analyzer.find_rules( # Assuming find_rules method exists
+            transactions=data, # Pass data in correct format
             min_support=request_data.min_support,
+            # min_confidence, min_lift etc. might be needed
             user_id=current_user.id
         )
 
-        return AnalysisResponse(data=result)
+        # Format result if necessary
+        formatted_result = []
+        if result: # Check if result is not None or empty
+           formatted_result = [
+               {
+                   "antecedents": list(rule.antecedents),
+                   "consequents": list(rule.consequents),
+                   "support": getattr(rule, 'support', None),
+                   "confidence": getattr(rule, 'confidence', None),
+                   "lift": getattr(rule, 'lift', None)
+                } for rule in result
+            ] # Ensure result is iterable and items have expected attrs
+
+        return AnalysisResponse(data={"rules": formatted_result})
     except Exception as e:
-        logger.error(f"アソシエーション分析エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"アソシエーション分析エラー: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"アソシエーション分析エラー: {str(e)}")

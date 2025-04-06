@@ -1,10 +1,10 @@
-# TensorFlow Federated から Flower への移行計画
+# Flowerベースの連合学習アーキテクチャ定義書
 
-# システム全体の構成 - 更新版
+# システム全体の構成 - 現状反映版
 system:
   name: "startup-analytics-platform"
-  version: "2.1.0"  # バージョン更新
-  description: "Flowerを活用した高度なスタートアップ分析プラットフォーム"
+  version: "3.0.0"  # バージョン更新例
+  description: "Flowerを活用した高度なスタートアップ分析プラットフォーム (Python 3.11ベース)"
   environment: "production"
   maintainers:
     - name: "システム管理者"
@@ -218,8 +218,8 @@ federated_learning:
   # 中央サーバー設定 - 更新
   central_server:
     name: "federated_aggregation_server"
-    framework: "flower"  # TensorFlow Federatedから変更
-    version: "1.5.0"     # Flowerの最新バージョン
+    framework: "flower"
+    version: ">=1.5.0" # environment.yml と整合
     kubernetes:
       deployment_name: "fl-central-server"
       replicas: 3
@@ -246,10 +246,9 @@ federated_learning:
     name: "federated_client"
     deployment:
       type: "docker"
-      image: "startup-analytics/flower-client:v1.0"  # イメージ名更新
+      image: "startup-analytics/flower-client:v1.0" # イメージ名維持 (必要なら更新)
       resources:
-        min_cpu: "1"     # リソース要件削減
-        min_memory: "2Gi"  # リソース要件削減
+        min_cpu: "1"
     data_access:
       local_only: true
       required_tables:
@@ -277,11 +276,9 @@ federated_learning:
       # フレームワーク中立性を活かす
       framework_options:  # 複数フレームワークをサポート
         - name: "tensorflow_probability"
-          version: "0.19.0"
+          version: ">=0.17.0" # requirements.txt と整合
         - name: "pytorch"
-          version: "2.0.0"
-        - name: "jax"
-          version: "0.4.10"
+          version: "" # condaで管理
       architecture:
         input_dim: 25
         hidden_layers: [64, 32, 16]
@@ -314,9 +311,9 @@ federated_learning:
       # フレームワーク中立性を活かす
       framework_options:  # 複数フレームワークをサポート
         - name: "tensorflow_probability"
-          version: "0.19.0"
+          version: ">=0.17.0" # requirements.txt と整合
         - name: "pytorch"
-          version: "2.0.0"
+          version: "" # condaで管理
       architecture:
         input_dim: 15
         hidden_layers: [32, 16]
@@ -352,8 +349,10 @@ federated_learning:
       epsilon_per_round: 0.1
     # Flower特有の実装
     flower_implementation:
-      dp_strategy: "DPFedAvg"
-      accountant: "rdp"
+      dp_strategy: "DPFedAvg" # Flowerの戦略例
+      accountant: "rdp"       # Flowerの会計士例
+      library: "opacus"       # 使用ライブラリ
+      version: "==1.4.0"      # requirements.txt と整合
 
   # セキュア集約設定 - 更新
   secure_aggregation:
@@ -492,7 +491,7 @@ federated_learning:
 orchestration:
   workflow_manager:
     type: "airflow"
-    version: "2.3.0"
+    version: "2.7.1" # requirements.txt のコメントに従う
     dags:
       - name: "federated_learning_workflow"
         schedule: "0 1 * * 1"  # 毎週月曜日午前1時
@@ -697,20 +696,20 @@ implementation_timeline:
         - "メタデータリポジトリ構築"
         - "ベンチマーク自動生成"
         - "初期APIエンドポイント"
-    - name: "Phase 2: 連合学習フレームワーク基盤"
+    - name: "Phase 2: 連合学習フレームワーク基盤 (Flower)" # TFFの記述削除
       duration: "6週間"
       tasks:
-        - "Flowerフレームワーク環境構築"  # 変更
-        - "マルチフレームワーク対応クライアントライブラリ開発"  # 変更
-        - "Flowerセキュアアグリゲーション実装"  # 変更
-        - "差分プライバシーフレームワーク実装"
-        - "Conda/Mambaとの統合最適化"  # 追加
+        - "Flowerフレームワーク環境構築"
+        - "マルチフレームワーク対応クライアントライブラリ開発"
+        - "Flowerセキュアアグリゲーション実装"
+        - "差分プライバシーフレームワーク実装 (Opacus統合)" # Opacus追記
+        - "Conda/Mambaとの統合最適化"
       dependencies: ["Phase 1"]
     - name: "Phase 3: モデル開発と訓練パイプライン"
       duration: "4週間"
       tasks:
-        - "マルチフレームワーク対応ベイジアンニューラルネットワークモデル開発"  # 変更
-        - "連合訓練ワークフロー実装"
+        - "マルチフレームワーク対応ベイジアンニューラルネットワークモデル開発"
+        - "連合訓練ワークフロー実装 (Flowerベース)" # Flower追記
         - "モデル評価フレームワーク構築"
         - "Airflowパイプライン構築"
       dependencies: ["Phase 2"]
@@ -740,68 +739,21 @@ implementation_timeline:
       dependencies: ["Phase 5"]
   total_duration: "24週間"
 
-# 予想されるROI - 更新
+# 予想されるROI - Flowerベースでの評価に修正
 roi_estimation:
   implementation_cost:
-    development: "中～高（Flowerへの移行により削減）"  # 変更
-    infrastructure: "中（リソース効率化による削減）"  # 変更
+    development: "中～高 (Flowerの専門知識が必要)" # TFFからの移行記述削除
+    infrastructure: "中 (効率的なリソース利用)" # リソース効率化の理由修正
     timeline: "6ヶ月（完全実装）"
   expected_benefits:
     prediction_accuracy_improvement: "40-50%（単一企業データと比較）"
     privacy_protection: "大幅に向上（生データ共有が不要）"
     data_efficiency: "5-10倍（メタデータのみの場合と比較）"
     competitive_advantage: "非常に高い（技術的障壁を構築）"
-    resource_efficiency: "30-50%向上（TFFと比較）"  # 追加
-    client_onboarding_speed: "40%向上（実装の簡素化により）"  # 追加
-  breakeven_point: "導入後15-20ヶ月"  # 改善（元は18-24ヶ月）
+    resource_efficiency: "30-50%向上 (見込み)" # TFF比較削除
+    client_onboarding_speed: "40%向上 (見込み)" # 実装簡素化理由削除
+  breakeven_point: "導入後15-20ヶ月" # TFF比較削除
   scaling_economics:
-    client_addition_cost: "大幅に逓減（Flowerの効率的なスケーリングにより）"  # 変更
+    client_addition_cost: "大幅に逓減（Flowerの効率的なスケーリング）" # TFF比較削除
     accuracy_improvement_per_client: "対数的に向上（10社:20%、50社:35%、100社:45%）"
-    max_client_capacity: "200社以上（TFFより拡大）"  # 追加
-
-# 移行計画詳細 - 新規追加
-migration_plan:
-  strategy: "段階的移行"
-  phases:
-    - name: "準備フェーズ"
-      duration: "2週間"
-      tasks:
-        - "Flower環境のセットアップとテスト"
-        - "既存TFFコードとの互換性分析"
-        - "プロトタイプ開発"
-        - "移行リスク分析"
-    - name: "コンポーネント移行フェーズ"
-      duration: "3週間"
-      tasks:
-        - "中央サーバーコードの移行"
-        - "クライアントライブラリの移行"
-        - "モデル集約戦略の移行"
-        - "差分プライバシー実装の変換"
-      dependencies: ["準備フェーズ"]
-    - name: "統合とテストフェーズ"
-      duration: "1週間"
-      tasks:
-        - "コンポーネント統合"
-        - "エンドツーエンドテスト"
-        - "パフォーマンス検証"
-        - "セキュリティ監査"
-      dependencies: ["コンポーネント移行フェーズ"]
-  risks_and_mitigations:
-    - risk: "既存モデルとの互換性問題"
-      severity: "高"
-      mitigation: "抽象化レイヤーを導入し、複数フレームワークでテスト"
-    - risk: "パフォーマンス低下"
-      severity: "中"
-      mitigation: "継続的ベンチマークを実施し、ボトルネックを検出・最適化"
-    - risk: "データパイプラインの中断"
-      severity: "高"
-      mitigation: "段階的移行とフォールバックメカニズムの実装"
-  expected_improvements:
-    - name: "クライアントリソース使用量"
-      reduction: "30-50%"
-    - name: "実装の複雑さ"
-      reduction: "25-35%"
-    - name: "通信効率"
-      improvement: "25-40%"
-    - name: "スケーラビリティ"
-      improvement: "最大2倍のクライアント数対応"
+    max_client_capacity: "200社以上" # TFF比較削除

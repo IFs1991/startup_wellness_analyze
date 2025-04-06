@@ -1,0 +1,251 @@
+# スタートアップウェルネス分析システム - アーキテクチャ概要
+
+システム:
+  名称: スタートアップウェルネス分析システム
+  概要: スタートアップ企業の健康状態と財務データを分析するシステム
+  主要機能:
+    - ウェルネスデータ分析
+    - 財務データ分析
+    - 市場分析
+    - チーム分析
+    - AIによる予測
+    - レポート生成
+    - 可視化
+
+コンポーネント:
+  バックエンド:
+    フレームワーク: FastAPI
+    データベース: Firestore
+    認証: Firebase Authentication
+    ストレージ: Cloud Storage
+
+  分析エンジン:
+    - 相関分析
+    - クラスタリング
+    - 主成分分析
+    - 生存時間分析
+    - テキストマイニング
+    - 時系列分析
+    - アソシエーション分析
+
+  AI・機械学習:
+    - 予測モデル
+    - Gemini可視化エンジン
+    - 連合学習システム
+
+  セキュリティ:
+    - JWT認証
+    - RBAC（ロールベースアクセス制御）
+    - MFA（多要素認証）
+    - コンプライアンス監視
+
+APIエンドポイント:
+  認証API:
+    概要: Firebase認証とJWTを使用したユーザー認証
+    機能:
+      - ユーザー登録
+      - ログイン/ログアウト
+      - パスワードリセット
+      - MFA設定と検証
+      - トークン更新
+      - ユーザー管理
+    URIプレフィックス: /auth
+
+  分析API:
+    概要: 各種データ分析を実行するエンドポイント
+    機能:
+      - 相関分析: /analysis/correlation
+      - クラスタリング: /analysis/clustering
+      - 主成分分析: /analysis/pca
+      - 生存時間分析: /analysis/survival
+      - テキストマイニング: /analysis/text_mining
+      - 時系列分析: /analysis/time_series
+      - アソシエーション分析: /analysis/association
+    URIプレフィックス: /analysis
+
+  財務分析API:
+    概要: スタートアップの財務状況と成長性を分析
+    機能:
+      - バーンレート分析: /financial/burn-rate
+      - ユニットエコノミクス分析: /financial/unit-economics
+      - 成長指標評価: /financial/growth-metrics
+    URIプレフィックス: /financial
+
+  市場分析API:
+    概要: 市場ポジションと競争環境を分析
+    機能:
+      - 市場規模推定: /market/market-size
+      - 競合マッピング: /market/competitive-map
+      - 市場トレンド分析: /market/market-trends
+    URIプレフィックス: /market
+
+  チーム分析API:
+    概要: 創業チーム、組織成長、企業文化を分析
+    機能:
+      - 創業チーム評価: /team/founding-team
+      - 組織成長分析: /team/org-growth
+      - 企業文化強度分析: /team/culture-strength
+    URIプレフィックス: /team
+
+  予測API:
+    概要: 機械学習による将来予測
+    機能:
+      - パフォーマンス予測: /prediction/performance
+      - モデル評価: /prediction/model_evaluation
+      - モデル再訓練: /prediction/retrain_model
+    URIプレフィックス: /prediction
+
+  レポートAPI:
+    概要: AIによるレポート生成
+    機能:
+      - レポート生成: /api/reports/generate
+      - レポートダウンロード: /api/reports/download/{filename}
+      - テンプレート一覧: /api/reports/templates
+    URIプレフィックス: /api/reports
+
+  可視化API:
+    概要: Gemini AIによるデータ可視化
+    機能:
+      - チャート生成: /visualization/gemini/chart
+      - 複数チャート生成: /visualization/gemini/multiple-charts
+      - ダッシュボード生成: /visualization/gemini/dashboard
+    URIプレフィックス: /visualization/gemini
+
+  コンプライアンスAPI:
+    概要: コンプライアンス監視とポリシー管理
+    機能:
+      - イベント履歴取得: /api/compliance/events
+      - ユーザーイベント履歴: /api/compliance/user/{user_id}/events
+      - ポリシー設定管理: /api/compliance/config
+      - GDPRリクエスト処理: /api/compliance/gdpr-request
+    URIプレフィックス: /api/compliance
+
+  連合学習API:
+    概要: 分散型モデル訓練のためのAPI
+    機能:
+      - モデル一覧: /api/v1/federated/models
+      - モデル詳細: /api/v1/federated/models/{model_id}
+      - モデルダウンロード: /api/v1/federated/models/{model_id}/download
+      - モデル更新: /api/v1/federated/models/{model_id}/update
+    URIプレフィックス: /api/v1/federated
+
+データモデル:
+  基本モデル:
+    FirestoreModel:
+      概要: Firestoreベースの基本モデル
+      属性:
+        - created_at: 作成日時
+        - updated_at: 更新日時
+
+  ユーザー関連:
+    UserModel:
+      継承: FirestoreModel
+      概要: ユーザー情報
+      属性:
+        - username: ユーザー名
+        - hashed_password: パスワードハッシュ
+        - email: メールアドレス
+        - is_active: アクティブフラグ
+        - is_vc: VCフラグ
+
+  スタートアップ企業関連:
+    StartupModel:
+      継承: FirestoreModel
+      概要: スタートアップ企業情報
+      属性:
+        - name: 企業名
+        - industry: 業界
+        - founding_date: 創業日
+
+    VASDataModel:
+      継承: FirestoreModel
+      概要: VAS（Visual Analog Scale）データ
+      属性:
+        - startup_id: 企業ID
+        - user_id: ユーザーID
+        - timestamp: タイムスタンプ
+        - physical_symptoms: 身体症状
+        - mental_state: 精神状態
+        - motivation: モチベーション
+        - communication: コミュニケーション
+        - other: その他
+        - free_text: フリーテキスト
+
+    FinancialDataModel:
+      継承: FirestoreModel
+      概要: 財務データ
+      属性:
+        - startup_id: 企業ID
+        - year: 年度
+        - revenue: 収益
+        - profit: 利益
+        - employee_count: 従業員数
+        - turnover_rate: 離職率
+
+  分析設定関連:
+    AnalysisSettingModel:
+      継承: FirestoreModel
+      概要: VC向け分析設定
+      属性:
+        - user_id: ユーザーID
+        - google_form_questions: Googleフォーム質問設定
+        - financial_data_items: 財務データ項目設定
+        - analysis_methods: 分析手法設定
+        - visualization_methods: 可視化手法設定
+        - generative_ai_settings: 生成AI設定
+
+    NoteModel:
+      継承: FirestoreModel
+      概要: メモ
+      属性:
+        - user_id: ユーザーID
+        - analysis_id: 分析ID
+        - content: 内容
+
+セキュリティ:
+  認証:
+    - JWT認証
+    - セッション管理
+    - アクセストークン
+    - リフレッシュトークン
+
+  多要素認証:
+    - TOTP（Google Authenticatorなど）
+    - SMS認証
+
+  アクセス制御:
+    ロール:
+      - user: 一般ユーザー
+      - admin: 管理者
+      - vc: ベンチャーキャピタリスト
+      - analyst: アナリスト
+
+  コンプライアンス:
+    ポリシー:
+      - パスワードポリシー
+      - セッションポリシー
+      - データ保持ポリシー
+    規制対応:
+      - GDPR
+      - HIPAA
+      - PCI DSS
+
+依存関係:
+  外部サービス:
+    - Firebase Authentication
+    - Google Cloud Firestore
+    - Google Cloud Storage
+    - Gemini AI API
+
+  ライブラリ:
+    - FastAPI
+    - Pandas
+    - NumPy
+    - scikit-learn
+    - Firebase Admin SDK
+    - Jose JWT
+    - Puppeteer (レポートPDF生成)
+
+  インフラ:
+    - Google Cloud Platform
+    - Node.js (PDF変換用)

@@ -10,8 +10,19 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
-# .envファイルを読み込む
-load_dotenv()
+# backendディレクトリへのパスを取得
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# backend/.envファイルのパスを設定
+ENV_PATH = os.path.join(BACKEND_DIR, '.env')
+
+# 環境変数が未設定の場合は.envファイルを読み込む
+if os.getenv("ENVIRONMENT") != "production":
+    # backend/.envファイルを読み込む
+    if os.path.exists(ENV_PATH):
+        load_dotenv(ENV_PATH)
+    else:
+        # ENVファイルが見つからない場合はログ出力
+        print(f"Warning: .env file not found at {ENV_PATH}")
 
 class Settings(BaseSettings):
     """アプリケーション設定"""
@@ -73,7 +84,7 @@ class Settings(BaseSettings):
         return v
 
     model_config = {
-        "env_file": ".env",
+        "env_file": ENV_PATH,
         "env_file_encoding": "utf-8"
     }
 

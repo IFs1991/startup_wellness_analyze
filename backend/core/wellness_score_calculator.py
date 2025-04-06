@@ -12,8 +12,8 @@ import importlib
 from sklearn.preprocessing import MinMaxScaler
 # 循環インポートを避けるため、クラス使用時に動的インポート
 # from core.data_preprocessor import DataPreprocessor
-from core.correlation_analyzer import CorrelationAnalyzer
-from core.time_series_analyzer import TimeSeriesAnalyzer
+from analysis.correlation_analysis import CorrelationAnalyzer
+from analysis.TimeSeriesAnalyzer import TimeSeriesAnalyzer
 from service.firestore.client import get_firestore_client
 
 # 連合学習モジュールのインポート - エラーを回避するためにフラグのみ設定
@@ -634,15 +634,12 @@ class WellnessScoreCalculator:
 
 def create_wellness_score_calculator() -> WellnessScoreCalculator:
     """WellnessScoreCalculatorのインスタンスを作成するファクトリ関数"""
-    from core.correlation_analyzer import CorrelationAnalyzer
-    from core.time_series_analyzer import TimeSeriesAnalyzer
+    from analysis.correlation_analysis import CorrelationAnalyzer
+    from analysis.TimeSeriesAnalyzer import TimeSeriesAnalyzer
 
     correlation_analyzer = CorrelationAnalyzer()
+    time_series_analyzer = TimeSeriesAnalyzer(db=get_firestore_client())
     firestore_client = FirestoreClient()
-
-    # FirestoreClientインスタンスをTimeSeriesAnalyzerに渡す
-    db_client = get_firestore_client()
-    time_series_analyzer = TimeSeriesAnalyzer(db=db_client)
 
     return WellnessScoreCalculator(
         correlation_analyzer,

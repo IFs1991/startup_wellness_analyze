@@ -49,5 +49,11 @@ if __name__ == "__main__":
         print(f"\n.envファイルが見つかりました: {env_path}")
     else:
         print(f"\n.envファイルが見つかりません: {env_path}")
+        # backend/.envが存在するか確認
+        backend_env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '.env'))
+        if os.path.exists(backend_env_path):
+            print(f"backend/.envファイルが見つかりました: {backend_env_path}")
+        else:
+            print(f"backend/.envファイルも見つかりません: {backend_env_path}")
 
     print("\nテスト完了")

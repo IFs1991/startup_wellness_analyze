@@ -75,7 +75,7 @@ authlib==1.2.1
 argon2-cffi==23.1.0
 python-jose>=3.3.0
 python-multipart>=0.0.5
-email-validator==1.3.1
+email-validator
 pyotp==2.8.0
 qrcode==7.4.2
 cryptography==41.0.3
@@ -108,20 +108,15 @@ flask-appbuilder==4.3.5  # apache-airflowの依存関係
 # - バージョン競合に注意:
 #   * tensorflow-federated と apache-airflow は attrs のバージョンが競合
 #   * apache-airflowは個別にインストール: AIRFLOW_GPL_UNIDECODE=yes pip install apache-airflow==2.7.1
-# 追加の依存関係
+# environment.ymlのpipセクションから移動したパッケージ
+python-dotenv>=0.19.0
+flwr>=1.5.0
+tf-keras>=2.9.0
+
+# ----- 追加の依存関係（environment.ymlと重複しないもの）-----
 python-magic>=0.4.24
 aiofiles>=0.7.0
-numpy>=1.21.2
-pandas>=1.3.3
-scikit-learn>=0.24.2
-tensorflow>=2.9.0
-tensorflow-probability>=0.17.0
-keras>=2.9.0
-tf-keras>=2.9.0
-flwr>=1.0.0
-pillow>=9.0.0
 asyncio>=3.4.3
 aiohttp>=3.8.1
-python-dotenv>=0.19.0
 stripe>=2.60.0
 passlib>=1.7.4

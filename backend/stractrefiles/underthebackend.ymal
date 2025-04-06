@@ -1,0 +1,319 @@
+# スタートアップウェルネス分析システム構成
+# 以下のソースファイルから情報を統合:
+# - backend/config.py: 設定情報とクラウド連携
+# - backend/database.py: データベース接続と管理
+# - backend/entrypoint.sh: システム起動スクリプトと最適化設定
+# - backend/environment.yml: Conda環境構成
+# - backend/main.py: メインアプリケーションとモジュール初期化
+# - backend/requirements.txt: 依存ライブラリ
+# - backend/schemas.py: データモデル定義
+
+name: スタートアップウェルネス分析システム
+version: 1.0.0
+description: スタートアップの健全性とパフォーマンスを分析するためのデータ分析プラットフォーム
+
+# システム構成要素
+system:
+  backend:
+    framework: FastAPI
+    server: uvicorn
+    runtime: Python 3.11
+    environment: conda (startup_wellness_analyze)
+
+# インフラストラクチャ
+infrastructure:
+  cloud:
+    provider: Google Cloud Platform
+    region: asia-northeast1
+    services:
+      - Firestore
+      - Cloud Storage
+      - Secret Manager
+      - BigQuery
+      - Vertex AI (Gemini)
+  database:
+    primary: Firestore
+    secondary:
+      - Neo4j (グラフ分析)
+      - PostgreSQL (SQLAlchemy)
+    cache: Redis
+
+# 認証とセキュリティ
+security:
+  authentication:
+    provider: Firebase Authentication
+    token_type: JWT
+    algorithm: HS256
+    token_expiry: 30分
+    mfa:
+      enabled: true
+      provider: TOTP (pyotp)
+  encryption:
+    password_hashing: Argon2
+    data_encryption: PyCryptodome
+
+# コアモジュール
+core_modules:
+  - name: WellnessScoreCalculator
+    description: スタートアップの健全性スコアを計算
+    dependencies:
+      - CorrelationAnalyzer
+      - TimeSeriesAnalyzer
+
+  - name: DataPreprocessor
+    description: データ前処理
+
+  - name: CorrelationAnalyzer
+    description: 相関分析
+
+  - name: ClusterAnalyzer
+    description: クラスタリング分析
+
+  - name: TimeSeriesAnalyzer
+    description: 時系列データ分析
+    dependencies:
+      - FirestoreClient
+
+  - name: SurvivalAnalyzer
+    description: 生存時間分析
+
+  - name: PerformancePredictor
+    description: パフォーマンス予測
+
+  - name: StartupSurvivalAnalyzer
+    description: スタートアップの生存分析
+
+  - name: PCAAnalyzer
+    description: 主成分分析
+
+  - name: TextMiner
+    description: テキスト解析とマイニング
+    dependencies:
+      - Gemini API
+      - FirestoreClient
+
+  - name: FeatureEngineer
+    description: 特徴量エンジニアリング
+    dependencies:
+      - FirestoreClient
+
+  - name: DescriptiveStatsCalculator
+    description: 記述統計計算
+    dependencies:
+      - FirestoreClient
+
+  - name: DataQualityChecker
+    description: データ品質チェック
+    dependencies:
+      - FirestoreService
+
+  - name: GenerativeAIManager
+    description: 生成AIとの連携
+    dependencies:
+      - Gemini API
+
+  - name: ModelEvaluator
+    description: モデル評価
+
+  - name: CustomReportBuilder
+    description: カスタムレポート生成
+
+  - name: PDFReportGenerator
+    description: PDF形式のレポート生成
+
+  - name: SecurityManager
+    description: セキュリティ機能管理
+
+  - name: AssociationAnalyzer
+    description: アソシエーション分析
+
+  - name: ExternalDataFetcher
+    description: 外部データ取得
+
+  - name: GraphGenerator
+    description: グラフ生成
+
+  - name: InteractiveVisualizer
+    description: インタラクティブな可視化
+    dependencies:
+      - FirestoreClient
+
+  - name: ComplianceManager
+    description: コンプライアンス管理
+
+  - name: RedisClient
+    description: Redisクライアント
+
+  - name: DashboardCreator
+    description: ダッシュボード作成
+    dependencies:
+      - FirestoreClient
+
+# 拡張モジュール (v2.0)
+extension_modules:
+  - name: FinancialAnalyzer
+    description: 財務分析
+    status: 条件付き利用可能
+    dependencies:
+      - FirestoreClient
+
+  - name: MarketAnalyzer
+    description: 市場競合分析
+    status: 条件付き利用可能
+    dependencies:
+      - FirestoreClient
+
+  - name: TeamAnalyzer
+    description: チーム・組織分析
+    status: 条件付き利用可能
+    dependencies:
+      - FirestoreClient
+
+# データ入力
+data_input:
+  - name: GoogleFormsConnector
+    description: Google Formsとの連携
+
+  - name: ExternalDataFetcher
+    description: 外部データソースからのデータ取得
+
+# APIルート
+api_routes:
+  prefix: /api/v1
+  endpoints:
+    - path: /
+      description: ルートエンドポイント
+      authentication: 不要
+
+    - path: /health
+      description: ヘルスチェック
+      authentication: 不要
+
+    # その他のAPIは all_routers から動的に登録
+
+    # 非推奨エンドポイント（リダイレクト）
+    - path: /api/v1/visualization
+      description: 可視化（非推奨）
+      redirect_to: /api/visualization
+
+    - path: /api/v1/reports
+      description: レポート（非推奨）
+      redirect_to: /api/reports
+
+# バックグラウンドタスク
+background_tasks:
+  - name: process_analysis_data
+    description: 分析データの処理
+    steps:
+      - データ前処理
+      - データ品質チェック
+      - 分析タイプ別処理
+      - 結果保存
+      - モデル評価
+
+# 環境設定
+environments:
+  - name: development
+    features:
+      debug: true
+      hot_reload: true
+      firestore_emulator: localhost:8080
+
+  - name: production
+    features:
+      debug: false
+      workers: 動的調整（GCP割引時間帯に基づく）
+      memory_monitoring: true
+      cloud_logging: true
+
+# パフォーマンス最適化
+performance_optimization:
+  memory:
+    MALLOC_TRIM_THRESHOLD_: 100000
+    PYTHONMALLOC: malloc
+
+  cpu:
+    OMP_NUM_THREADS: 4
+    MKL_NUM_THREADS: 4
+    NUMEXPR_NUM_THREADS: 4
+
+  gcp_cost:
+    discount_hours:
+      start: 22:00
+      end: 08:00
+    weekend_discount: true
+
+# 主要な依存ライブラリ
+dependencies:
+  webframework:
+    - fastapi>=0.112.0
+    - uvicorn>=0.15.0
+    - pydantic>=2.5.0
+
+  database:
+    - sqlalchemy>=1.4.23
+    - psycopg2-binary>=2.9.1
+    - firebase-admin==6.2.0
+    - google-cloud-firestore==2.11.1
+    - redis==5.0.1
+    - neo4j==5.14.0
+
+  data_processing:
+    - numpy>=1.21.2
+    - pandas>=1.3.3
+    - scikit-learn>=0.24.2
+    - statsmodels==0.14.0
+    - scipy==1.10.1
+
+  visualization:
+    - matplotlib==3.7.2
+    - seaborn==0.12.2
+    - plotly==5.15.0
+    - dash==2.9.3
+
+  ml_ai:
+    - tensorflow>=2.9.0
+    - keras>=2.9.0
+    - google-generativeai>=0.4.0
+
+  time_series:
+    - prophet==1.1.4
+
+  causal_inference:
+    - causalimpact==0.2.6
+    - dowhy
+    - econml==0.14.1
+
+  security:
+    - pycryptodome==3.18.0
+    - bcrypt>=3.2.0
+    - argon2-cffi==23.1.0
+    - python-jose>=3.3.0
+    - pyotp==2.8.0
+
+  reporting:
+    - reportlab==4.0.4
+    - jinja2>=3.0.1
+    - weasyprint==59.0
+
+  monitoring:
+    - prometheus-client==0.17.1
+    - loguru>=0.5.3
+    - psutil==5.9.5
+
+# インストール方法
+installation:
+  conda:
+    environment_file: environment.yml
+    name: startup_wellness_analyze
+
+  pip:
+    requirements_file: requirements.txt
+
+# 起動方法
+startup:
+  script: entrypoint.sh
+  production:
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers {WORKERS} --log-level {LOG_LEVEL}
+  development:
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level {LOG_LEVEL}

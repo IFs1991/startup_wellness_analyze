@@ -12,9 +12,10 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 # 分析モジュールのインポート
-from analysis.MarketAnalyzer import MarketAnalyzer as AnalysisMarketEngine
-# 非同期操作とFirestore接続のためのコアモジュール
-from core.market_analyzer import MarketAnalyzer as CoreMarketAnalyzer
+from analysis.MarketAnalyzer import MarketAnalyzer
+# 削除: from core.market_analyzer import MarketAnalyzer as CoreMarketAnalyzer
+# 保存に必要なコア機能があればインポート
+# from service.firestore.client import FirestoreService
 
 # 認証関連のインポート
 from core.auth_manager import User, get_current_active_user, get_current_analyst_user
@@ -62,7 +63,7 @@ router = APIRouter(
 )
 
 # 分析エンジンの初期化
-_analysis_engine = AnalysisMarketEngine()
+# _analysis_engine = MarketAnalyzer() # Instantiate here or use Depends
 
 # ユーザーアクセス権限チェック
 async def _check_market_access(user: User, company_id: str):
@@ -92,6 +93,7 @@ async def _check_market_access(user: User, company_id: str):
 async def estimate_market_size(
     request: MarketSizeRequest,
     current_user: User = Depends(get_current_active_user)
+    # market_analyzer: MarketAnalyzer = Depends(...)
 ):
     """
     市場規模推定を実行する
@@ -99,25 +101,25 @@ async def estimate_market_size(
     TAM（全体市場規模）・SAM（実行可能市場規模）・SOM（獲得可能市場規模）の推定と予測を行います。
     """
     try:
-        # アクセス権限のチェック
         await _check_market_access(current_user, request.company_id)
 
-        # 分析エンジンを使用して市場規模推定（分析ロジックのみ使用）
-        market_size_results = _analysis_engine.estimate_market_size(
+        market_analyzer = MarketAnalyzer() # Instantiate here for now
+
+        # 分析エンジンを使用して市場規模推定
+        market_size_results = await market_analyzer.estimate_market_size( # Assuming async
             request.market_data,
             growth_factors=request.growth_factors,
             projection_years=request.projection_years
         )
 
-        # Firestoreへの保存（コアモジュールを使用）
-        core_analyzer = CoreMarketAnalyzer()
-        analysis_id = await core_analyzer.save_market_size_analysis(
-            request.company_id,
-            market_size_results,
-            request.metadata
+        # 結果の保存 (MarketAnalyzerが担うと仮定)
+        analysis_id = await market_analyzer.save_analysis_result(
+            company_id=request.company_id,
+            analysis_type="market_size",
+            result_data=market_size_results,
+            metadata=request.metadata
         )
 
-        # レスポンスの作成
         return MarketAnalysisResponse(
             status="success",
             data={
@@ -129,16 +131,17 @@ async def estimate_market_size(
         )
 
     except ValueError as e:
-        logger.error(f"市場規模推定の入力エラー: {str(e)}")
+        logger.error(f"市場規模推定の入力エラー: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"市場規模推定中にエラーが発生しました: {str(e)}")
+        logger.error(f"市場規模推定中にエラーが発生しました: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="市場規模推定の実行中にエラーが発生しました")
 
 @router.post("/competitive-map", response_model=MarketAnalysisResponse)
 async def create_competitive_map(
     request: CompetitiveMapRequest,
     current_user: User = Depends(get_current_active_user)
+    # market_analyzer: MarketAnalyzer = Depends(...)
 ):
     """
     競合マッピングを実行する
@@ -146,28 +149,27 @@ async def create_competitive_map(
     競合企業をポジショニングマップ上にマッピングし、競争環境を可視化します。
     """
     try:
-        # アクセス権限のチェック
         await _check_market_access(current_user, request.company_id)
 
-        # 競合データをDataFrameに変換
+        market_analyzer = MarketAnalyzer() # Instantiate here for now
+
         competitor_df = pd.DataFrame(request.competitor_data)
 
-        # 分析エンジンを使用して競合マッピング（分析ロジックのみ使用）
-        competitive_map_results = _analysis_engine.create_competitive_map(
+        # 分析エンジンを使用して競合マッピング
+        competitive_map_results = await market_analyzer.create_competitive_map( # Assuming async
             competitor_df,
             dimensions=request.dimensions,
             focal_company=request.focal_company
         )
 
-        # Firestoreへの保存（コアモジュールを使用）
-        core_analyzer = CoreMarketAnalyzer()
-        analysis_id = await core_analyzer.save_competitive_map_analysis(
-            request.company_id,
-            competitive_map_results,
-            request.metadata
+        # 結果の保存 (MarketAnalyzerが担うと仮定)
+        analysis_id = await market_analyzer.save_analysis_result(
+            company_id=request.company_id,
+            analysis_type="competitive_map",
+            result_data=competitive_map_results,
+            metadata=request.metadata
         )
 
-        # レスポンスの作成
         return MarketAnalysisResponse(
             status="success",
             data={
@@ -179,16 +181,17 @@ async def create_competitive_map(
         )
 
     except ValueError as e:
-        logger.error(f"競合マッピングの入力エラー: {str(e)}")
+        logger.error(f"競合マッピングの入力エラー: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"競合マッピング中にエラーが発生しました: {str(e)}")
+        logger.error(f"競合マッピング中にエラーが発生しました: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="競合マッピングの実行中にエラーが発生しました")
 
 @router.post("/market-trends", response_model=MarketAnalysisResponse)
 async def analyze_market_trends(
     request: MarketTrendsRequest,
     current_user: User = Depends(get_current_active_user)
+    # market_analyzer: MarketAnalyzer = Depends(...)
 ):
     """
     市場トレンド分析を実行する
@@ -196,35 +199,31 @@ async def analyze_market_trends(
     特定のキーワードの時系列トレンドを分析し、市場動向を把握します。
     """
     try:
-        # アクセス権限のチェック
         await _check_market_access(current_user, request.company_id)
 
-        # 分析エンジンの使用可能なメソッドを確認
-        # analysis/MarketAnalyzerにはtrack_market_trendsに相当するメソッドとして
-        # analyze_market_trendsがある場合があります。ここでは両方に対応できるようにしています
-        if hasattr(_analysis_engine, "track_market_trends"):
-            trends_method = _analysis_engine.track_market_trends
-        elif hasattr(_analysis_engine, "analyze_market_trends"):
-            trends_method = _analysis_engine.analyze_market_trends
-        else:
-            raise ValueError("市場トレンド分析メソッドが見つかりません")
+        market_analyzer = MarketAnalyzer() # Instantiate here for now
+
+        # Check for appropriate method in the analyzer
+        # Assuming analyze_market_trends is the primary method now
+        if not hasattr(market_analyzer, "analyze_market_trends"):
+             raise ValueError("市場トレンド分析メソッド (analyze_market_trends) が見つかりません")
+
+        trends_method = market_analyzer.analyze_market_trends # Assuming async
 
         # 市場トレンド分析を実行
-        keyword_data = {"keywords": request.keyword_list}
-        market_trends_results = trends_method(
-            keyword_data,
+        market_trends_results = await trends_method(
+            keyword_list=request.keyword_list, # Assuming method takes list directly
             date_range=request.date_range
         )
 
-        # Firestoreへの保存（コアモジュールを使用）
-        core_analyzer = CoreMarketAnalyzer()
-        analysis_id = await core_analyzer.save_market_trends_analysis(
-            request.company_id,
-            market_trends_results,
-            request.metadata
+        # 結果の保存 (MarketAnalyzerが担うと仮定)
+        analysis_id = await market_analyzer.save_analysis_result(
+            company_id=request.company_id,
+            analysis_type="market_trends",
+            result_data=market_trends_results,
+            metadata=request.metadata
         )
 
-        # レスポンスの作成
         return MarketAnalysisResponse(
             status="success",
             data={
@@ -236,16 +235,17 @@ async def analyze_market_trends(
         )
 
     except ValueError as e:
-        logger.error(f"市場トレンド分析の入力エラー: {str(e)}")
+        logger.error(f"市場トレンド分析の入力エラー: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"市場トレンド分析中にエラーが発生しました: {str(e)}")
+        logger.error(f"市場トレンド分析中にエラーが発生しました: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="市場トレンド分析の実行中にエラーが発生しました")
 
 @router.get("/analysis/{analysis_id}", response_model=MarketAnalysisResponse)
 async def get_market_analysis(
     analysis_id: str,
     current_user: User = Depends(get_current_active_user)
+    # market_analyzer: MarketAnalyzer = Depends(...)
 ):
     """
     保存された市場分析結果を取得する
@@ -253,29 +253,23 @@ async def get_market_analysis(
     保存された市場分析の結果をIDで検索します。
     """
     try:
-        # コアモジュールを使用して保存された分析結果を取得
-        core_analyzer = CoreMarketAnalyzer()
-        analysis_result = await core_analyzer.get_market_analysis(analysis_id)
+        market_analyzer = MarketAnalyzer() # Instantiate here for now
+
+        # 保存された結果を取得するメソッドが必要 (MarketAnalyzerが担うと仮定)
+        analysis_result = await market_analyzer.get_analysis_result(analysis_id)
 
         if not analysis_result:
-            raise HTTPException(status_code=404, detail="指定されたIDの分析結果が見つかりません")
+            raise HTTPException(status_code=404, detail="指定された分析結果が見つかりません")
 
-        # 分析結果の企業IDを取得
-        company_id = analysis_result.get("company_id")
+        # アクセス権限チェック (取得した結果の company_id を使用)
+        await _check_market_access(current_user, analysis_result.get("company_id"))
 
-        # アクセス権限のチェック
-        await _check_market_access(current_user, company_id)
-
-        # レスポンスの作成
         return MarketAnalysisResponse(
-            status="success",
-            data=analysis_result,
-            analyzed_at=analysis_result.get("created_at", datetime.now()),
-            message="市場分析結果の取得が完了しました"
+             status="success",
+             data=analysis_result # analysis_result が適切な Dict 形式であると仮定
         )
-
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        raise e # Re-raise HTTPException
     except Exception as e:
-        logger.error(f"市場分析結果の取得中にエラーが発生しました: {str(e)}")
-        raise HTTPException(status_code=500, detail="市場分析結果の取得中にエラーが発生しました")
+        logger.error(f"市場分析結果取得エラー (ID: {analysis_id}): {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="分析結果の取得中にエラーが発生しました")

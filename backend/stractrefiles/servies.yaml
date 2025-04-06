@@ -1,0 +1,113 @@
+backend:
+  service: # サービスモジュール全体
+    description: 外部サービス（Firebase、BigQuery、GCPなど）との連携を担当するモジュール
+    responsibility: データベース層の上に構築され、ビジネスロジックを実装
+    key_concepts:
+      - データベース層: データの取得・保存方法を知る
+      - サービス層: どのデータが必要で、どのように処理するかを知る
+
+    components:
+      firestore: # Firestoreサービス関連
+        description: Firestoreを利用した高度なビジネスロジックを提供
+        modules:
+          - client: # Firestoreクライアント
+            classes:
+              FirestoreClient:
+                description: firebase_adminのFirestoreクライアントをラップし、データベースへの基本的なアクセスを提供
+                pattern: シングルトン
+                methods:
+                  - collection: コレクションへの参照を取得
+                  - document: ドキュメントへの参照を取得
+                  - batch: 書き込みバッチを作成
+                  - transaction: トランザクションを作成
+                  - get_document: ドキュメントを取得
+                  - query_documents: コレクションに対してクエリを実行
+
+              FirestoreService:
+                description: FirestoreClientをラップし、アプリケーション向けのサービスインターフェースを提供
+                methods:
+                  - save_document: ドキュメントを保存
+                  - get_document: ドキュメントを取得
+                  - query_documents: コレクションに対してクエリを実行
+                  - update_document: ドキュメントを更新
+                  - delete_document: ドキュメントを削除
+
+              MockFirestoreClient:
+                description: Firestoreクライアントのモック実装（テストや初期化失敗時のフォールバックとして使用）
+                classes:
+                  - MockCollectionReference: モックコレクション参照
+                  - MockDocumentReference: モックドキュメント参照
+                  - MockDocumentSnapshot: モックドキュメントスナップショット
+                  - MockBatch: モックバッチ
+
+            functions:
+              get_firestore_client: FirestoreClientのシングルトンインスタンスを取得
+
+            error_classes:
+              - StorageError: ストレージ操作に関連するエラー
+              - ValidationError: データバリデーションに関連するエラー
+
+      bigquery: # BigQueryサービス関連
+        description: BigQueryを利用したデータ分析機能を提供
+        modules:
+          - client: # BigQueryクライアント
+            classes:
+              BigQueryService:
+                description: BigQuery操作用のサービスクラス
+                methods:
+                  - fetch_data: クエリを非同期で実行しデータを取得
+                  - save_results: 分析結果を非同期で保存
+                  - _execute_query_with_retry: リトライ機能付きでクエリを実行
+                  - _save_data_with_retry: リトライ機能付きでデータを保存
+
+          - queries: # クエリビルダー
+            classes:
+              DataQueries:
+                description: データ取得用のクエリビルダー
+                static_methods:
+                  - build_analysis_query: 分析用のクエリを構築
+                  - build_aggregation_query: 集計クエリを構築
+
+          - schema: # スキーマ定義
+            classes:
+              AnalysisTableSchema:
+                description: 分析結果テーブルのスキーマ定義
+                fields:
+                  - name: テーブル名
+                  - fields: フィールド定義リスト
+                  - partition_field: パーティションフィールド
+
+            constants:
+              ANALYSIS_RESULTS_SCHEMA: 分析結果用のスキーマ
+
+        functions:
+          get_bigquery_service: BigQueryServiceのシングルトンインスタンスを取得
+          reset_service: サービスインスタンスをリセット（主にテスト時やインスタンスの再初期化が必要な場合に使用）
+
+      gemini: # Gemini AIサービス関連
+        modules:
+          - wrapper: # Gemini APIラッパー
+            classes:
+              GeminiWrapper:
+                description: Google Gemini APIのラッパークラス（AI生成コンテンツの取得やHTMLレポート生成機能を提供）
+                constants:
+                  API_URL: Gemini APIのエンドポイント
+                methods:
+                  - generate_text: テキスト生成リクエストを送信
+                  - generate_report_html: レポートのHTML生成
+                  - analyze_data: データの分析を実行（感情分析、トレンド分析、比較分析など）
+
+design_patterns:
+  - シングルトンパターン: BigQueryServiceとFirestoreClientで使用されており、アプリケーション全体で単一のインスタンスを共有
+  - ファサードパターン: 低レベルのAPIをラップして、より使いやすい高レベルのインターフェースを提供
+  - モックオブジェクトパターン: テストや例外処理時に実際のサービスの代わりに使用するモックオブジェクトを実装
+
+error_handling:
+  - 例外のログ記録: すべてのサービスで例外が発生した場合は適切にログを記録
+  - リトライ機構: 一時的なエラーに対してリトライを実装（特にBigQueryとGemini APIの操作）
+  - フォールバック: FirestoreClientの初期化に失敗した場合はモック実装を使用
+
+asynchronous_programming:
+  - asyncio: 非同期処理のために広く使用
+  - ThreadPoolExecutor: I/O集約型の操作を別スレッドで実行
+  - リトライデコレータ: 非同期操作のリトライ処理

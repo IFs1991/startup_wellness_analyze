@@ -6,7 +6,7 @@ interface SurvivalPoint {
   probability: number;
 }
 
-interface SurvivalCurve {
+export interface SurvivalCurve {
   name: string;
   data: SurvivalPoint[];
   color: string;

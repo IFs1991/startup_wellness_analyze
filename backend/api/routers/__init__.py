@@ -18,6 +18,7 @@ from . import gemini_visualization
 from . import financial  # 財務分析ルーターを追加
 from . import market     # 市場分析ルーターを追加
 from . import team       # チーム分析ルーターを追加
+from . import companies  # 企業情報ルーターを追加
 
 # エクスポートするルーター一覧
 all_routers = [
@@ -30,7 +31,8 @@ all_routers = [
     # federated.router,  # 連合学習ルーターを追加 (一時的に無効化)
     financial.router,  # 財務分析ルーターを追加
     market.router,     # 市場分析ルーターを追加
-    team.router        # チーム分析ルーターを追加
+    team.router,       # チーム分析ルーターを追加
+    companies.router   # 企業情報ルーターを追加
 ]
 
 __all__ = [
@@ -44,5 +46,6 @@ __all__ = [
     "financial",  # 財務分析ルーターを追加
     "market",     # 市場分析ルーターを追加
     "team",       # チーム分析ルーターを追加
+    "companies",  # 企業情報ルーターを追加
     "all_routers"
 ]
