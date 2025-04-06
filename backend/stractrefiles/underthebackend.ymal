@@ -19,6 +19,28 @@ system:
     server: uvicorn
     runtime: Python 3.11
     environment: conda (startup_wellness_analyze)
+    modules_initialization:
+      core:
+        - auth_manager (AuthManager)
+        - data_preprocessor (DataPreprocessor)
+        - data_quality_checker (DataQualityChecker)
+        - wellness_calculator (WellnessScoreCalculator)
+        - subscription_manager (SubscriptionManager)
+      analysis:
+        - correlation_analyzer (CorrelationAnalyzer)
+        - cluster_analyzer (ClusterAnalyzer)
+        - time_series_analyzer (TimeSeriesAnalyzer)
+        - survival_analyzer (SurvivalAnalyzer)
+        - performance_predictor (PredictiveModelAnalyzer)
+        - startup_survival_analyzer (StartupSurvivabilityAnalyzer)
+        - pca_analyzer (PCAAnalyzer)
+        - text_miner (TextMiner)
+        - association_analyzer (AssociationAnalyzer)
+        - descriptive_stats_calculator (DescriptiveStatsCalculator)
+        - financial_analyzer (FinancialAnalyzer)
+        - market_analyzer (MarketAnalyzer)
+        - team_analyzer (TeamAnalyzer)
+        - bayesian_inference_analyzer (BayesianInferenceAnalyzer)
 
 # インフラストラクチャ
 infrastructure:
@@ -169,6 +191,14 @@ extension_modules:
     dependencies:
       - FirestoreClient
 
+  - name: BayesianInferenceAnalyzer
+    description: ベイズ推論を用いたROI予測分析
+    status: 利用可能
+    dependencies:
+      - FirestoreClient
+      - pymc
+      - arviz
+
 # データ入力
 data_input:
   - name: GoogleFormsConnector
@@ -210,6 +240,17 @@ background_tasks:
       - 分析タイプ別処理
       - 結果保存
       - モデル評価
+    analysis_types:
+      - wellness_score
+      - correlation
+      - cluster
+      - time_series
+      - survival
+      - startup_survival
+      - pca
+      - association
+      - text_mining
+      - bayesian_inference
 
 # 環境設定
 environments:
@@ -276,11 +317,15 @@ dependencies:
     - keras>=2.9.0
     - google-generativeai>=0.4.0
 
+  bayesian_inference:
+    - pymc==5.6.1  # マルコフ連鎖モンテカルロ法によるベイズ推論フレームワーク
+    - arviz==0.16.1 # ベイズ推論結果の可視化・分析ライブラリ
+    - causalimpact==0.2.6  # ベイズ構造時系列モデルを使用した因果推論
+
   time_series:
     - prophet==1.1.4
 
   causal_inference:
-    - causalimpact==0.2.6
     - dowhy
     - econml==0.14.1
 

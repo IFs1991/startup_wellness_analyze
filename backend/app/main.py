@@ -75,6 +75,7 @@ from analysis.calculate_descriptive_stats import DescriptiveStatsCalculator # co
 from analysis.FinancialAnalyzer import FinancialAnalyzer
 from analysis.MarketAnalyzer import MarketAnalyzer
 from analysis.Team_Analyzer import TeamAnalyzer
+from analysis.BayesianInferenceAnalyzer import BayesianInferenceAnalyzer
 
 # APIルーターのインポート
 from api.routers import all_routers
@@ -275,6 +276,15 @@ try:
         logger.error(f"DescriptiveStatsCalculator初期化エラー: {e}")
         descriptive_stats_calculator = None
 
+    # BayesianInferenceAnalyzerの初期化
+    try:
+        bayesian_inference_analyzer = BayesianInferenceAnalyzer(firestore_client=firestore_service)
+        bayesian_inference_analyzer_available = True
+    except Exception as e:
+        logger.error(f"BayesianInferenceAnalyzer初期化エラー: {e}")
+        bayesian_inference_analyzer = None
+        bayesian_inference_analyzer_available = False
+
     # TextMiner depends on API key
     if gemini_api_key:
         text_miner = TextMiner(db=firestore_service, gemini_api_key=gemini_api_key) # From analysis
@@ -416,6 +426,8 @@ async def process_analysis_data(
              analysis_results = await association_analyzer.find_rules(processed_data) # Assuming find_rules method
         elif analysis_type == "text_mining" and text_miner: # Added text mining
              analysis_results = await text_miner.analyze_dataframe(processed_data) # Assuming analyze_dataframe method
+        elif analysis_type == "bayesian_inference" and bayesian_inference_analyzer: # Added bayesian inference
+             analysis_results = await bayesian_inference_analyzer.analyze(processed_data)
         # Add other analysis types if needed (financial, market, team)
 
         result_data = {
