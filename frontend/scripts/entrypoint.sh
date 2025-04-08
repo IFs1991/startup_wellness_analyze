@@ -9,25 +9,25 @@ if [ "$DEBUG" = "true" ]; then
 fi
 
 # 環境変数のチェック
-if [ -z "$VITE_API_URL" ]; then
-  echo "警告: VITE_API_URL環境変数が設定されていません。デフォルト値を使用します。"
-  export VITE_API_URL="http://backend:8000/api"
+if [ -z "$NEXT_PUBLIC_API_URL" ]; then
+  echo "警告: NEXT_PUBLIC_API_URL環境変数が設定されていません。デフォルト値を使用します。"
+  export NEXT_PUBLIC_API_URL="http://backend:8000/api"
 fi
 
 # Firebase環境変数のチェック
-if [ -z "$VITE_FIREBASE_API_KEY" ] || [ -z "$VITE_FIREBASE_PROJECT_ID" ]; then
+if [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] || [ -z "$NEXT_PUBLIC_FIREBASE_PROJECT_ID" ]; then
   echo "注意: Firebase環境変数が設定されていない可能性があります。認証機能が正常に動作しない可能性があります。"
 fi
 
 # システム情報の表示
 echo "フロントエンドサーバー起動: $(date)"
-echo "- APIエンドポイント: $VITE_API_URL"
+echo "- APIエンドポイント: $NEXT_PUBLIC_API_URL"
 echo "- ホスト名: $(hostname)"
 
 # バックエンドのヘルスチェックをバックグラウンドで実行
 echo "バックエンドの接続確認をバックグラウンドで実行中..."
 (
-  BACKEND_URL=$(echo $VITE_API_URL | sed 's/\/api$/\/health/')
+  BACKEND_URL=$(echo $NEXT_PUBLIC_API_URL | sed 's/\/api$/\/health/')
   MAX_RETRIES=5
   RETRY_COUNT=0
   RETRY_DELAY=3
@@ -46,6 +46,6 @@ echo "バックエンドの接続確認をバックグラウンドで実行中..
   echo "警告: バックエンドに接続できません。APIリクエストはフォールバックレスポンスを返します。"
 ) &
 
-# Nginxサーバーを起動（メインプロセス）
-echo "Nginxサーバーを起動しています..."
-exec nginx -g "daemon off;"
+# Next.jsサーバーを起動（メインプロセス）
+echo "Next.jsサーバーを起動しています..."
+exec "$@"
