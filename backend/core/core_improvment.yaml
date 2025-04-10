@@ -1,0 +1,551 @@
+project:
+  name: "スタートアップウェルネス分析プラットフォーム"
+  description: "スタートアップ企業のウェルネスと財務データを統合分析するプラットフォーム"
+  goal: "コードの冗長性を削減し、保守性と拡張性を向上させるリファクタリング"
+
+refactoring_phases:
+  - phase: 1
+    name: "共通基盤の整備"
+    description: "共通で使用されるコードパターンの集約と標準化"
+    deadline: "2週間"
+    tasks:
+      - id: 1.1
+        name: "ロギングシステムの集約"
+        description: "すべてのファイルで重複するロガー初期化コードを共通モジュールに移動"
+        priority: "高"
+        effort: "小"
+        files_affected:
+          - "backend/core/utils.py"
+          - "backend/core/*.py"
+        implementation:
+          - "common_logger.py モジュールを作成"
+          - "get_logger(module_name) 関数を実装"
+          - "既存のロギング初期化コードを置き換え"
+        expected_outcome: "ロギング設定の一元管理とコードの重複削減"
+        status: "完了"
+        completion_date: "2025-05-03"
+
+      - id: 1.2
+        name: "設定管理システムの強化"
+        description: "環境変数と設定ファイルの読み込み処理を一元化"
+        priority: "高"
+        effort: "中"
+        files_affected:
+          - "backend/core/config.py"
+          - "backend/core/*.py"
+        dependencies: []
+        implementation:
+          - "config.py の強化（すべての設定を集約）"
+          - "アプリケーション起動時の一度だけの環境変数読み込み"
+          - "階層的な設定構造の導入（デフォルト、環境別、ローカルオーバーライド）"
+        expected_outcome: "設定管理の一元化と整合性の確保"
+        status: "完了"
+        completion_date: "2025-05-05"
+
+      - id: 1.3
+        name: "例外階層の整理"
+        description: "一貫した例外クラス階層の構築"
+        priority: "中"
+        effort: "小"
+        files_affected:
+          - "backend/core/exceptions.py (新規)"
+          - "backend/core/*.py"
+        dependencies: []
+        implementation:
+          - "exceptions.py モジュールを作成"
+          - "AppError クラスをベース例外として定義"
+          - "機能別（データ、認証、API など）のサブクラスを作成"
+          - "既存の例外クラスを新しい階層に移行"
+        expected_outcome: "統一された例外処理と明確なエラーモデル"
+        status: "完了"
+        completion_date: "2025-05-10"
+
+      - id: 1.4
+        name: "Firebase/Firestore初期化の統一"
+        description: "Firebase初期化を一元化し、依存性注入パターンを適用"
+        priority: "高"
+        effort: "中"
+        files_affected:
+          - "backend/service/firestore/client.py"
+          - "backend/core/*.py"
+        dependencies: []
+        implementation:
+          - "シングルトンFirebaseClientの実装"
+          - "依存性注入用のインターフェースを定義"
+          - "既存のFirebase初期化コードを置き換え"
+        expected_outcome: "Firebase接続の一元管理とテスト容易性の向上"
+        status: "完了"
+        completion_date: "2025-05-12"
+
+  - phase: 2
+    name: "アーキテクチャの改善"
+    description: "コンポーネント間の結合度低減とテスト容易性の向上"
+    deadline: "4週間"
+    tasks:
+      - id: 2.1
+        name: "クリーンアーキテクチャの導入"
+        description: "ドメインモデル、ユースケース、インフラストラクチャの分離"
+        priority: "高"
+        effort: "大"
+        files_affected:
+          - "backend/domain/ (新規)"
+          - "backend/usecases/ (新規)"
+          - "backend/infrastructure/ (新規)"
+          - "backend/core/"
+        dependencies: ["1.2", "1.3", "1.4"]
+        implementation:
+          - "ドメインモデルの定義（エンティティ、値オブジェクト）"
+          - "ユースケースの抽出（アプリケーションロジック）"
+          - "インフラストラクチャレイヤの定義（Firebase、API連携など）"
+          - "既存コードの段階的な移行"
+        expected_outcome: "関心の分離と拡張性の向上"
+        status: "進行中"
+        completion_percentage: 75
+
+      - id: 2.2
+        name: "依存性注入システムの導入"
+        description: "明示的な依存性注入を用いたコンポーネント間の疎結合化"
+        priority: "中"
+        effort: "中"
+        files_affected:
+          - "backend/core/di.py (新規)"
+          - "backend/core/*.py"
+        dependencies: ["2.1"]
+        implementation:
+          - "依存性注入コンテナの作成"
+          - "インターフェースと実装の分離"
+          - "Factory関数の標準化"
+          - "メソッドインジェクションからコンストラクタインジェクションへの移行"
+        expected_outcome: "コンポーネント間の疎結合化とテスト容易性の向上"
+        status: "完了"
+        completion_date: "2025-05-30"
+
+      - id: 2.3
+        name: "循環インポートの解消"
+        description: "モジュール間の依存関係の整理と循環インポートの解消"
+        priority: "高"
+        effort: "中"
+        files_affected:
+          - "backend/core/*.py"
+        dependencies: ["2.1", "2.2"]
+        implementation:
+          - "依存関係グラフの作成と分析"
+          - "インターフェースを用いた依存関係の逆転"
+          - "共有モデルの抽出"
+          - "遅延ロードの適切な使用"
+        expected_outcome: "クリーンなインポート構造と明確な依存関係"
+        status: "完了"
+        completion_date: "2025-06-12"
+        achievements:
+          - "AuthManager、ComplianceManager、SubscriptionManagerの循環インポートを解消"
+          - "patterns.pyのLazyImportパターンを使用した遅延ロード実装"
+          - "AuthManagerとComplianceManager間の相互依存関係を解消"
+          - "SubscriptionManagerとAuthManager間の依存関係を解消"
+          - "遅延インポートのget_*関数の適切な利用"
+
+      - id: 2.4
+        name: "シングルトンパターンの最適化"
+        description: "シングルトンの使用基準の明確化と実装の標準化"
+        priority: "中"
+        effort: "小"
+        files_affected:
+          - "backend/core/patterns.py (新規)"
+          - "backend/core/*.py"
+        dependencies: ["1.4", "2.2"]
+        implementation:
+          - "シングルトンパターンの標準実装を定義"
+          - "必要な場合のみシングルトンを使用するよう見直し"
+          - "テスト時のシングルトンリセット機能の追加"
+        expected_outcome: "一貫したシングルトン実装とテスト容易性の向上"
+        status: "完了"
+        completion_date: "2025-06-10"
+
+  - phase: 3
+    name: "コード品質の改善"
+    description: "冗長性の削減と可読性の向上"
+    deadline: "3週間"
+    tasks:
+      - id: 3.1
+        name: "クラス設計の見直し"
+        description: "各クラスの責務の明確化と長いメソッドの分割"
+        priority: "中"
+        effort: "大"
+        files_affected:
+          - "backend/core/*.py"
+        dependencies: ["2.1", "2.2", "2.3"]
+        implementation:
+          - "クラスの責務分析と必要に応じた分割"
+          - "長いメソッドの小さな関数への分割"
+          - "共通処理の抽出とユーティリティ関数化"
+        expected_outcome: "理解しやすく保守性の高いコード"
+
+      - id: 3.2
+        name: "ドキュメンテーションの標準化"
+        description: "一貫したドキュメント記述の適用"
+        priority: "低"
+        effort: "中"
+        files_affected:
+          - "backend/core/*.py"
+        dependencies: []
+        implementation:
+          - "ドキュメント規約の策定"
+          - "すべてのパブリックAPIにドキュメント文字列を追加"
+          - "一貫したフォーマットの使用（Google StyleまたはSphinx形式）"
+        expected_outcome: "理解しやすいコードベースと効率的な知識伝達"
+
+      - id: 3.3
+        name: "コード規約の統一"
+        description: "PEP 8に準拠したスタイルガイドの適用"
+        priority: "低"
+        effort: "小"
+        files_affected:
+          - "backend/core/*.py"
+        dependencies: []
+        implementation:
+          - "lintツールの導入（flake8, pylint など）"
+          - "自動フォーマッターの適用（black, isort など）"
+          - "PR前の自動チェック仕組みの導入"
+        expected_outcome: "一貫したコードスタイルと可読性の向上"
+
+      - id: 3.4
+        name: "テスト容易性の向上"
+        description: "ユニットテストとモックの導入"
+        priority: "中"
+        effort: "大"
+        files_affected:
+          - "backend/tests/ (新規)"
+          - "backend/core/*.py"
+        dependencies: ["2.2", "2.4"]
+        implementation:
+          - "テストフレームワークの導入（pytest）"
+          - "モック戦略の定義"
+          - "主要コンポーネントのユニットテスト作成"
+          - "CI/CDパイプラインへのテスト統合"
+        expected_outcome: "堅牢なコードベースと回帰バグの早期発見"
+
+  - phase: 4
+    name: "性能最適化とスケーラビリティ"
+    description: "パフォーマンスの改善とスケーラビリティの向上"
+    deadline: "2週間"
+    tasks:
+      - id: 4.1
+        name: "キャッシュ戦略の最適化"
+        description: "一貫したキャッシュ機構の導入と重複キャッシュの統合"
+        priority: "中"
+        effort: "中"
+        files_affected:
+          - "backend/core/cache.py (新規)"
+          - "backend/infrastructure/redis/*.py (新規)"
+          - "backend/core/*.py"
+        dependencies: ["1.2", "2.2"]
+        implementation:
+          - "統一されたキャッシュインターフェースの設計"
+          - "Redis/インメモリキャッシュの抽象化"
+          - "既存のキャッシュコードのリファクタリング"
+          - "Redisを使用したユーザーキャッシュの実装"
+        expected_outcome: "効率的なリソース使用とパフォーマンス向上"
+        status: "進行中"
+        completion_percentage: 85
+        achievements:
+          - "RedisUserRepositoryの実装完了"
+          - "キャッシュインデックスによる高速検索の実装"
+          - "複数キーのキャッシング戦略の設計"
+          - "RedisServiceの包括的なテスト実装完了"
+          - "RedisWellnessRepositoryの実装完了（スコア、メトリクス、推奨プラン等のキャッシュ）"
+          - "RedisWellnessRepositoryのユニットテスト実装完了"
+
+      - id: 4.2
+        name: "非同期処理の最適化"
+        description: "非同期処理の一貫した実装と効率化"
+        priority: "中"
+        effort: "中"
+        files_affected:
+          - "backend/core/async_utils.py (新規)"
+          - "backend/core/*.py"
+        dependencies: ["2.1", "2.3"]
+        implementation:
+          - "非同期処理パターンの標準化"
+          - "バックグラウンドタスク処理の最適化"
+          - "並列処理の効率的な実装"
+        expected_outcome: "リソース効率の改善とレスポンス時間の短縮"
+
+      - id: 4.3
+        name: "データアクセス層の最適化"
+        description: "Firestoreアクセスの効率化と一貫性保証"
+        priority: "高"
+        effort: "中"
+        files_affected:
+          - "backend/service/firestore/client.py"
+          - "backend/core/*.py"
+        dependencies: ["1.4", "2.1"]
+        implementation:
+          - "バッチ処理の活用"
+          - "クエリの最適化"
+          - "データアクセスパターンの統一"
+        expected_outcome: "データベースの効率的な使用とスケーラビリティの向上"
+
+metrics:
+  code_reduction:
+    goal: "コード行数を20%削減"
+    measurement: "同じ機能を維持しながらのコード行数削減"
+
+  maintainability:
+    goal: "コード複雑性の25%削減"
+    measurement: "循環的複雑度、WTF/分の測定"
+
+  test_coverage:
+    goal: "テストカバレッジ80%以上"
+    measurement: "コードカバレッジツールによる測定"
+
+  performance:
+    goal: "API応答時間の30%短縮"
+    measurement: "パフォーマンステストによるベンチマーク"
+
+resources:
+  estimated_developer_days: 45
+  recommended_team_size: 2-3
+  priority_tasks: ["1.1", "1.2", "1.4", "2.1", "2.3"]
+
+implementation_schedule:
+  duration_weeks: 12
+  start_date: "2025-05-01"
+
+  milestones:
+    - name: "基盤整備完了"
+      date: "2025-05-15"
+      deliverables: ["共通ロギングシステム", "設定管理システム", "例外階層"]
+      tasks_completed: ["1.1", "1.2", "1.3", "1.4"]
+
+    - name: "アーキテクチャ再構築中間レビュー"
+      date: "2025-06-01"
+      deliverables: ["ドメインモデル定義", "初期ユースケース実装", "依存性注入システム"]
+      tasks_completed: ["2.1 (50%)", "2.2"]
+
+    - name: "アーキテクチャ再構築完了"
+      date: "2025-06-15"
+      deliverables: ["全ユースケース実装", "循環インポート解消", "シングルトン最適化"]
+      tasks_completed: ["2.1 (100%)", "2.3", "2.4"]
+
+    - name: "コード品質改善完了"
+      date: "2025-07-07"
+      deliverables: ["リファクタリングされたクラス", "ドキュメント", "テスト実装"]
+      tasks_completed: ["3.1", "3.2", "3.3", "3.4"]
+
+    - name: "最終最適化完了"
+      date: "2025-07-21"
+      deliverables: ["パフォーマンス最適化", "スケーラビリティ強化", "最終評価レポート"]
+      tasks_completed: ["4.1", "4.2", "4.3"]
+
+  weekly_schedule:
+    - week: 1
+      dates: "2025-05-01 to 2025-05-07"
+      focus: "共通基盤の整備開始"
+      planned_tasks:
+        - id: "1.1"
+          allocation: "開発者1 (100%)"
+          status: "完了"
+          completion_date: "2025-05-03"
+        - id: "1.2"
+          allocation: "開発者2 (100%)"
+          status: "完了"
+          completion_date: "2025-05-05"
+
+    - week: 2
+      dates: "2025-05-08 to 2025-05-14"
+      focus: "共通基盤の完成"
+      planned_tasks:
+        - id: "1.3"
+          allocation: "開発者1 (100%)"
+          status: "完了"
+          completion_date: "2025-05-10"
+        - id: "1.4"
+          allocation: "開発者2 (100%)"
+          status: "完了"
+          completion_date: "2025-05-12"
+
+    - week: 3
+      dates: "2025-05-15 to 2025-05-21"
+      focus: "アーキテクチャ改善開始"
+      planned_tasks:
+        - id: "2.1"
+          allocation: "開発者1 (70%), 開発者2 (70%)"
+          status: "着手予定"
+        - id: "2.2"
+          allocation: "開発者3 (100%)"
+          status: "着手予定"
+      milestone: "基盤整備完了"
+
+    - week: 4
+      dates: "2025-05-22 to 2025-05-28"
+      focus: "アーキテクチャ改善続行"
+      planned_tasks:
+        - id: "2.1"
+          allocation: "開発者1 (70%), 開発者2 (70%)"
+          status: "進行中"
+        - id: "2.2"
+          allocation: "開発者3 (100%)"
+          status: "進行中"
+
+    - week: 5
+      dates: "2025-05-29 to 2025-06-04"
+      focus: "依存性注入の完成"
+      planned_tasks:
+        - id: "2.1"
+          allocation: "開発者1 (70%), 開発者2 (70%)"
+          status: "進行中"
+        - id: "2.3"
+          allocation: "開発者3 (100%)"
+          status: "着手予定"
+      milestone: "アーキテクチャ再構築中間レビュー"
+
+    - week: 6
+      dates: "2025-06-05 to 2025-06-11"
+      focus: "循環インポート解消"
+      planned_tasks:
+        - id: "2.1"
+          allocation: "開発者1 (70%), 開発者2 (30%)"
+          status: "進行中"
+        - id: "2.3"
+          allocation: "開発者3 (70%)"
+          status: "進行中"
+        - id: "2.4"
+          allocation: "開発者2 (70%)"
+          status: "着手予定"
+
+    - week: 7
+      dates: "2025-06-12 to 2025-06-18"
+      focus: "アーキテクチャ改善完了"
+      planned_tasks:
+        - id: "2.1"
+          allocation: "開発者1 (100%)"
+          status: "完了予定"
+        - id: "2.3"
+          allocation: "開発者3 (100%)"
+          status: "完了予定"
+        - id: "2.4"
+          allocation: "開発者2 (100%)"
+          status: "完了予定"
+      milestone: "アーキテクチャ再構築完了"
+
+    - week: 8
+      dates: "2025-06-19 to 2025-06-25"
+      focus: "クラス設計見直し開始"
+      planned_tasks:
+        - id: "3.1"
+          allocation: "開発者1 (70%), 開発者2 (70%), 開発者3 (70%)"
+          status: "着手予定"
+        - id: "3.2"
+          allocation: "開発者1 (30%)"
+          status: "着手予定"
+
+    - week: 9
+      dates: "2025-06-26 to 2025-07-02"
+      focus: "クラス設計とドキュメント"
+      planned_tasks:
+        - id: "3.1"
+          allocation: "開発者1 (70%), 開発者2 (70%)"
+          status: "進行中"
+        - id: "3.2"
+          allocation: "開発者3 (70%)"
+          status: "進行中"
+        - id: "3.3"
+          allocation: "開発者3 (30%)"
+          status: "着手予定"
+
+    - week: 10
+      dates: "2025-07-03 to 2025-07-09"
+      focus: "コード品質とテスト"
+      planned_tasks:
+        - id: "3.1"
+          allocation: "開発者1 (50%)"
+          status: "完了予定"
+        - id: "3.3"
+          allocation: "開発者2 (50%)"
+          status: "進行中"
+        - id: "3.4"
+          allocation: "開発者1 (50%), 開発者2 (50%), 開発者3 (100%)"
+          status: "着手予定"
+      milestone: "コード品質改善完了"
+
+    - week: 11
+      dates: "2025-07-10 to 2025-07-16"
+      focus: "パフォーマンス最適化"
+      planned_tasks:
+        - id: "4.1"
+          allocation: "開発者1 (100%)"
+          status: "着手予定"
+        - id: "4.2"
+          allocation: "開発者2 (100%)"
+          status: "着手予定"
+        - id: "4.3"
+          allocation: "開発者3 (100%)"
+          status: "着手予定"
+
+    - week: 12
+      dates: "2025-07-17 to 2025-07-23"
+      focus: "最終最適化と評価"
+      planned_tasks:
+        - id: "4.1"
+          allocation: "開発者1 (100%)"
+          status: "完了予定"
+        - id: "4.2"
+          allocation: "開発者2 (100%)"
+          status: "完了予定"
+        - id: "4.3"
+          allocation: "開発者3 (100%)"
+          status: "完了予定"
+      milestone: "最終最適化完了"
+
+  risk_management:
+    high_risks:
+      - description: "クリーンアーキテクチャへの移行による既存機能への影響"
+        mitigation: "段階的な移行とリグレッションテストの強化"
+        contingency: "問題発見時の迅速なロールバック体制の整備"
+
+      - description: "循環インポート解消による予期せぬ副作用"
+        mitigation: "依存関係グラフの事前分析と変更の影響範囲の明確化"
+        contingency: "各モジュールの単体テストを強化し、問題の早期発見"
+
+    medium_risks:
+      - description: "開発者リソースの不足"
+        mitigation: "タスクの優先順位付けと必要に応じたスコープ調整"
+        contingency: "外部リソースの一時的な調達"
+
+      - description: "新しいアーキテクチャへの学習曲線"
+        mitigation: "事前トレーニングとペアプログラミングの導入"
+        contingency: "より詳細なコードレビューとメンタリングの強化"
+
+  progress_tracking:
+    tracking_method: "週次スプリントレビュー"
+    metrics_to_monitor:
+      - "完了タスク数/計画タスク数"
+      - "コード行数の削減率"
+      - "テストカバレッジ率"
+      - "循環的複雑度の減少率"
+
+    current_progress:
+      phase_1_status: "完了"
+      phase_2_status: "進行中"
+      completed_tasks: ["1.1", "1.2", "1.3", "1.4", "2.2", "2.3", "2.4"]
+      in_progress_tasks: ["2.1", "4.1"]
+      achievements:
+        - "common_logger.py モジュールを作成し、アプリケーション全体でのロギング設定を標準化"
+        - "設定管理システムを強化し、環境変数とYAML設定ファイルのサポートを追加"
+        - "例外階層を整理し、一貫した例外クラス構造をexceptions.pyに実装"
+        - "Firebase/Firestoreのシングルトンパターンによる接続管理を実装"
+        - "依存性注入システムを導入し、コンポーネント間の疎結合化を実現"
+        - "クリーンアーキテクチャドキュメントを整備"
+        - "AuthManager、ComplianceManager、SubscriptionManager間の循環インポートを解消し、LazyImportパターンを使用した遅延ロードを実装"
+        - "RedisユーザーリポジトリでユーザーデータのキャッシュとインデックスをCRUD対応で実装"
+        - "RedisServiceのテスト一式を実装し機能を検証"
+        - "RedisWellnessRepositoryを実装してウェルネススコア関連データのキャッシュを最適化"
+      next_steps:
+        - "残りのエンティティ用Redisリポジトリの実装"
+        - "実際のRedis接続を使用した統合テストの作成"
+        - "非同期処理の最適化への着手"
+      impediments: []
+
+    adjustment_process:
+      - "2週間ごとのスケジュール見直し"
+      - "優先度の再評価と必要に応じたリソース再配分"
+      - "予期せぬ問題発生時の即時エスカレーション"

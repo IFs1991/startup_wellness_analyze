@@ -4,9 +4,14 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-# FirestoreサービスクラスとAuthManagerをインポート (依存関係として必要)
+# Firestoreサービスクラスをインポート
 from service.firestore.client import FirestoreService
-from .auth_manager import AuthManager # ユーザーIDとFirestoreドキュメントを結びつけるため
+# 循環インポートを回避するための遅延インポート
+from .patterns import LazyImport
+
+# Auth Managerを遅延インポート
+AuthManager = LazyImport('core.auth_manager', 'AuthManager')
+get_auth_manager = LazyImport('core.auth_manager', 'get_auth_manager')
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +22,7 @@ class SubscriptionManagerError(Exception):
 class SubscriptionManager:
     """Pay.jpと連携してサブスクリプションを管理するクラス"""
 
-    def __init__(self, firestore_service: FirestoreService, auth_manager: AuthManager):
+    def __init__(self, firestore_service: FirestoreService, auth_manager: Any):
         """コンストラクタ
 
         Args:
@@ -435,7 +440,7 @@ _subscription_manager_instance = None
 
 def get_subscription_manager(
     firestore_service: Optional[FirestoreService] = None,
-    auth_manager: Optional[AuthManager] = None
+    auth_manager: Optional[Any] = None
 ) -> SubscriptionManager:
     """SubscriptionManagerのシングルトンインスタンスを取得"""
     global _subscription_manager_instance
@@ -445,15 +450,9 @@ def get_subscription_manager(
             firestore_service = FirestoreService()
             logger.warning("SubscriptionManager用にデフォルトのFirestoreServiceを使用します")
         if not auth_manager:
-             # ここでAuthManagerのインスタンスを取得する必要がある
-             # main.pyなどで初期化されたインスタンスを渡すのが理想
-             # from .auth_manager import get_auth_manager # 仮の関数
-             # auth_manager = get_auth_manager()
-             # ↓ 一旦モックで代替
-             from unittest.mock import MagicMock
-             auth_manager = MagicMock()
-             logger.warning("SubscriptionManager用にモックのAuthManagerを使用します")
-
+             # 遅延インポートしたget_auth_managerを使用してAuthManagerを取得
+             auth_manager = get_auth_manager()
+             logger.info("SubscriptionManager用にAuthManagerを取得しました")
 
         try:
             _subscription_manager_instance = SubscriptionManager(firestore_service, auth_manager)

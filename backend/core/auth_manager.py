@@ -30,9 +30,17 @@ import base64
 import secrets
 import redis
 from redis.exceptions import RedisError
-from core.compliance_manager import get_compliance_manager, ComplianceEvent, ComplianceEventType
+# 循環インポートを避けるために遅延インポートを使用
+from .patterns import LazyImport, Singleton
+from .common_logger import get_logger
 from dotenv import load_dotenv
 from database.connection import DatabaseManager, get_db
+
+# compliance_managerを遅延インポート
+ComplianceManager = LazyImport('core.compliance_manager', 'ComplianceManager')
+ComplianceEvent = LazyImport('core.compliance_manager', 'ComplianceEvent')
+ComplianceEventType = LazyImport('core.compliance_manager', 'ComplianceEventType')
+get_compliance_manager = LazyImport('core.compliance_manager', 'get_compliance_manager')
 
 # 環境変数を読み込み
 if os.getenv("ENVIRONMENT") != "production":
@@ -60,7 +68,7 @@ from .auth_metrics import AuthMetricsCollector
 from .security_config import get_secret_key
 
 # ロガーの設定
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Argon2パスワードハッシュ化の設定
 # 以下のパラメータが推奨されています:
@@ -134,101 +142,88 @@ class TOTPSetup(BaseModel):
     qr_code: str
     uri: str
 
+@Singleton
 class AuthManager:
     """
-    ユーザー認証を管理するためのクラス。
-    従来のパスワードベース認証とFirebase認証の両方をサポートします。
+    ユーザー認証を管理するクラス。シングルトンパターンで実装されています。
+    Firebase AuthenticationとCloud Firestoreを使用します。
     """
-    _instance = None
-    _firestore_client = None
-    _secret_key = None
-    _redis_client = None
+    def __init__(self):
+        """
+        AuthManagerを初期化します。FirebaseとFirestoreクライアントを初期化します。
+        """
+        self.logger = get_logger(__name__)
+        self.initialized = False
+        self.firebase_app = None
+        self.db = None
+        self.ph = PasswordHasher()
+        self.mfa_enabled = os.getenv('MFA_ENABLED', 'false').lower() == 'true'
+        self.redis_client = None
+        self.compliance_manager = None
+        self._initialize_redis()
+        self._initialize_firebase()
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(AuthManager, cls).__new__(cls)
-            cls._instance._initialize()
-        return cls._instance
-
-    def _initialize(self):
-        """認証マネージャーの初期化"""
-        try:
-            self._initialize_firebase()
-            self._initialize_firestore()
-            self._initialize_redis()
-            self._secret_key = get_secret_key()
+    def get_compliance_manager(self):
+        """ComplianceManagerを遅延ロードして返す"""
+        if self.compliance_manager is None:
+            # 遅延インポートされたComplianceManagerのget_compliance_manager関数を使用
             self.compliance_manager = get_compliance_manager()
-            logger.info("AuthManagerが正常に初期化されました")
-        except Exception as e:
-            logger.error(f"AuthManagerの初期化中にエラーが発生しました: {str(e)}")
-            # 初期化エラーでもクラスは使用可能にする（必要に応じてメソッド内でチェック）
-
-    def _initialize_firebase(self):
-        """Firebase Admin SDKを初期化"""
-        try:
-            # すでに初期化されているか確認
-            get_app()
-            logger.info("Firebase Adminはすでに初期化されています")
-        except ValueError:
-            logger.info("Firebase Adminを初期化します")
-            # 環境変数からクレデンシャルパスを取得
-            cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-            # クレデンシャルファイルが存在するか確認
-            if cred_path and os.path.exists(cred_path):
-                logger.info(f"Firebase認証情報を読み込みます: {cred_path}")
-                cred = credentials.Certificate(cred_path)
-                initialize_app(cred)
-            else:
-                # 開発環境などではデフォルト認証情報を使用
-                logger.warning("Firebase認証情報が見つかりません。デフォルト認証情報を使用します。")
-                try:
-                    initialize_app()
-                except DefaultCredentialsError as e:
-                    logger.error(f"デフォルト認証情報の取得に失敗しました: {str(e)}")
-                    # 開発環境用のモック設定
-                    if os.environ.get("ENVIRONMENT") == "development":
-                        logger.warning("開発環境ではFirebase初期化エラーを無視します")
-                    else:
-                        raise
-
-    def _initialize_firestore(self):
-        """Firestoreクライアントの初期化"""
-        try:
-            self._firestore_client = firestore.Client()
-            logger.info("Firestoreクライアントが初期化されました")
-        except Exception as e:
-            logger.error(f"Firestoreクライアントの初期化中にエラーが発生しました: {str(e)}")
-            # 開発環境用のモック設定
-            if os.environ.get("ENVIRONMENT") == "development":
-                logger.warning("開発環境ではFirestore初期化エラーを無視します")
-            else:
-                raise
+            self.logger.info("ComplianceManagerを初期化しました")
+        return self.compliance_manager
 
     def _initialize_redis(self):
         """Redisクライアントの初期化"""
         try:
-            self._redis_client = redis.Redis(
+            self.redis_client = redis.Redis(
                 host=REDIS_HOST,
                 port=REDIS_PORT,
                 db=REDIS_DB,
                 password=REDIS_PASSWORD,
                 decode_responses=True
             )
-            self._redis_client.ping()  # 接続テスト
-            logger.info("Redisクライアントが初期化されました")
+            self.redis_client.ping()  # 接続テスト
+            self.logger.info("Redisクライアントが初期化されました")
         except RedisError as e:
-            logger.error(f"Redisクライアントの初期化中にエラーが発生しました: {str(e)}")
-            self._redis_client = None
+            self.logger.error(f"Redisクライアントの初期化中にエラーが発生しました: {str(e)}")
+            self.redis_client = None
             # 開発環境用のフォールバック
             if os.environ.get("ENVIRONMENT") == "development":
-                logger.warning("開発環境ではRedis初期化エラーを無視します")
+                self.logger.warning("開発環境ではRedis初期化エラーを無視します")
             else:
                 raise
 
+    def _initialize_firebase(self):
+        """Firebase Admin SDKを初期化"""
+        try:
+            # すでに初期化されているか確認
+            get_app()
+            self.logger.info("Firebase Adminはすでに初期化されています")
+        except ValueError:
+            self.logger.info("Firebase Adminを初期化します")
+            # 環境変数からクレデンシャルパスを取得
+            cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+            # クレデンシャルファイルが存在するか確認
+            if cred_path and os.path.exists(cred_path):
+                self.logger.info(f"Firebase認証情報を読み込みます: {cred_path}")
+                cred = credentials.Certificate(cred_path)
+                initialize_app(cred)
+            else:
+                # 開発環境などではデフォルト認証情報を使用
+                self.logger.warning("Firebase認証情報が見つかりません。デフォルト認証情報を使用します。")
+                try:
+                    initialize_app()
+                except DefaultCredentialsError as e:
+                    self.logger.error(f"デフォルト認証情報の取得に失敗しました: {str(e)}")
+                    # 開発環境用のモック設定
+                    if os.environ.get("ENVIRONMENT") == "development":
+                        self.logger.warning("開発環境ではFirebase初期化エラーを無視します")
+                    else:
+                        raise
+
     def _check_initialization(self):
         """初期化状態をチェックし、問題があれば例外を発生させる"""
-        if self._firestore_client is None:
+        if self.redis_client is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="認証サービスが正しく初期化されていません"
@@ -237,7 +232,7 @@ class AuthManager:
     def _get_firestore_client(self):
         """Firestoreクライアントを取得（初期化チェック付き）"""
         self._check_initialization()
-        return self._firestore_client
+        return self.db
 
     def _get_user_collection(self):
         """ユーザーコレクションへの参照を取得"""
@@ -304,9 +299,9 @@ class AuthManager:
             qr_code_data = f"data:image/png;base64,{qr_code_base64}"
 
             # シークレットを一時的に保存（Redisを使用）
-            if self._redis_client:
+            if self.redis_client:
                 # シークレットを一時的に保存（5分間有効）
-                self._redis_client.setex(
+                self.redis_client.setex(
                     f"mfa_setup:{user_id}",
                     300,  # 5分間有効
                     totp_secret
@@ -320,7 +315,7 @@ class AuthManager:
                 })
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.MFA_ENABLE,
                 user_id=user_id,
                 success=True,
@@ -336,7 +331,7 @@ class AuthManager:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"TOTP設定中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"TOTP設定中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="多要素認証の設定中にエラーが発生しました"
@@ -359,9 +354,9 @@ class AuthManager:
             # シークレットを取得
             totp_secret = None
 
-            if self._redis_client:
+            if self.redis_client:
                 # Redisからシークレットを取得
-                totp_secret = self._redis_client.get(f"mfa_setup:{user_id}")
+                totp_secret = self.redis_client.get(f"mfa_setup:{user_id}")
 
             if not totp_secret:
                 # Firestoreから取得を試みる
@@ -407,24 +402,24 @@ class AuthManager:
             })
 
             # 一時データを削除
-            if self._redis_client:
-                self._redis_client.delete(f"mfa_setup:{user_id}")
+            if self.redis_client:
+                self.redis_client.delete(f"mfa_setup:{user_id}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.MFA_ENABLE,
                 user_id=user_id,
                 success=True,
                 details={"type": "TOTP", "status": "setup_completed"}
             ))
 
-            logger.info(f"ユーザーのTOTP MFAが有効化されました: {user_id}")
+            self.logger.info(f"ユーザーのTOTP MFAが有効化されました: {user_id}")
             return True
 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"MFA設定検証中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"MFA設定検証中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="多要素認証の設定中にエラーが発生しました"
@@ -465,7 +460,7 @@ class AuthManager:
                 # TOTPコードを検証
                 totp_secret = user_data.get('mfa_secret')
                 if not totp_secret:
-                    logger.error(f"ユーザーのMFA設定が不完全です: {user_id}")
+                    self.logger.error(f"ユーザーのMFA設定が不完全です: {user_id}")
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="MFA設定が不完全です。管理者にお問い合わせください。"
@@ -474,50 +469,50 @@ class AuthManager:
                 totp = pyotp.TOTP(totp_secret)
                 if not totp.verify(code):
                     # 監査ログに記録
-                    logger.warning(f"MFA検証失敗: {user_id}")
+                    self.logger.warning(f"MFA検証失敗: {user_id}")
                     return False
 
                 return True
 
             elif mfa_type == MFAType.SMS.value:
                 # SMS認証コードを検証（Redisに保存されているコードと比較）
-                if not self._redis_client:
+                if not self.redis_client:
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="SMS認証サービスが利用できません"
                     )
 
-                stored_code = self._redis_client.get(f"sms_code:{user_id}")
+                stored_code = self.redis_client.get(f"sms_code:{user_id}")
                 if not stored_code or stored_code != code:
                     # 監査ログに記録
-                    logger.warning(f"SMS検証失敗: {user_id}")
+                    self.logger.warning(f"SMS検証失敗: {user_id}")
                     return False
 
                 # 使用済みコードを削除
-                self._redis_client.delete(f"sms_code:{user_id}")
+                self.redis_client.delete(f"sms_code:{user_id}")
                 return True
 
             elif mfa_type == MFAType.EMAIL.value:
                 # メール認証コードを検証（Redisに保存されているコードと比較）
-                if not self._redis_client:
+                if not self.redis_client:
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="メール認証サービスが利用できません"
                     )
 
-                stored_code = self._redis_client.get(f"email_code:{user_id}")
+                stored_code = self.redis_client.get(f"email_code:{user_id}")
                 if not stored_code or stored_code != code:
                     # 監査ログに記録
-                    logger.warning(f"メール検証失敗: {user_id}")
+                    self.logger.warning(f"メール検証失敗: {user_id}")
                     return False
 
                 # 使用済みコードを削除
-                self._redis_client.delete(f"email_code:{user_id}")
+                self.redis_client.delete(f"email_code:{user_id}")
                 return True
 
             else:
                 # 不明なMFAタイプ
-                logger.error(f"不明なMFAタイプ: {mfa_type}, ユーザー: {user_id}")
+                self.logger.error(f"不明なMFAタイプ: {mfa_type}, ユーザー: {user_id}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="MFA設定が無効です。管理者にお問い合わせください。"
@@ -526,7 +521,7 @@ class AuthManager:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"MFA検証中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"MFA検証中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="多要素認証の検証中にエラーが発生しました"
@@ -548,7 +543,7 @@ class AuthManager:
             # ユーザー情報を取得して適切なmfa_typeを取得
             user_doc = self._get_user_collection().document(user_id).get()
             if not user_doc.exists:
-                logger.warning(f"MFA無効化対象のユーザーが見つかりません: {user_id}")
+                self.logger.warning(f"MFA無効化対象のユーザーが見つかりません: {user_id}")
                 return False
 
             user_data = user_doc.to_dict()
@@ -562,7 +557,7 @@ class AuthManager:
             })
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.MFA_DISABLE,
                 user_id=user_id,
                 user_email=user_data.get('email', ''),  # user変数ではなくuser_dataから取得
@@ -570,11 +565,11 @@ class AuthManager:
                 details={"previous_type": previous_mfa_type}
             ))
 
-            logger.info(f"ユーザーのMFAが無効化されました: {user_id}")
+            self.logger.info(f"ユーザーのMFAが無効化されました: {user_id}")
             return True
 
         except Exception as e:
-            logger.error(f"MFA無効化中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"MFA無効化中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="多要素認証の無効化中にエラーが発生しました"
@@ -594,7 +589,7 @@ class AuthManager:
         self._check_initialization()
 
         try:
-            if not self._redis_client:
+            if not self.redis_client:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="SMS認証サービスが利用できません"
@@ -604,11 +599,11 @@ class AuthManager:
             code = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
 
             # Redisに一時的に保存（5分間有効）
-            self._redis_client.setex(f"sms_code:{user_id}", 300, code)
+            self.redis_client.setex(f"sms_code:{user_id}", 300, code)
 
             # ここでSMS送信サービスを統合（Twilio, SNS, etc.）
             # TODO: 実際のSMS送信コードを実装
-            logger.info(f"SMS認証コードが生成されました: {user_id}, コード: {code}")
+            self.logger.info(f"SMS認証コードが生成されました: {user_id}, コード: {code}")
 
             # 電話番号を更新
             self._get_user_collection().document(user_id).update({
@@ -620,7 +615,7 @@ class AuthManager:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"SMS認証コード送信中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"SMS認証コード送信中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="SMS認証コードの送信中にエラーが発生しました"
@@ -640,7 +635,7 @@ class AuthManager:
         self._check_initialization()
 
         try:
-            if not self._redis_client:
+            if not self.redis_client:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="メール認証サービスが利用できません"
@@ -650,18 +645,18 @@ class AuthManager:
             code = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
 
             # Redisに一時的に保存（5分間有効）
-            self._redis_client.setex(f"email_code:{user_id}", 300, code)
+            self.redis_client.setex(f"email_code:{user_id}", 300, code)
 
             # ここでメール送信サービスを統合
             # TODO: 実際のメール送信コードを実装
-            logger.info(f"メール認証コードが生成されました: {user_id}, コード: {code}")
+            self.logger.info(f"メール認証コードが生成されました: {user_id}, コード: {code}")
 
             return True
 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"メール認証コード送信中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"メール認証コード送信中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="メール認証コードの送信中にエラーが発生しました"
@@ -679,7 +674,7 @@ class AuthManager:
         Returns:
             str: ハッシュ化されたパスワード
         """
-        return ph.hash(password)
+        return self.ph.hash(password)
 
     async def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """
@@ -698,19 +693,19 @@ class AuthManager:
                 # 一時的にpasslibをインポートして古いハッシュを検証
                 from passlib.hash import bcrypt
                 is_valid = bcrypt.verify(plain_password, hashed_password)
-                logger.info("古いbcryptハッシュ形式を使用したパスワードを検証しました")
+                self.logger.info("古いbcryptハッシュ形式を使用したパスワードを検証しました")
                 return is_valid
             except ImportError:
-                logger.error("passlibがインストールされていないため、古いbcryptハッシュを検証できません")
+                self.logger.error("passlibがインストールされていないため、古いbcryptハッシュを検証できません")
                 return False
 
         # Argon2ハッシュの検証
         try:
-            return ph.verify(hashed_password, plain_password)
+            return self.ph.verify(hashed_password, plain_password)
         except VerifyMismatchError:
             return False
         except InvalidHash:
-            logger.warning(f"無効なパスワードハッシュ形式が検出されました")
+            self.logger.warning(f"無効なパスワードハッシュ形式が検出されました")
             return False
 
     async def password_needs_update(self, hashed_password: str) -> bool:
@@ -729,7 +724,7 @@ class AuthManager:
 
         # Argon2ハッシュだが、パラメータが古い場合
         try:
-            return ph.check_needs_rehash(hashed_password)
+            return self.ph.check_needs_rehash(hashed_password)
         except InvalidHash:
             return True
 
@@ -805,17 +800,17 @@ class AuthManager:
             self._get_user_collection().document(user_record.uid).set(user_data)
 
             # ユーザー作成ログ
-            logger.info(f"新規ユーザーを作成しました: {user_record.uid}, {email}, role={role.value}")
+            self.logger.info(f"新規ユーザーを作成しました: {user_record.uid}, {email}, role={role.value}")
 
             # メール検証リンクを送信（オプション）
             try:
                 auth.generate_email_verification_link(email)
-                logger.info(f"メール検証リンクを送信しました: {email}")
+                self.logger.info(f"メール検証リンクを送信しました: {email}")
             except Exception as e:
-                logger.warning(f"メール検証リンク送信中にエラーが発生しました: {str(e)}")
+                self.logger.warning(f"メール検証リンク送信中にエラーが発生しました: {str(e)}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.REGISTRATION,
                 user_id=user_record.uid,
                 user_email=email,
@@ -833,19 +828,19 @@ class AuthManager:
             )
 
         except auth.EmailAlreadyExistsError:
-            logger.warning(f"メールアドレスはすでに登録されています: {email}")
+            self.logger.warning(f"メールアドレスはすでに登録されています: {email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="このメールアドレスは既に登録されています"
             )
         except ValueError as e:
-            logger.error(f"ユーザー登録中にバリデーションエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー登録中にバリデーションエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"ユーザー登録に失敗しました: {str(e)}"
             )
         except Exception as e:
-            logger.error(f"ユーザー登録中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー登録中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="ユーザー登録中にエラーが発生しました。しばらく経ってからもう一度お試しください。"
@@ -883,7 +878,7 @@ class AuthManager:
 
             # ユーザーが無効化されているかチェック
             if user.disabled:
-                logger.warning(f"無効化されたユーザーがログインを試みました: {email}")
+                self.logger.warning(f"無効化されたユーザーがログインを試みました: {email}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="このアカウントは無効化されています",
@@ -896,7 +891,7 @@ class AuthManager:
             # ユーザーデータの取得と検証
             if not user_doc.exists:
                 # ユーザーデータがFirestoreに存在しない場合は作成
-                logger.warning(f"ユーザーデータがFirestoreに存在しません。作成します: {email}")
+                self.logger.warning(f"ユーザーデータがFirestoreに存在しません。作成します: {email}")
                 user_data = {
                     'email': email,
                     'display_name': user.display_name or email.split('@')[0],
@@ -933,7 +928,7 @@ class AuthManager:
                             'password_hash': new_hash,
                             'password_updated_at': datetime.now()
                         })
-                        logger.info(f"ユーザーのパスワードハッシュをArgon2形式に更新しました: {user.uid}")
+                        self.logger.info(f"ユーザーのパスワードハッシュをArgon2形式に更新しました: {user.uid}")
 
                 # 最終ログイン日時とログイン回数を更新
                 login_count = user_data.get('login_count', 0) + 1
@@ -944,7 +939,7 @@ class AuthManager:
 
                 # アカウントが無効化されているかチェック
                 if not user_data.get('is_active', True):
-                    logger.warning(f"無効化されたユーザーがログインを試みました: {email}")
+                    self.logger.warning(f"無効化されたユーザーがログインを試みました: {email}")
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="このアカウントは無効化されています",
@@ -973,10 +968,10 @@ class AuthManager:
                 phone_number=user_data.get('phone_number')
             )
 
-            logger.info(f"ユーザーが正常にログインしました: {email}, role={user_role.value}")
+            self.logger.info(f"ユーザーが正常にログインしました: {email}, role={user_role.value}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.LOGIN,
                 user_id=user_obj.id,
                 user_email=user_obj.email,
@@ -987,10 +982,10 @@ class AuthManager:
             return user_obj, scopes
 
         except auth.UserNotFoundError:
-            logger.warning(f"存在しないユーザーへのログイン試行: {email}")
+            self.logger.warning(f"存在しないユーザーへのログイン試行: {email}")
             raise auth_error
         except Exception as e:
-            logger.error(f"認証中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"認証中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="認証中にエラーが発生しました。しばらく経ってからもう一度お試しください。"
@@ -1013,8 +1008,14 @@ class AuthManager:
         Returns:
             str: JWTトークン
         """
-        if self._secret_key is None:
-            self._secret_key = get_secret_key()
+        if self.redis_client is None:
+            self.redis_client = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                db=REDIS_DB,
+                password=REDIS_PASSWORD,
+                decode_responses=True
+            )
 
         to_encode = data.copy()
 
@@ -1030,7 +1031,7 @@ class AuthManager:
         to_encode.update({"exp": expire})
 
         # JWTトークンを生成
-        encoded_jwt = jwt.encode(to_encode, self._secret_key, algorithm="HS256")
+        encoded_jwt = jwt.encode(to_encode, self.redis_client.get('JWT_SECRET'), algorithm="HS256")
         return encoded_jwt
 
     async def get_current_user(
@@ -1051,8 +1052,14 @@ class AuthManager:
         Raises:
             HTTPException: トークンが無効な場合
         """
-        if self._secret_key is None:
-            self._secret_key = get_secret_key()
+        if self.redis_client is None:
+            self.redis_client = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                db=REDIS_DB,
+                password=REDIS_PASSWORD,
+                decode_responses=True
+            )
 
         # スコープ情報を含めた認証エラーメッセージ
         authenticate_value = f"Bearer scope=\"{security_scopes.scope_str}\""
@@ -1064,12 +1071,12 @@ class AuthManager:
 
         try:
             # トークンのデコード
-            payload = jwt.decode(token, self._secret_key, algorithms=["HS256"])
+            payload = jwt.decode(token, self.redis_client.get('JWT_SECRET'), algorithms=["HS256"])
 
             # ユーザーIDを取得
             user_id: str = payload.get("sub")
             if user_id is None:
-                logger.warning("トークンにsubクレームがありません")
+                self.logger.warning("トークンにsubクレームがありません")
                 raise credentials_exception
 
             # トークンスコープを取得
@@ -1081,7 +1088,7 @@ class AuthManager:
             # スコープのチェック
             for scope in security_scopes.scopes:
                 if scope not in token_data.scopes:
-                    logger.warning(f"必要なスコープがありません: {scope}, ユーザー: {user_id}")
+                    self.logger.warning(f"必要なスコープがありません: {scope}, ユーザー: {user_id}")
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail=f"アクセス権限が不足しています: {scope}",
@@ -1091,12 +1098,12 @@ class AuthManager:
             # ユーザー情報を取得
             user = await self.get_user_by_id(user_id)
             if user is None:
-                logger.warning(f"トークンのユーザーが見つかりません: {user_id}")
+                self.logger.warning(f"トークンのユーザーが見つかりません: {user_id}")
                 raise credentials_exception
 
             # ユーザーが無効化されていないか確認
             if not user.is_active:
-                logger.warning(f"無効化されたユーザーのトークン: {user_id}")
+                self.logger.warning(f"無効化されたユーザーのトークン: {user_id}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="このアカウントは無効化されています",
@@ -1104,7 +1111,7 @@ class AuthManager:
                 )
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.LOGIN,
                 user_id=user.id,
                 user_email=user.email,
@@ -1115,13 +1122,13 @@ class AuthManager:
             return user
 
         except PyJWTError as e:
-            logger.warning(f"JWT検証エラー: {str(e)}")
+            self.logger.warning(f"JWT検証エラー: {str(e)}")
             raise credentials_exception
         except ValidationError:
-            logger.warning("トークンデータのバリデーションエラー")
+            self.logger.warning("トークンデータのバリデーションエラー")
             raise credentials_exception
         except Exception as e:
-            logger.error(f"ユーザー認証中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー認証中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="認証処理中にエラーが発生しました"
@@ -1144,7 +1151,7 @@ class AuthManager:
             # ユーザー情報を取得
             user_doc = self._get_user_collection().document(user_id).get()
             if not user_doc.exists:
-                logger.warning(f"パスワード更新対象のユーザーが見つかりません: {user_id}")
+                self.logger.warning(f"パスワード更新対象のユーザーが見つかりません: {user_id}")
                 return False
 
             user_data = user_doc.to_dict()
@@ -1163,12 +1170,12 @@ class AuthManager:
             try:
                 auth.update_user(user_id, password=new_password)
             except Exception as e:
-                logger.warning(f"Firebase Authパスワード更新エラー: {str(e)}")
+                self.logger.warning(f"Firebase Authパスワード更新エラー: {str(e)}")
 
-            logger.info(f"ユーザーのパスワードを更新しました: {user_id}")
+            self.logger.info(f"ユーザーのパスワードを更新しました: {user_id}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.PASSWORD_CHANGE,
                 user_id=user_id,
                 user_email=user_email,  # user変数ではなくuser_dataから取得したemailを使用
@@ -1178,7 +1185,7 @@ class AuthManager:
             return True
 
         except Exception as e:
-            logger.error(f"パスワード更新中にエラーが発生しました: {str(e)}")
+            self.logger.error(f"パスワード更新中にエラーが発生しました: {str(e)}")
             return False
 
     async def reset_password(self, email: str) -> bool:
@@ -1199,13 +1206,13 @@ class AuthManager:
         try:
             # Firebase Auth でパスワードリセットメールを送信
             reset_link = auth.generate_password_reset_link(email)
-            logger.info(f"パスワードリセットリンクを送信しました: {email}")
+            self.logger.info(f"パスワードリセットリンクを送信しました: {email}")
 
             # ここで実際のメール送信処理を行う場合（オプション）
             # send_email(email, "パスワードリセット", f"パスワードをリセットするには以下のリンクをクリックしてください: {reset_link}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.PASSWORD_RESET,
                 user_email=email,
                 success=True,
@@ -1215,10 +1222,10 @@ class AuthManager:
             return True
         except auth.UserNotFoundError:
             # セキュリティ上、ユーザーが存在しない場合でもエラーは返さない
-            logger.info(f"存在しないユーザーへのパスワードリセット要求: {email}")
+            self.logger.info(f"存在しないユーザーへのパスワードリセット要求: {email}")
             return True
         except Exception as e:
-            logger.error(f"パスワードリセットリンク送信中にエラーが発生しました: {str(e)}")
+            self.logger.error(f"パスワードリセットリンク送信中にエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="パスワードリセットリンクの送信中にエラーが発生しました。しばらく経ってからもう一度お試しください。"
@@ -1244,7 +1251,7 @@ class AuthManager:
             user_doc = self._get_user_collection().document(user_id).get()
 
             if not user_doc.exists:
-                logger.warning(f"ユーザーのFirestoreデータが見つかりません: {user_id}")
+                self.logger.warning(f"ユーザーのFirestoreデータが見つかりません: {user_id}")
                 return None
 
             # ユーザーモデルを構築
@@ -1269,10 +1276,10 @@ class AuthManager:
             )
 
         except auth.UserNotFoundError:
-            logger.warning(f"ユーザーが見つかりません: {user_id}")
+            self.logger.warning(f"ユーザーが見つかりません: {user_id}")
             return None
         except Exception as e:
-            logger.error(f"ユーザー情報取得中にエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー情報取得中にエラーが発生しました: {str(e)}")
             return None
 
     async def update_user(
@@ -1341,25 +1348,25 @@ class AuthManager:
             if firestore_update:
                 self._get_user_collection().document(user_id).update(firestore_update)
 
-            logger.info(f"ユーザー情報を更新しました: {user_id}")
+            self.logger.info(f"ユーザー情報を更新しました: {user_id}")
 
             # 更新後のユーザー情報を取得して返す
             return await self.get_user_by_id(user_id)
 
         except auth.UserNotFoundError:
-            logger.warning(f"更新対象のユーザーが見つかりません: {user_id}")
+            self.logger.warning(f"更新対象のユーザーが見つかりません: {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="ユーザーが見つかりません"
             )
         except ValueError as e:
-            logger.error(f"ユーザー更新中にバリデーションエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー更新中にバリデーションエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"ユーザー更新に失敗しました: {str(e)}"
             )
         except Exception as e:
-            logger.error(f"ユーザー情報更新中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー情報更新中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="ユーザー情報の更新中にエラーが発生しました。しばらく経ってからもう一度お試しください。"
@@ -1387,10 +1394,10 @@ class AuthManager:
             # Firestoreからユーザー情報を削除
             self._get_user_collection().document(user_id).delete()
 
-            logger.info(f"ユーザーを削除しました: {user_id}")
+            self.logger.info(f"ユーザーを削除しました: {user_id}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.ADMIN_ACTION,
                 user_id="system",
                 affected_user_id=user_id,
@@ -1402,10 +1409,10 @@ class AuthManager:
 
         except auth.UserNotFoundError:
             # すでに削除されている場合は成功扱い
-            logger.warning(f"削除対象のユーザーが見つかりません: {user_id}")
+            self.logger.warning(f"削除対象のユーザーが見つかりません: {user_id}")
             return True
         except Exception as e:
-            logger.error(f"ユーザー削除中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザー削除中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="ユーザーの削除中にエラーが発生しました。しばらく経ってからもう一度お試しください。"
@@ -1435,10 +1442,10 @@ class AuthManager:
                 'last_logout': datetime.now()
             })
 
-            logger.info(f"ユーザートークンを無効化しました: {user_id}")
+            self.logger.info(f"ユーザートークンを無効化しました: {user_id}")
 
             # コンプライアンスログに記録
-            await self.compliance_manager.log_event(ComplianceEvent(
+            await self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.LOGOUT,
                 user_id=user_id,
                 success=True
@@ -1446,13 +1453,13 @@ class AuthManager:
 
             return True
         except auth.UserNotFoundError:
-            logger.warning(f"トークン無効化対象のユーザーが見つかりません: {user_id}")
+            self.logger.warning(f"トークン無効化対象のユーザーが見つかりません: {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="ユーザーが見つかりません"
             )
         except Exception as e:
-            logger.error(f"トークン無効化中に予期せぬエラーが発生しました: {str(e)}")
+            self.logger.error(f"トークン無効化中に予期せぬエラーが発生しました: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="トークンの無効化中にエラーが発生しました"
@@ -1472,14 +1479,14 @@ class AuthManager:
                 'updated_at': datetime.now()
             })
 
-            logger.info(f"ユーザーのロールを更新しました: {user_id}, 新しいロール: {new_role}")
+            self.logger.info(f"ユーザーのロールを更新しました: {user_id}, 新しいロール: {new_role}")
 
             # ユーザー情報を取得して適切なユーザーメールアドレスを使用
             user_info = user_data.to_dict()
             user_email = user_info.get('email', '')
 
             # コンプライアンスログに記録
-            self.compliance_manager.log_event(ComplianceEvent(
+            self.get_compliance_manager().log_event(ComplianceEvent(
                 event_type=ComplianceEventType.ADMIN_ACTION,
                 user_id="system",
                 affected_user_id=user_id,
@@ -1491,7 +1498,7 @@ class AuthManager:
 
             return True
         except Exception as e:
-            logger.error(f"ユーザーロール更新中にエラーが発生しました: {str(e)}")
+            self.logger.error(f"ユーザーロール更新中にエラーが発生しました: {str(e)}")
             return False
 
     def _verify_user_credentials(self, user_id: str, password: str) -> Optional[Dict[str, Any]]:
@@ -1506,7 +1513,7 @@ class AuthManager:
         user_email = user_info.get('email', '')
 
         # コンプライアンスログに記録するときに正しい情報を使用
-        self.compliance_manager.log_event(ComplianceEvent(
+        self.get_compliance_manager().log_event(ComplianceEvent(
             event_type=ComplianceEventType.PASSWORD_CHANGE,
             user_id=user_id,
             user_email=user_email, # 修正: userではなくuser_infoからemailを取得

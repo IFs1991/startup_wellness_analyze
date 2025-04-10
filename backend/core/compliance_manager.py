@@ -18,8 +18,14 @@ import redis
 from fastapi import Request, HTTPException, status
 from pydantic import BaseModel, Field, validator
 
+from .common_logger import get_logger
+from .patterns import Singleton, LazyImport
+
+# 循環インポートを回避するための遅延インポート
+AuthManager = LazyImport('core.auth_manager', 'AuthManager')
+
 # ロギングの設定
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Redisの設定
 REDIS_HOST = os.environ.get("REDIS_HOST", "startup-wellness-redis")
@@ -90,24 +96,12 @@ class RetentionPolicy(BaseModel):
     user_data_retention_days: int = 730
     inactive_account_deletion_days: int = 730
 
+@Singleton
 class ComplianceManager:
     """認証関連のコンプライアンス管理を行うクラス"""
-    _instance = None
-
-    def __new__(cls):
-        """シングルトンパターンの実装"""
-        if cls._instance is None:
-            cls._instance = super(ComplianceManager, cls).__new__(cls)
-            cls._instance.initialized = False
-        return cls._instance
-
     def __init__(self):
         """初期化メソッド"""
-        if self.initialized:
-            return
-
         self.redis_client = None
-        self.initialized = False
 
         # ポリシー設定
         self.password_policy = PasswordPolicy()
@@ -127,9 +121,9 @@ class ComplianceManager:
         # クライアントIPの地理情報キャッシュ
         self.geo_cache = {}
 
-        # 初期化フラグを設定
-        self.initialized = True
+        # Redisクライアントを初期化
         self._init_redis()
+        logger.info("ComplianceManagerが初期化されました")
 
     def _init_redis(self):
         """Redisクライアントの初期化"""
