@@ -1,13 +1,29 @@
 """
-サブスクリプション関連のモデル
+データモデルパッケージ
+異なるデータベースバックエンド間で共通のデータモデルを提供します。
 """
 from .subscription import SubscriptionModel, SubscriptionPlan
+from .base import BaseEntity, ModelType
+from .entities import (
+    UserEntity,
+    StartupEntity,
+    VASDataEntity,
+    FinancialDataEntity,
+    NoteEntity
+)
+from .adapters import (
+    ModelAdapter,
+    FirestoreAdapter,
+    SQLAdapter,
+    Neo4jAdapter,
+    get_adapter_for_model_type
+)
 from pydantic import BaseModel, EmailStr, Field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 class UserModel(BaseModel):
-    """ユーザーモデル"""
+    """ユーザーモデル (レガシー - 非推奨)"""
     id: str = Field(..., description="ユーザーID")
     email: EmailStr = Field(..., description="メールアドレス")
     display_name: Optional[str] = Field(None, description="表示名")
@@ -35,4 +51,27 @@ class UserModel(BaseModel):
             }
         }
 
-__all__ = ["SubscriptionModel", "SubscriptionPlan", "UserModel"]
+__all__ = [
+    # 基底クラス
+    "BaseEntity",
+    "ModelType",
+
+    # エンティティモデル
+    "UserEntity",
+    "StartupEntity",
+    "VASDataEntity",
+    "FinancialDataEntity",
+    "NoteEntity",
+
+    # アダプタークラス
+    "ModelAdapter",
+    "FirestoreAdapter",
+    "SQLAdapter",
+    "Neo4jAdapter",
+    "get_adapter_for_model_type",
+
+    # レガシーモデル (非推奨)
+    "SubscriptionModel",
+    "SubscriptionPlan",
+    "UserModel"
+]

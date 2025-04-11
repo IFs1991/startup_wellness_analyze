@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 データベース接続管理モジュール
-FirestoreとPostgreSQLのハイブリッド運用を実現するための機能を提供します。
+複数のデータベースバックエンドを統一的に扱うための機能を提供します。
 """
 import os
 from enum import Enum
-from typing import Any, Dict, Optional, Union, Generator, List
+from typing import Any, Dict, Optional, Union, Generator, List, Type, TypeVar, Callable
 from contextlib import contextmanager
 import logging
 # Firebase/Firestore
@@ -15,179 +15,131 @@ import firebase_admin
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from neo4j import GraphDatabase, Driver, Session as Neo4jSession
 
-# データベース設定をインポート
-try:
-    from config.database_config import current_database_config
-except ImportError:
-    # デフォルト設定を使用
-    current_database_config = {
-        'firestore': {
-            'use_emulator': os.getenv('USE_FIRESTORE_EMULATOR', 'false').lower() == 'true',
-            'emulator_host': os.getenv('FIRESTORE_EMULATOR_HOST', 'localhost:8080'),
-            'project_id': os.getenv('FIRESTORE_PROJECT_ID', 'startup-wellness-dev')
-        },
-        'postgresql': {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': int(os.getenv('DB_PORT', 5432)),
-            'user': os.getenv('DB_USER', 'postgres'),
-            'password': os.getenv('DB_PASSWORD', 'postgres'),
-            'database': os.getenv('DB_NAME', 'startup_wellness'),
-            'ssl_mode': os.getenv('DB_SSL_MODE', 'prefer')
-        }
-    }
+from .repository import DataCategory
+from .models.base import BaseEntity, ModelType
+from .config import (
+    DatabaseType,
+    get_db_config,
+    get_db_type_for_category,
+    DataCategory as ConfigDataCategory
+)
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-class DatabaseType(Enum):
-    """データベースタイプを定義する列挙型"""
-    NOSQL = "firestore"  # Firestore (NoSQL)
-    SQL = "postgresql"   # PostgreSQL (リレーショナル)
+# SQLAlchemyのベースクラス
+Base = declarative_base()
 
-class DataCategory(Enum):
-    """データカテゴリを定義する列挙型"""
-    # 構造化データ (PostgreSQL推奨)
-    STRUCTURED = "structured"             # 構造化データ全般
-    TRANSACTIONAL = "transactional"       # トランザクション要件の高いデータ
-    USER_MASTER = "user_master"           # ユーザーマスタ
-    COMPANY_MASTER = "company_master"     # 企業マスタ
-    EMPLOYEE_MASTER = "employee_master"   # 従業員マスタ
-    FINANCIAL = "financial"               # 損益計算書データ
-    BILLING = "billing"                   # 請求情報
-    AUDIT_LOG = "audit_log"               # 監査ログ
-    # スケーラブルなデータ (Firestore推奨)
-    REALTIME = "realtime"                 # リアルタイムデータ
-    SCALABLE = "scalable"                 # スケーラブルなデータ
-    CHAT = "chat"                         # チャットメッセージ
-    ANALYTICS_CACHE = "analytics_cache"   # 分析結果のキャッシュ
-    USER_SESSION = "user_session"         # ユーザーセッション情報
-    SURVEY = "survey"                     # アンケート回答データ
-    TREATMENT = "treatment"               # 施術記録
-    REPORT = "report"                     # 分析レポート
+# 型変数
+T = TypeVar('T', bound=BaseEntity)
 
-class DatabaseManager:
+class Database:
     """
-    ハイブリッドデータベース管理クラス
-    FirestoreとPostgreSQLを適切に使い分けるための機能を提供します。
-    データの種類に応じて最適なデータベースを自動選択します。
+    統合データベース管理クラス
+
+    複数のデータベースバックエンドを統一的に扱うための機能を提供します。
     """
     _instance = None
     _firestore_client = None
     _sql_engine = None
-    _sql_session = None
+    _sql_session_factory = None
+    _neo4j_driver = None
+    _initialized = False
 
     def __new__(cls):
         """シングルトンパターンの実装"""
         if cls._instance is None:
-            cls._instance = super(DatabaseManager, cls).__new__(cls)
-            cls._initialize_databases()
+            cls._instance = super(Database, cls).__new__(cls)
+            if not cls._initialized:
+                cls._initialize()
         return cls._instance
 
     @classmethod
-    def _initialize_databases(cls):
+    def _initialize(cls):
         """データベース接続の初期化"""
+        if cls._initialized:
+            return
+
         # Firestore初期化
-        try:
-            if not firebase_admin._apps:
-                # Firebase Adminが未初期化の場合は初期化
-                # 環境変数からクレデンシャル情報を取得
-                cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                # 相対パスを絶対パスに変換
-                if cred_path and not os.path.isabs(cred_path):
-                    # Dockerコンテナ内の絶対パスに変換
-                    cred_path = os.path.join('/app', cred_path) if os.path.exists('/app') else os.path.abspath(cred_path)
-                    logger.info(f"認証情報の絶対パス: {cred_path}")
+        if not firebase_admin._apps:
+            try:
+                firestore_config = get_db_config(DatabaseType.FIRESTORE)
+                additional_params = firestore_config.additional_params or {}
 
-                if cred_path and os.path.exists(cred_path):
-                    logger.info(f"Firebase認証情報ファイルが見つかりました: {cred_path}")
-                    # 認証情報を読み込み
-                    try:
-                        # JSONファイルの内容を確認
-                        with open(cred_path, 'r') as f:
-                            cred_content = f.read()
-                            logger.info(f"認証情報ファイルのサイズ: {len(cred_content)} バイト")
-                            import json
-                            try:
-                                cred_dict = json.loads(cred_content)
-                                required_keys = ["type", "project_id", "private_key_id", "private_key"]
-                                missing_keys = [key for key in required_keys if key not in cred_dict]
-                                if missing_keys:
-                                    logger.error(f"認証情報ファイルに必要なキーがありません: {missing_keys}")
-                                else:
-                                    logger.info("認証情報ファイルの形式は正常です")
-                                    cred = credentials.Certificate(cred_path)
-                                    initialize_app(cred)
-                            except json.JSONDecodeError as e:
-                                logger.error(f"認証情報ファイルのJSONパースエラー: {str(e)}")
-                    except Exception as e:
-                        logger.error(f"認証情報ファイルの読み込みエラー: {str(e)}")
-                        # 開発環境の場合はデフォルト認証情報を使用
-                        if os.getenv("ENVIRONMENT") == "development":
-                            logger.warning("開発環境では最低限の情報を使用してFirebaseを初期化します")
-                            try:
-                                initialize_app()
-                            except Exception as e2:
-                                logger.error(f"デフォルト認証情報でのFirebase初期化エラー: {str(e2)}")
-                # 設定から直接認証情報を取得
-                elif getattr(current_database_config, 'FIREBASE_ADMIN_CONFIG', None):
-                    logger.info("設定から直接Firebase認証情報を使用します")
-                    try:
-                        cred = credentials.Certificate(current_database_config.FIREBASE_ADMIN_CONFIG)
-                        initialize_app(cred)
-                    except Exception as e:
-                        logger.error(f"設定からの認証情報使用エラー: {str(e)}")
+                if os.getenv("FIRESTORE_EMULATOR_HOST"):
+                    # エミュレータが設定されている場合
+                    initialize_app(options={
+                        'projectId': additional_params.get("project_id", "startup-wellness-analyze"),
+                    })
+                elif "credentials_path" in additional_params and additional_params["credentials_path"]:
+                    # 認証情報ファイルを使用
+                    cred = credentials.Certificate(additional_params["credentials_path"])
+                    initialize_app(credential=cred)
                 else:
-                    # 環境変数から直接JSONを取得
-                    firebase_creds_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
-                    if firebase_creds_json:
-                        try:
-                            import json
-                            cred_dict = json.loads(firebase_creds_json)
-                            logger.info("環境変数からFirebase認証情報を読み込みました")
-                            cred = credentials.Certificate(cred_dict)
-                            initialize_app(cred)
-                        except Exception as e:
-                            logger.error(f"環境変数からのFirebase認証情報の読み込みに失敗: {str(e)}")
+                    # デフォルト認証情報を使用
+                    initialize_app()
 
-                    # 開発環境ではデフォルト認証を試みる
-                    elif os.getenv("ENVIRONMENT") == "development":
-                        logger.warning("開発環境ではデフォルト認証情報を使用します")
-                        try:
-                            initialize_app()
-                        except Exception as e:
-                            logger.error(f"Firebase初期化に失敗しました: {str(e)}")
-                            logger.warning("開発環境ではこのエラーを無視します。")
-                    else:
-                        logger.error("Firebase認証情報が見つかりません。アプリケーションは正しく動作しない可能性があります。")
+                cls._firestore_client = firestore.client()
+                logger.info("Firestoreクライアントの初期化に成功しました。")
+            except Exception as e:
+                logger.error(f"Firestore初期化エラー: {str(e)}")
+                cls._firestore_client = None
+                if os.getenv("ENVIRONMENT") != "development":
+                    raise
+        else:
             cls._firestore_client = firestore.client()
-            logger.info("Firestoreクライアントの取得に成功しました。")
-        except Exception as e:
-            logger.error(f"Firestore初期化エラー: {str(e)}")
-            cls._firestore_client = None
-            if os.getenv("ENVIRONMENT") != "development":
-                raise
 
         # PostgreSQL初期化
         try:
-            database_url = current_database_config.DATABASE_URL
-            cls._sql_engine = create_engine(database_url)
-            cls._sql_session = sessionmaker(autocommit=False, autoflush=False, bind=cls._sql_engine)
+            postgres_config = get_db_config(DatabaseType.POSTGRESQL)
+            database_url = f"postgresql://{postgres_config.username}:{postgres_config.password}@{postgres_config.host}:{postgres_config.port}/{postgres_config.database_name}"
+            cls._sql_engine = create_engine(
+                database_url,
+                pool_size=postgres_config.pool_size,
+                connect_args={
+                    "connect_timeout": postgres_config.connection_timeout,
+                    "sslmode": "require" if postgres_config.ssl_enabled else "disable"
+                }
+            )
+            cls._sql_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=cls._sql_engine)
             logger.info("PostgreSQLの初期化に成功しました。")
         except Exception as e:
             logger.error(f"PostgreSQL初期化エラー: {str(e)}")
             cls._sql_engine = None
-            cls._sql_session = None
+            cls._sql_session_factory = None
+
+        # Neo4j初期化
+        try:
+            neo4j_config = get_db_config(DatabaseType.NEO4J)
+            additional_params = neo4j_config.additional_params or {}
+
+            uri = f"neo4j://{neo4j_config.host}:{neo4j_config.port}"
+            cls._neo4j_driver = GraphDatabase.driver(
+                uri,
+                auth=(neo4j_config.username, neo4j_config.password),
+                encrypted=additional_params.get("encryption", True),
+                trust=additional_params.get("trust", "TRUST_SYSTEM_CA_SIGNED_CERTIFICATES"),
+                connection_timeout=neo4j_config.connection_timeout
+            )
+            logger.info("Neo4jの初期化に成功しました。")
+        except Exception as e:
+            logger.error(f"Neo4j初期化エラー: {str(e)}")
+            cls._neo4j_driver = None
+
+        cls._initialized = True
 
     @classmethod
     def get_firestore_client(cls) -> firestore.Client:
         """
         Firestoreクライアントを取得します
+
         Returns:
             firestore.Client: Firestoreクライアントインスタンス
         """
-        if cls._instance is None:
-            cls._instance = DatabaseManager()
+        if not cls._initialized:
+            cls._initialize()
         return cls._firestore_client
 
     @classmethod
@@ -195,15 +147,21 @@ class DatabaseManager:
     def get_sql_session(cls) -> Generator[Session, None, None]:
         """
         PostgreSQLセッションを取得します
+
         Yields:
             Session: SQLAlchemyセッションインスタンス
+
         Example:
-            with DatabaseManager.get_sql_session() as session:
+            with Database.get_sql_session() as session:
                 users = session.query(User).all()
         """
-        if cls._instance is None:
-            cls._instance = DatabaseManager()
-        session = cls._sql_session()
+        if not cls._initialized:
+            cls._initialize()
+
+        if cls._sql_session_factory is None:
+            raise ValueError("PostgreSQLセッションファクトリが初期化されていません")
+
+        session = cls._sql_session_factory()
         try:
             yield session
             session.commit()
@@ -215,174 +173,50 @@ class DatabaseManager:
             session.close()
 
     @classmethod
-    def get_db_by_type(cls, db_type: DatabaseType) -> Any:
+    def get_neo4j_driver(cls):
         """
-        指定されたタイプのデータベース接続を取得
-        Args:
-            db_type: データベースタイプ（NOSQL または SQL）
+        Neo4jドライバーを取得します
+
         Returns:
-            データベース接続オブジェクト
+            Driver: Neo4jドライバーインスタンス
         """
-        if cls._instance is None:
-            cls._instance = DatabaseManager()
-        if db_type == DatabaseType.NOSQL:
-            return cls._firestore_client
-        elif db_type == DatabaseType.SQL:
-            return cls._sql_session
-        else:
-            raise ValueError(f"不明なデータベースタイプ: {db_type}")
+        if not cls._initialized:
+            cls._initialize()
+        return cls._neo4j_driver
 
     @classmethod
-    def get_db_for_data_category(cls, category: DataCategory) -> Any:
+    def get_repository(cls, entity_class: Type[T], data_category: Optional[DataCategory] = None):
         """
-        データカテゴリに基づいて適切なDBを返す
+        エンティティに対応するリポジトリを取得します
+
         Args:
-            category: DataCategoryの列挙値
+            entity_class: エンティティクラス
+            data_category: データカテゴリ（オプション）
+
         Returns:
-            適切なデータベース接続
+            Repository: リポジトリインスタンス
         """
-        if cls._instance is None:
-            cls._instance = DatabaseManager()
-        # 構造化データはPostgreSQLを使用
-        sql_categories = [
-            DataCategory.STRUCTURED,
-            DataCategory.TRANSACTIONAL,
-            DataCategory.USER_MASTER,
-            DataCategory.COMPANY_MASTER,
-            DataCategory.EMPLOYEE_MASTER,
-            DataCategory.FINANCIAL,
-            DataCategory.BILLING,
-            DataCategory.AUDIT_LOG
-        ]
-        # リアルタイム/スケーラブルデータはFirestoreを使用
-        nosql_categories = [
-            DataCategory.REALTIME,
-            DataCategory.SCALABLE,
-            DataCategory.CHAT,
-            DataCategory.ANALYTICS_CACHE,
-            DataCategory.USER_SESSION,
-            DataCategory.SURVEY,
-            DataCategory.TREATMENT,
-            DataCategory.REPORT
-        ]
-        if category in sql_categories:
-            return cls.get_db_by_type(DatabaseType.SQL)
-        elif category in nosql_categories:
-            return cls.get_db_by_type(DatabaseType.NOSQL)
-        else:
-            # デフォルトはFirestore
-            return cls.get_db_by_type(DatabaseType.NOSQL)
+        from .repositories.factory import repository_factory
+        return repository_factory.get_repository(entity_class, data_category)
 
-    @classmethod
-    def get_collection_name(cls, category: DataCategory) -> str:
-        """
-        データカテゴリに対応するコレクション名を取得
-        Args:
-            category: DataCategoryの列挙値
-        Returns:
-            str: コレクション名
-        """
-        # カテゴリをコレクション名にマッピング
-        collection_map = {
-            DataCategory.USER_MASTER: current_database_config.FIRESTORE_COLLECTIONS["USERS"],
-            DataCategory.SURVEY: current_database_config.FIRESTORE_COLLECTIONS["CONSULTATIONS"],
-            DataCategory.TREATMENT: current_database_config.FIRESTORE_COLLECTIONS["TREATMENTS"],
-            DataCategory.ANALYTICS_CACHE: current_database_config.FIRESTORE_COLLECTIONS["ANALYTICS"],
-        }
-        return collection_map.get(category, category.value)
-
-# SQLAlchemyのベースクラス
-Base = declarative_base()
-
-# 外部から使用するためのヘルパー関数
+# 以下は利便性のための関数
 def get_firestore_client() -> firestore.Client:
-    """Firestoreクライアントを取得する簡易関数"""
-    return DatabaseManager.get_firestore_client()
+    """Firestoreクライアントを取得"""
+    return Database.get_firestore_client()
 
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
-    """PostgreSQLセッションを取得する簡易関数"""
-    with DatabaseManager.get_sql_session() as session:
+    """SQLセッションを取得"""
+    with Database.get_sql_session() as session:
         yield session
 
-def get_db_for_category(category: Union[str, DataCategory]) -> Any:
-    """
-    データカテゴリに基づいて適切なDBを返す簡易関数
-    Args:
-        category: カテゴリ名または DataCategory 列挙値
-    Returns:
-        適切なデータベース接続
-    """
-    if isinstance(category, str):
-        try:
-            category = DataCategory(category)
-        except ValueError:
-            # 不明なカテゴリの場合はデフォルトとしてFirestoreを使用
-            return get_firestore_client()
-    return DatabaseManager.get_db_for_data_category(category)
+def get_neo4j_driver():
+    """Neo4jドライバーを取得"""
+    return Database.get_neo4j_driver()
 
-# migration.pyで使用される関数を追加
-async def get_collection_data(collection_name: str, **kwargs) -> List[Dict[str, Any]]:
-    """
-    Firestoreコレクションからデータを取得する関数
-
-    Args:
-        collection_name: 取得するコレクション名
-        **kwargs: 追加のフィルタリング条件
-
-    Returns:
-        ドキュメントデータのリスト
-    """
-    # Firestoreクライアントを取得
-    db = get_firestore_client()
-    if not db:
-        logger.error(f"Firestoreクライアントを取得できませんでした")
-        return []
-
-    collection_ref = db.collection(collection_name)
-
-    # クエリ条件があれば適用
-    query = collection_ref
-    for key, value in kwargs.items():
-        query = query.where(key, '==', value)
-
-    # ドキュメントを取得
-    try:
-        docs = query.stream()
-        results = []
-        for doc in docs:
-            data = doc.to_dict()
-            # ドキュメントIDを追加
-            if 'id' not in data:
-                data['id'] = doc.id
-            results.append(data)
-        return results
-    except Exception as e:
-        logger.error(f"コレクション {collection_name} の取得中にエラーが発生しました: {e}")
-        return []
-
-def init_db():
-    """
-    全てのデータベースを初期化します。
-    アプリケーション起動時に呼び出されます。
-    """
-    # PostgresSQL初期化
-    try:
-        from .models_sql import Base as SQLModels
-        engine = DatabaseManager()._sql_engine
-        if engine:
-            SQLModels.metadata.create_all(bind=engine)
-            logger.info("SQLデータベースのスキーマが初期化されました")
-    except ImportError:
-        logger.warning("models_sqlモジュールが見つかりません。SQLテーブル初期化をスキップします。")
-    except Exception as e:
-        logger.error(f"SQLデータベース初期化エラー: {str(e)}")
-
-    # Firestore初期化 (必要に応じて追加のセットアップを行う)
-    client = DatabaseManager.get_firestore_client()
-    if client:
-        logger.info("Firestoreクライアントが初期化されました")
-    logger.info("データベース初期化完了")
+def get_repository(entity_class: Type[T], data_category: Optional[DataCategory] = None):
+    """エンティティに対応するリポジトリを取得"""
+    return Database.get_repository(entity_class, data_category)
 
 # FastAPIのDependsで使用するための関数
 def get_db():
@@ -394,12 +228,163 @@ def get_db():
         def read_items(db: Session = Depends(get_db)):
             return db.query(Item).all()
     """
-    db = DatabaseManager._sql_session()
+    with get_db_session() as session:
+        yield session
+
+# データベース初期化
+def init_db():
+    """
+    すべてのデータベースを初期化します。
+    アプリケーション起動時に呼び出されます。
+    """
+    # データベース接続を初期化
+    Database()
+
+    # PostgreSQL: テーブルスキーマの作成
     try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+        from . import models_sql
+        engine = Database._sql_engine
+        if engine:
+            Base.metadata.create_all(bind=engine)
+            logger.info("SQLデータベースのスキーマが初期化されました")
+    except ImportError:
+        logger.warning("models_sqlモジュールが見つかりません。SQLテーブル初期化をスキップします。")
+    except Exception as e:
+        logger.error(f"SQLデータベース初期化エラー: {str(e)}")
+
+    # Neo4j: インデックスの作成など（必要に応じて）
+    try:
+        driver = Database.get_neo4j_driver()
+        if driver:
+            with Neo4jService(driver).get_session() as session:
+                # インデックス作成などの初期化処理
+                pass
+            logger.info("Neo4jデータベースの初期化が完了しました")
+    except Exception as e:
+        logger.error(f"Neo4jデータベース初期化エラー: {str(e)}")
+
+    logger.info("データベース初期化完了")
+
+# Neo4jサービスクラス
+class Neo4jService:
+    """
+    Neo4jデータベースへのアクセスを提供するサービスクラス
+    アプリケーション固有のグラフデータベース操作を実装
+    """
+
+    def __init__(self, driver: Optional[Driver] = None):
+        """
+        Neo4jサービスを初期化
+
+        Args:
+            driver: Neo4jドライバー（Noneの場合はデフォルトを使用）
+        """
+        self.driver = driver or get_neo4j_driver()
+
+    @contextmanager
+    def get_session(self) -> Generator[Neo4jSession, None, None]:
+        """セッションを取得するコンテキストマネージャー"""
+        session = self.driver.session()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+        """
+        Cypherクエリを実行し結果を返す
+
+        Args:
+            query: 実行するCypherクエリ
+            params: クエリパラメータ
+
+        Returns:
+            クエリ実行結果
+        """
+        with self.get_session() as session:
+            return session.run(query, params or {})
+
+    def create_node(self, label: str, properties: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        新しいノードを作成
+
+        Args:
+            label: ノードのラベル
+            properties: ノードのプロパティ
+
+        Returns:
+            作成されたノードの情報
+        """
+        query = f"CREATE (n:{label} $props) RETURN n"
+        result = self.execute_query(query, {"props": properties})
+        return result.single()[0].as_dict()
+
+    def find_nodes(self, label: str, conditions: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        条件に一致するノードを検索
+
+        Args:
+            label: 検索対象ノードのラベル
+            conditions: 検索条件
+
+        Returns:
+            ノードのリスト
+        """
+        where_clause = ""
+        if conditions:
+            where_conditions = [f"n.{k} = ${k}" for k in conditions.keys()]
+            where_clause = f"WHERE {' AND '.join(where_conditions)}"
+
+        query = f"MATCH (n:{label}) {where_clause} RETURN n"
+        result = self.execute_query(query, conditions or {})
+
+        return [record["n"].as_dict() for record in result]
+
+    def create_relationship(
+        self,
+        from_label: str,
+        from_properties: Dict[str, Any],
+        to_label: str,
+        to_properties: Dict[str, Any],
+        relationship_type: str,
+        relationship_properties: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        2つのノード間にリレーションシップを作成
+
+        Args:
+            from_label: 開始ノードのラベル
+            from_properties: 開始ノードの識別プロパティ
+            to_label: 終了ノードのラベル
+            to_properties: 終了ノードの識別プロパティ
+            relationship_type: リレーションシップの種類
+            relationship_properties: リレーションシップのプロパティ
+
+        Returns:
+            作成されたリレーションシップの情報
+        """
+        # 開始ノードと終了ノードのマッチング条件を構築
+        from_match = " AND ".join([f"a.{k} = ${k}_from" for k in from_properties.keys()])
+        to_match = " AND ".join([f"b.{k} = ${k}_to" for k in to_properties.keys()])
+
+        # パラメータを構築
+        params = {}
+        for k, v in from_properties.items():
+            params[f"{k}_from"] = v
+        for k, v in to_properties.items():
+            params[f"{k}_to"] = v
+
+        if relationship_properties:
+            params["rel_props"] = relationship_properties
+
+        # リレーションシップ作成クエリ
+        rel_props = " $rel_props" if relationship_properties else ""
+        query = f"""
+        MATCH (a:{from_label}), (b:{to_label})
+        WHERE {from_match} AND {to_match}
+        CREATE (a)-[r:{relationship_type}{rel_props}]->(b)
+        RETURN r
+        """
+
+        result = self.execute_query(query, params)
+        return result.single()[0].as_dict()

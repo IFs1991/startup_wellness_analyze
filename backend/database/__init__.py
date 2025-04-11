@@ -1,74 +1,93 @@
+# -*- coding: utf-8 -*-
 """
 データベースモジュール
 Firestore、PostgreSQL、Neo4jのハイブリッド運用を実現するデータベース接続とモデル定義を提供します。
 
-このモジュールは低レベルなデータベース接続管理、基本的なCRUD操作、データモデル定義を担当します。
-アプリケーションのデータ永続化レイヤーとして機能し、サービス層（backend.service）から利用されます。
+このモジュールはデータベース抽象化レイヤーを提供し、アプリケーションがデータベースの実装詳細から独立できるようにします。
 """
 
+# 設定管理
+from .config import get_database_config
+
 # データベース接続管理
-from .database import (
-    DatabaseManager,
+from .connection import (
+    Database,
     DatabaseType,
-    DataCategory,
     get_firestore_client,
     get_db_session,
-    get_db_for_category,
+    get_neo4j_driver,
+    get_repository,
     init_db,
+    get_db,
     Base
 )
 
+# リポジトリ抽象化
+from .repository import (
+    Repository,
+    RepositoryFactory,
+    DataCategory,
+    RepositoryException,
+    EntityNotFoundException,
+    ValidationException
+)
+
+# リポジトリの具象実装
+from .repositories import (
+    FirestoreRepository,
+    SQLRepository,
+    Neo4jRepository,
+    repository_factory
+)
+
 # モデル定義
+from .models.base import BaseEntity, ModelType
 from . import models
 from . import models_sql
 
-# Firestore CRUD操作
-from . import crud
-
-# PostgreSQL CRUD操作
-from . import crud_sql
-
-# Neo4jデータベース操作
-from .neo4j import (
-    Neo4jDatabaseManager,
-    Neo4jService,
-    get_neo4j_driver,
-    get_neo4j_session,
-    init_neo4j
-)
+# 移行ヘルパー
+from .migration_helper import MigrationHelper
 
 # マイグレーション
 from . import migration
 
-# PostgreSQL直接アクセス（下位互換性のため）
-from .postgres import get_db as get_postgres_db
-
 __all__ = [
+    # 設定管理
+    'get_database_config',
+
     # データベース管理
-    'DatabaseManager',
+    'Database',
     'DatabaseType',
-    'DataCategory',
     'get_firestore_client',
     'get_db_session',
-    'get_db_for_category',
-    'get_postgres_db',  # 下位互換性のため
+    'get_neo4j_driver',
+    'get_repository',
     'init_db',
+    'get_db',
     'Base',
 
-    # モデル定義
+    # リポジトリ抽象化
+    'Repository',
+    'RepositoryFactory',
+    'DataCategory',
+    'RepositoryException',
+    'EntityNotFoundException',
+    'ValidationException',
+
+    # リポジトリ実装
+    'FirestoreRepository',
+    'SQLRepository',
+    'Neo4jRepository',
+    'repository_factory',
+
+    # モデル
+    'BaseEntity',
+    'ModelType',
     'models',
     'models_sql',
 
-    # CRUD操作
-    'crud',
-    'crud_sql',
-
-    # Neo4j関連
-    'Neo4jDatabaseManager',
-    'Neo4jService',
-    'get_neo4j_driver',
-    'get_neo4j_session',
-    'init_neo4j',
+    # 移行ヘルパー
+    'MigrationHelper',
 
     # マイグレーション
     'migration'

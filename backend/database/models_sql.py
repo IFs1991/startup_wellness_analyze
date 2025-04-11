@@ -1,10 +1,10 @@
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Float, JSON, Table
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Type, TypeVar, get_type_hints
 import uuid
 
-from .postgres import Base
+from .connection import Base
 
 class User(Base):
     """ユーザーモデル"""
@@ -105,3 +105,64 @@ class Note(Base):
     # リレーションシップ
     startup = relationship("Startup", back_populates="notes")
     user = relationship("User", back_populates="notes")
+
+# エンティティとSQLモデルのマッピングテーブル
+_entity_to_orm_mapping = {}
+
+def register_orm_model(entity_class: Type, orm_class: Type):
+    """
+    エンティティクラスとORMモデルクラスのマッピングを登録
+
+    Args:
+        entity_class: エンティティクラス
+        orm_class: ORMモデルクラス
+    """
+    global _entity_to_orm_mapping
+    _entity_to_orm_mapping[entity_class.__name__] = orm_class
+
+def get_orm_model_for_entity(entity_class: Type) -> Type:
+    """
+    エンティティクラスに対応するORMモデルクラスを取得
+
+    Args:
+        entity_class: エンティティクラス
+
+    Returns:
+        Type: ORMモデルクラス
+
+    Raises:
+        ValueError: マッピングが見つからない場合
+    """
+    global _entity_to_orm_mapping
+
+    # クラス名でマッピングを検索
+    class_name = entity_class.__name__
+    if class_name in _entity_to_orm_mapping:
+        return _entity_to_orm_mapping[class_name]
+
+    # コレクション名/テーブル名で推測を試みる
+    if hasattr(entity_class, 'get_collection_name'):
+        collection_name = entity_class.get_collection_name()
+
+        # フォールバック: SQLクラスを探すヒューリスティック
+        # 例: UserEntityに対してUser、またはUserModelに対してUser
+        base_name = class_name
+        if base_name.endswith('Entity'):
+            base_name = base_name[:-6]  # 'Entity'を削除
+        elif base_name.endswith('Model'):
+            base_name = base_name[:-5]  # 'Model'を削除
+
+        # 全ての登録済みORMクラスを走査
+        for orm_class in Base.__subclasses__():
+            # テーブル名の一致をチェック
+            if hasattr(orm_class, '__tablename__') and orm_class.__tablename__ == collection_name:
+                # マッピングを登録して返す
+                register_orm_model(entity_class, orm_class)
+                return orm_class
+
+            # クラス名の一致をチェック
+            if orm_class.__name__ == base_name:
+                register_orm_model(entity_class, orm_class)
+                return orm_class
+
+    raise ValueError(f"エンティティクラス {class_name} に対応するORMモデルが見つかりません")

@@ -14,7 +14,7 @@ import sys
 from typing import Dict, List, Any, Optional
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-from backend.database.neo4j import Neo4jService, get_neo4j_session, init_neo4j
+from backend.database.connection import Neo4jService, get_neo4j_driver, init_db
 
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ def create_startup_network_example():
     """スタートアップ企業間のネットワークモデルを作成する例"""
     try:
         # Neo4j初期化
-        init_neo4j()
+        init_db()
 
         # スタートアップノードの作成
         startup_ids = {}
@@ -73,8 +73,8 @@ def create_startup_network_example():
         RETURN a.name as investor, b.name as investee, type(r) as relationship,
                r.amount as amount, r.equity as equity
         """
-        with get_neo4j_session() as session:
-            results = session.run(query)
+        with get_neo4j_driver() as driver:
+            results = driver.execute_query(query)
             print("\n投資関係:")
             for record in results:
                 print(f"{record['investor']} -> {record['investee']}: "
@@ -88,8 +88,8 @@ def create_startup_network_example():
         RETURN s.name AS startup, s.sector AS sector, connections
         ORDER BY connections DESC
         """
-        with get_neo4j_session() as session:
-            results = session.run(query)
+        with get_neo4j_driver() as driver:
+            results = driver.execute_query(query)
             print("\n企業間の関連性:")
             for record in results:
                 print(f"{record['startup']} ({record['sector']}): {record['connections']}つの関連")
