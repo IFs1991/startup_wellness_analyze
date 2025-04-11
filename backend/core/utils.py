@@ -14,24 +14,11 @@ import seaborn as sns
 import io
 import base64
 import scipy.stats as stats
+from .common_logger import get_logger
+from .exceptions import DataProcessingError, AnalysisError
 
 # ロギングの設定
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-class DataProcessingError(Exception):
-    """データ処理に関するエラー"""
-    pass
-
-class AnalysisError(Exception):
-    """分析処理に関するエラー"""
-    pass
+logger = get_logger(__name__)
 
 async def convert_csv_to_dataframe(
     csv_data: str,

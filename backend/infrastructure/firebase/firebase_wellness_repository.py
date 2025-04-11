@@ -5,6 +5,8 @@ Firestore を使用したウェルネススコアデータの保存と取得
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, cast
 import uuid
+import logging
+from firebase_admin import firestore
 
 from core.common_logger import get_logger
 from core.exceptions import DataNotFoundError, DatabaseError, FirestoreError
@@ -16,10 +18,18 @@ from domain.models.wellness import (
     ScoreHistory,
     ScoreMetric,
     WellnessScore,
+    WellnessMetric,
+    WellnessRecommendation,
+    WellnessDimension
 )
 from domain.repositories.wellness_repository import WellnessRepositoryInterface
 
 logger = get_logger(__name__)
+
+
+class WellnessRepositoryError(Exception):
+    """ウェルネスリポジトリの操作に関するエラー"""
+    pass
 
 
 class FirebaseWellnessRepository(WellnessRepositoryInterface):
@@ -34,7 +44,9 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
         Args:
             firebase_client: Firebaseクライアント
         """
+        self.logger = get_logger(__name__)
         self.firebase_client = firebase_client
+        self.db = firebase_client.firestore_client
         self.scores_collection = "wellness_scores"
         self.metrics_collection = "wellness_metrics"
         self.recommendations_collection = "recommendations"
@@ -51,33 +63,27 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             保存されたスコア
 
         Raises:
-            DatabaseError: データベース操作に失敗した場合
+            WellnessRepositoryError: 保存に失敗した場合
         """
         try:
-            # スコアをディクショナリに変換
             score_dict = self._score_to_dict(score)
 
-            # Firestoreに保存
-            if score.id:
-                # 既存のドキュメントを更新
-                await self.firebase_client.set_document(
-                    self.scores_collection, score.id, score_dict
-                )
+            if not score.id:
+                # 新規作成
+                doc_ref = self.db.collection(self.scores_collection).document()
+                score.id = doc_ref.id
+                score_dict["id"] = doc_ref.id
+                doc_ref.set(score_dict)
             else:
-                # 新しいドキュメントを作成
-                score.id = str(uuid.uuid4())
-                score_dict["id"] = score.id
-                await self.firebase_client.set_document(
-                    self.scores_collection, score.id, score_dict
-                )
+                # 更新
+                doc_ref = self.db.collection(self.scores_collection).document(score.id)
+                doc_ref.set(score_dict, merge=True)
 
             logger.info(f"ウェルネススコア {score.id} を保存しました")
             return score
-
-        except FirestoreError as e:
-            error_msg = f"ウェルネススコアの保存に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"スコア保存中にエラーが発生しました: {e}")
+            raise WellnessRepositoryError(f"スコア保存エラー: {str(e)}")
 
     async def get_score_by_id(self, score_id: str) -> Optional[WellnessScore]:
         """
@@ -90,19 +96,16 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             スコアが存在する場合はWellnessScoreオブジェクト、存在しない場合はNone
         """
         try:
-            # Firestoreからドキュメントを取得
-            doc = await self.firebase_client.get_document(self.scores_collection, score_id)
-            if not doc:
+            doc_ref = self.db.collection(self.scores_collection).document(score_id)
+            doc = doc_ref.get()
+
+            if not doc.exists:
                 return None
 
-            # ドキュメントをWellnessScoreオブジェクトに変換
-            score = self._dict_to_score(doc)
-            return score
-
-        except FirestoreError as e:
-            error_msg = f"スコア {score_id} の取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+            return self._dict_to_score(doc.to_dict())
+        except Exception as e:
+            self.logger.error(f"スコア取得中にエラーが発生しました (ID: {score_id}): {e}")
+            raise WellnessRepositoryError(f"スコア取得エラー: {str(e)}")
 
     async def get_latest_score(self, company_id: str) -> Optional[WellnessScore]:
         """
@@ -115,27 +118,21 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             最新のスコア
         """
         try:
-            # 会社IDと日付でフィルタリングしてクエリを実行
-            filters = [
-                {"field": "company_id", "op": "==", "value": company_id}
-            ]
-            order_by = [{"field": "timestamp", "direction": "desc"}]
-
-            docs = await self.firebase_client.query_documents(
-                self.scores_collection, filters, order_by, limit=1
+            query = (
+                self.db.collection(self.scores_collection)
+                .where("company_id", "==", company_id)
+                .order_by("timestamp", direction=firestore.Query.DESCENDING)
+                .limit(1)
             )
 
-            if not docs:
-                return None
+            results = query.stream()
+            for doc in results:
+                return self._dict_to_score(doc.to_dict())
 
-            # 最新のドキュメントをWellnessScoreオブジェクトに変換
-            latest_score = self._dict_to_score(docs[0])
-            return latest_score
-
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} の最新スコア取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+            return None
+        except Exception as e:
+            self.logger.error(f"会社の最新スコア取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社スコア取得エラー: {str(e)}")
 
     async def get_scores_by_company(
         self,
@@ -157,33 +154,28 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             スコアのリスト
         """
         try:
-            # フィルタの作成
-            filters = [
-                {"field": "company_id", "op": "==", "value": company_id}
-            ]
+            query = self.db.collection(self.scores_collection)
 
-            # 日付フィルタの追加
+            if company_id:
+                query = query.where("company_id", "==", company_id)
+
             if start_date:
-                filters.append({"field": "timestamp", "op": ">=", "value": start_date})
+                query = query.where("timestamp", ">=", start_date)
             if end_date:
-                filters.append({"field": "timestamp", "op": "<=", "value": end_date})
+                query = query.where("timestamp", "<=", end_date)
 
-            # 日付の降順でソート
-            order_by = [{"field": "timestamp", "direction": "desc"}]
+            query = query.order_by("timestamp", direction=firestore.Query.DESCENDING)
 
-            # クエリの実行
-            docs = await self.firebase_client.query_documents(
-                self.scores_collection, filters, order_by, limit=limit
-            )
+            query = query.limit(limit)
 
-            # ドキュメントをWellnessScoreオブジェクトのリストに変換
-            scores = [self._dict_to_score(doc) for doc in docs]
-            return scores
+            results = []
+            for doc in query.stream():
+                results.append(self._dict_to_score(doc.to_dict()))
 
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} のスコア一覧取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+            return results
+        except Exception as e:
+            self.logger.error(f"会社スコア一覧取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社スコア一覧取得エラー: {str(e)}")
 
     async def get_score_history(
         self,
@@ -226,12 +218,11 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
 
             return history
 
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} のスコア履歴取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"会社スコア履歴取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社スコア履歴取得エラー: {str(e)}")
 
-    async def save_metric(self, metric: ScoreMetric, company_id: str) -> ScoreMetric:
+    async def save_metric(self, metric: WellnessMetric, company_id: str) -> WellnessMetric:
         """
         メトリックの保存
 
@@ -243,7 +234,6 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             保存されたメトリック
         """
         try:
-            # メトリックをディクショナリに変換
             metric_dict = self._metric_to_dict(metric)
             metric_dict["company_id"] = company_id
 
@@ -251,17 +241,14 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             metric_id = str(uuid.uuid4())
 
             # Firestoreに保存
-            await self.firebase_client.set_document(
-                self.metrics_collection, metric_id, metric_dict
-            )
+            await self.db.collection(self.metrics_collection).document(metric_id).set(metric_dict)
 
             logger.info(f"メトリック {metric.name} を会社 {company_id} に保存しました")
             return metric
 
-        except FirestoreError as e:
-            error_msg = f"メトリックの保存に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"メトリック保存中にエラーが発生しました: {e}")
+            raise WellnessRepositoryError(f"メトリック保存エラー: {str(e)}")
 
     async def get_metrics_by_company(
         self,
@@ -269,7 +256,7 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
         category: Optional[ScoreCategory] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
-    ) -> List[ScoreMetric]:
+    ) -> List[WellnessMetric]:
         """
         会社IDによるメトリック一覧の取得
 
@@ -283,37 +270,29 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             メトリックのリスト
         """
         try:
-            # フィルタの作成
-            filters = [
-                {"field": "company_id", "op": "==", "value": company_id}
-            ]
+            query = self.db.collection(self.metrics_collection)
 
-            # カテゴリフィルタの追加
+            if company_id:
+                query = query.where("company_id", "==", company_id)
+
             if category:
-                filters.append({"field": "category", "op": "==", "value": category.value})
+                query = query.where("category", "==", category.value)
 
-            # 日付フィルタの追加
             if start_date:
-                filters.append({"field": "timestamp", "op": ">=", "value": start_date})
+                query = query.where("timestamp", ">=", start_date)
             if end_date:
-                filters.append({"field": "timestamp", "op": "<=", "value": end_date})
+                query = query.where("timestamp", "<=", end_date)
 
-            # 日付の降順でソート
-            order_by = [{"field": "timestamp", "direction": "desc"}]
+            query = query.order_by("timestamp", direction=firestore.Query.DESCENDING)
 
-            # クエリの実行
-            docs = await self.firebase_client.query_documents(
-                self.metrics_collection, filters, order_by
-            )
+            results = []
+            for doc in query.stream():
+                results.append(self._dict_to_metric(doc.to_dict()))
 
-            # ドキュメントをScoreMetricオブジェクトのリストに変換
-            metrics = [self._dict_to_metric(doc) for doc in docs]
-            return metrics
-
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} のメトリック一覧取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+            return results
+        except Exception as e:
+            self.logger.error(f"会社メトリック一覧取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社メトリック一覧取得エラー: {str(e)}")
 
     async def get_category_trend(
         self,
@@ -347,10 +326,9 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
 
             return trend_data
 
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} のカテゴリ {category} トレンド取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"会社カテゴリトレンド取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社カテゴリトレンド取得エラー: {str(e)}")
 
     async def save_recommendation_plan(self, plan: RecommendationPlan) -> RecommendationPlan:
         """
@@ -363,24 +341,20 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             保存された推奨プラン
         """
         try:
-            # プランをディクショナリに変換
             plan_dict = self._recommendation_plan_to_dict(plan)
 
             # ドキュメントID（会社ID + スコアID）
             doc_id = f"{plan.company_id}_{plan.score_id}"
 
             # Firestoreに保存
-            await self.firebase_client.set_document(
-                self.recommendations_collection, doc_id, plan_dict
-            )
+            await self.db.collection(self.recommendations_collection).document(doc_id).set(plan_dict)
 
             logger.info(f"推奨プラン {doc_id} を保存しました")
             return plan
 
-        except FirestoreError as e:
-            error_msg = f"推奨プランの保存に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"推奨プラン保存中にエラーが発生しました: {e}")
+            raise WellnessRepositoryError(f"推奨プラン保存エラー: {str(e)}")
 
     async def get_recommendation_plan(
         self,
@@ -401,29 +375,25 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             if score_id:
                 # 特定のスコアIDに関連する推奨プランを取得
                 doc_id = f"{company_id}_{score_id}"
-                doc = await self.firebase_client.get_document(self.recommendations_collection, doc_id)
-                if doc:
-                    return self._dict_to_recommendation_plan(doc)
+                doc = await self.db.collection(self.recommendations_collection).document(doc_id).get()
+                if doc.exists:
+                    return self._dict_to_recommendation_plan(doc.to_dict())
                 return None
             else:
                 # 最新の推奨プランを取得
-                filters = [
-                    {"field": "company_id", "op": "==", "value": company_id}
-                ]
-                order_by = [{"field": "generated_at", "direction": "desc"}]
+                query = self.db.collection(self.recommendations_collection)
+                query = query.where("company_id", "==", company_id)
+                query = query.order_by("generated_at", direction=firestore.Query.DESCENDING)
+                query = query.limit(1)
 
-                docs = await self.firebase_client.query_documents(
-                    self.recommendations_collection, filters, order_by, limit=1
-                )
-
-                if docs:
-                    return self._dict_to_recommendation_plan(docs[0])
+                results = query.stream()
+                for doc in results:
+                    return self._dict_to_recommendation_plan(doc.to_dict())
                 return None
 
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} の推奨プラン取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"会社推奨プラン取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社推奨プラン取得エラー: {str(e)}")
 
     async def get_company_benchmarks(
         self,
@@ -466,10 +436,9 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
                 "all_avg": 60.0
             }
 
-        except FirestoreError as e:
-            error_msg = f"会社 {company_id} のベンチマーク取得に失敗しました: {str(e)}"
-            logger.error(error_msg)
-            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            self.logger.error(f"会社ベンチマーク取得中にエラーが発生しました (会社ID: {company_id}): {e}")
+            raise WellnessRepositoryError(f"会社ベンチマーク取得エラー: {str(e)}")
 
     # プライベートヘルパーメソッド
     def _score_to_dict(self, score: WellnessScore) -> Dict[str, Any]:
@@ -530,8 +499,8 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             created_by=data.get("created_by")
         )
 
-    def _metric_to_dict(self, metric: ScoreMetric) -> Dict[str, Any]:
-        """ScoreMetricオブジェクトをディクショナリに変換"""
+    def _metric_to_dict(self, metric: WellnessMetric) -> Dict[str, Any]:
+        """WellnessMetricオブジェクトをディクショナリに変換"""
         return {
             "name": metric.name,
             "value": metric.value,
@@ -541,8 +510,8 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             "raw_data": metric.raw_data
         }
 
-    def _dict_to_metric(self, data: Dict[str, Any]) -> ScoreMetric:
-        """ディクショナリからScoreMetricオブジェクトを作成"""
+    def _dict_to_metric(self, data: Dict[str, Any]) -> WellnessMetric:
+        """ディクショナリからWellnessMetricオブジェクトを作成"""
         # カテゴリを変換
         try:
             category = ScoreCategory(data.get("category", ScoreCategory.FINANCIAL.value))
@@ -559,13 +528,14 @@ class FirebaseWellnessRepository(WellnessRepositoryInterface):
             # デフォルトの日時
             timestamp = datetime.now()
 
-        return ScoreMetric(
+        return WellnessMetric(
+            id=data.get("id", ""),
             name=data.get("name", ""),
             value=float(data.get("value", 0.0)),
-            weight=float(data.get("weight", 1.0)),
-            category=category,
+            dimension=WellnessDimension(data.get("dimension", "physical")),
             timestamp=timestamp,
-            raw_data=data.get("raw_data", {})
+            source=data.get("source", "manual"),
+            metadata=data.get("metadata", {})
         )
 
     def _recommendation_plan_to_dict(self, plan: RecommendationPlan) -> Dict[str, Any]:

@@ -1,3 +1,9 @@
+"""
+このモジュールは非推奨となりました。
+代わりに`backend.api.routers.reports`を使用してください。
+このファイルは後方互換性のために残されています。
+"""
+
 import logging
 import os
 import uuid
@@ -7,12 +13,14 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Response
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Response, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from tempfile import NamedTemporaryFile
 from dotenv import load_dotenv
 import hashlib
+from fastapi.routing import APIRoute
+import warnings
 
 from backend.utils.gemini_wrapper import GeminiWrapper
 from backend.core.config import Settings, get_settings
@@ -32,6 +40,13 @@ else:
         load_dotenv(ENV_PATH)
 
 logger = logging.getLogger(__name__)
+warnings.warn(
+    "routes.reports モジュールは非推奨です。代わりに routers.reports を使用してください。",
+    DeprecationWarning,
+    stacklevel=2
+)
+
+# 元のルーター
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
 
 # レポート生成リクエスト用モデル
@@ -200,192 +215,42 @@ def get_report_generator(settings: Settings = Depends(get_settings)):
         logger.error(f"Failed to initialize report generator: {e}")
         raise HTTPException(status_code=500, detail="レポート生成サービスの初期化に失敗しました")
 
-@router.post("/generate", response_model=ReportResponse)
-async def generate_report(
-    request: ReportRequest,
-    background_tasks: BackgroundTasks,
-    report_generator: ReportGenerator = Depends(get_report_generator),
-    settings: Settings = Depends(get_settings)
-):
-    """
-    企業データと分析結果に基づいてレポートを生成する
-    オンデマンド方式: リクエストがあった場合のみ生成
-    """
-    try:
-        # リクエストから企業データと分析結果を取得
-        company_data = request.company_data
+# リダイレクト処理を行うクラス
+class RedirectRoute(APIRoute):
+    def __init__(self, *args, **kwargs):
+        self.redirect_path_prefix = kwargs.pop("redirect_path_prefix", "/api/reports")
+        super().__init__(*args, **kwargs)
 
-        # レポートIDの生成（一意の識別子）
-        report_id = f"report_{uuid.uuid4().hex}"
+    async def handle(self, request: Request) -> RedirectResponse:
+        # 元のパスからプレフィックスを除去し、新しいパスを作成
+        path = request.url.path
+        new_path = path.replace("/api/v1/reports", self.redirect_path_prefix)
 
-        # レポート生成とキャッシュの確認
-        cache_key = hashlib.md5(
-            f"{request.template_id}_{json.dumps(company_data, sort_keys=True)}_{request.period}".encode()
-        ).hexdigest()
+        # クエリパラメータを維持
+        if request.url.query:
+            new_path = f"{new_path}?{request.url.query}"
 
-        # キャッシュディレクトリのチェック
-        cache_dir = Path("./storage/reports/cache")
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_dir / f"{cache_key}.{request.format}"
+        logger.info(f"レポートリクエストをリダイレクト: {path} -> {new_path}")
+        return RedirectResponse(url=new_path, status_code=307)
 
-        # キャッシュが有効かつファイルが存在する場合はキャッシュを返す
-        if settings.report_cache_enabled and cache_path.exists():
-            # キャッシュの有効期限をチェック（デフォルト24時間）
-            cache_age = time.time() - cache_path.stat().st_mtime
-            if cache_age < settings.report_cache_ttl:
-                logger.info(f"Returning cached report: {cache_key}")
-                return ReportResponse(
-                    success=True,
-                    report_id=report_id,
-                    report_url=f"/api/v1/reports/download/{cache_key}.{request.format}",
-                    message="レポートがキャッシュから取得されました"
-                )
+# 元のエンドポイントパターンに対応するリダイレクトルートを作成
+@router.api_route("/generate", methods=["POST"], response_class=RedirectResponse, route_class=RedirectRoute)
+async def redirect_generate_report(request: Request):
+    return {}
 
-        # レポート生成をバックグラウンドタスクとして実行
-        background_tasks.add_task(
-            report_generator.generate_and_save_report,
-            report_id=report_id,
-            template_id=request.template_id,
-            company_data=company_data,
-            period=request.period,
-            include_sections=request.include_sections,
-            customization=request.customization,
-            format=request.format,
-            cache_key=cache_key
-        )
+@router.api_route("/generate-async", methods=["POST"], response_class=RedirectResponse, route_class=RedirectRoute)
+async def redirect_generate_report_async(request: Request):
+    return {}
 
-        return ReportResponse(
-            success=True,
-            report_id=report_id,
-            message="レポート生成を開始しました。完了したらダウンロードできます。"
-        )
-    except Exception as e:
-        logger.error(f"Failed to start report generation: {e}")
-        return ReportResponse(
-            success=False,
-            error=f"レポート生成の開始に失敗しました: {str(e)}"
-        )
+@router.api_route("/download/{filename}", methods=["GET"], response_class=RedirectResponse, route_class=RedirectRoute)
+async def redirect_download_report(request: Request, filename: str):
+    return {}
 
-@router.post("/generate-async", response_model=ReportResponse)
-async def generate_report_async(
-    request: ReportRequest,
-    background_tasks: BackgroundTasks,
-    report_generator: ReportGenerator = Depends(get_report_generator)
-):
-    """
-    企業データからレポートを非同期で生成するエンドポイント
-    """
-    try:
-        # 非同期処理用の情報を事前に生成
-        import hashlib
-        company_name = request.company_data.get("company_name", "company")
-        sanitized_name = "".join(c if c.isalnum() else "_" for c in company_name)
-        temp_hash = hashlib.md5(f"{company_name}_{request.period}_{request.template_id}".encode()).hexdigest()[:8]
-        report_id = f"{sanitized_name}_{request.period}_{temp_hash}"
+@router.api_route("/templates", methods=["GET"], response_class=RedirectResponse, route_class=RedirectRoute)
+async def redirect_list_report_templates(request: Request):
+    return {}
 
-        # バックグラウンドタスクとしてレポート生成を追加
-        background_tasks.add_task(
-            report_generator.generate_report,
-            template_id=request.template_id,
-            company_data=request.company_data,
-            period=request.period,
-            include_sections=request.include_sections,
-            customization=request.customization,
-            format=request.format
-        )
-
-        # 予想されるレスポンスURLを構築
-        format = request.format.lower()
-        report_url = f"/api/v1/reports/download/{report_id}.{format}"
-
-        return {
-            "success": True,
-            "report_url": report_url,
-            "report_id": report_id,
-            "message": "レポート生成を開始しました。数分後に指定されたURLでダウンロードできるようになります。"
-        }
-    except Exception as e:
-        logger.error(f"Async report generation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"非同期レポート生成の開始中にエラーが発生しました: {str(e)}")
-
-@router.get("/download/{filename}")
-async def download_report(
-    filename: str,
-    report_generator: ReportGenerator = Depends(get_report_generator)
-):
-    """
-    生成済みレポートをダウンロードするエンドポイント
-    """
-    file_path = report_generator.reports_dir / filename
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="レポートが見つかりません。まだ生成中か、存在しない可能性があります。")
-
-    # ファイル拡張子に基づいてContent-Typeを設定
-    content_type_map = {
-        ".pdf": "application/pdf",
-        ".html": "text/html"
-    }
-    extension = file_path.suffix.lower()
-    media_type = content_type_map.get(extension, "application/octet-stream")
-
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type=media_type
-    )
-
-@router.get("/templates", response_model=List[Dict[str, Any]])
-async def list_report_templates():
-    """
-    利用可能なレポートテンプレート一覧を取得するエンドポイント
-    """
-    # テンプレート情報のハードコーディング（実際にはデータベースから取得する）
-    templates = [
-        {
-            "id": "quarterly_wellness",
-            "name": "四半期ウェルネスレポート",
-            "description": "企業の四半期ごとのウェルネス指標をまとめたレポート",
-            "available_sections": [
-                "executive_summary",
-                "wellness_metrics",
-                "department_comparison",
-                "trend_analysis",
-                "recommendations"
-            ],
-            "thumbnail_url": "/static/templates/quarterly_wellness.png"
-        },
-        {
-            "id": "annual_wellness",
-            "name": "年間ウェルネスレポート",
-            "description": "年間を通した企業ウェルネス指標の詳細分析",
-            "available_sections": [
-                "executive_summary",
-                "annual_metrics",
-                "quarterly_comparison",
-                "department_analysis",
-                "financial_correlation",
-                "benchmark_comparison",
-                "recommendations",
-                "future_outlook"
-            ],
-            "thumbnail_url": "/static/templates/annual_wellness.png"
-        },
-        {
-            "id": "wellness_financial",
-            "name": "ウェルネスと財務パフォーマンス分析",
-            "description": "ウェルネス指標と財務業績の相関関係を分析するレポート",
-            "available_sections": [
-                "executive_summary",
-                "wellness_overview",
-                "financial_overview",
-                "correlation_analysis",
-                "department_breakdown",
-                "roi_analysis",
-                "recommendations"
-            ],
-            "thumbnail_url": "/static/templates/wellness_financial.png"
-        }
-    ]
-
-    return templates
+# すべてのHTTPメソッドに対応する汎用的なキャッチオールルート
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"], response_class=RedirectResponse, route_class=RedirectRoute)
+async def redirect_all(request: Request, path: str):
+    return {}

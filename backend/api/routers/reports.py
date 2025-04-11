@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-レポート生成API
-企業データに基づいたレポートを生成・管理するエンドポイントを提供します。
-Gemini APIを活用してインテリジェントなレポート生成を行います。
+レポートAPIのroutersバージョン
+
+このモジュールは次のエンドポイントを提供します：
+- POST /api/reports/generate - レポートを生成する
+- POST /api/reports/generate-async - レポートを非同期で生成する
+- GET /api/reports/download/{filename} - 生成されたレポートをダウンロードする
+- GET /api/reports/templates - 利用可能なレポートテンプレートをリストする
 """
 
 import logging
@@ -19,9 +23,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from tempfile import NamedTemporaryFile
 import hashlib
+from fastapi.responses import JSONResponse
 
 from service.gemini.wrapper import GeminiWrapper
 from core.config import get_settings
+from core.user import User
+from service.reports import ReportService
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,7 +42,7 @@ if not logger.handlers:
 router = APIRouter(
     prefix="/api/reports",
     tags=["reports"],
-    responses={404: {"description": "Not found"}},
+    responses={404: {"description": "リソースが見つかりません"}},
 )
 
 # レポート生成リクエスト用モデル
@@ -261,68 +268,56 @@ def get_report_generator():
 @router.post("/generate", response_model=ReportResponse)
 async def generate_report(
     request: ReportRequest,
-    background_tasks: BackgroundTasks,
-    report_generator: ReportGenerator = Depends(get_report_generator)
+    current_user: User = Depends(get_current_user),
+    report_service = Depends(get_report_service)
 ):
     """
-    企業データと分析結果に基づいてレポートを生成する
-    オンデマンド方式: リクエストがあった場合のみ生成
+    レポートを生成します。
+
+    指定されたテンプレートと企業データに基づいてレポートを作成します。
     """
     try:
-        # リクエストから企業データと分析結果を取得
-        company_data = request.company_data
+        logger.info(f"レポート生成リクエスト受信: テンプレートID={request.template_id}, フォーマット={request.format}")
 
-        # レポートIDの生成（一意の識別子）
-        report_id = f"report_{uuid.uuid4().hex}"
-
-        # レポート生成とキャッシュの確認
-        cache_key = hashlib.md5(
-            f"{request.template_id}_{json.dumps(company_data, sort_keys=True)}_{request.period}".encode()
-        ).hexdigest()
-
-        # キャッシュディレクトリのチェック
-        cache_dir = Path("./storage/reports/cache")
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_dir / f"{cache_key}.{request.format}"
-
-        # キャッシュが有効かつファイルが存在する場合はキャッシュを返す
-        settings = get_settings()
-        if settings.report_cache_enabled and cache_path.exists():
-            # キャッシュの有効期限をチェック（デフォルト24時間）
-            cache_age = time.time() - cache_path.stat().st_mtime
-            if cache_age < settings.report_cache_ttl:
-                logger.info(f"キャッシュからレポートを返します: {cache_key}")
-                return ReportResponse(
-                    success=True,
-                    report_id=report_id,
-                    report_url=f"/api/reports/download/{cache_key}.{request.format}",
-                    message="レポートがキャッシュから取得されました"
-                )
-
-        # レポート生成をバックグラウンドタスクとして実行
-        background_tasks.add_task(
-            report_generator.generate_and_save_report,
-            report_id=report_id,
+        # レポート生成
+        result = await report_service.generate_report(
             template_id=request.template_id,
-            company_data=company_data,
+            company_data=request.company_data,
             period=request.period,
             include_sections=request.include_sections,
             customization=request.customization,
             format=request.format,
-            cache_key=cache_key
+            user_id=str(current_user.id)
         )
 
-        return ReportResponse(
-            success=True,
-            report_id=report_id,
-            message="レポート生成を開始しました。完了したらダウンロードできます。"
-        )
+        if not result["success"]:
+            logger.error(f"レポート生成に失敗しました: {result.get('error')}")
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": result.get("error", "レポート生成に失敗しました")
+                },
+                status_code=400
+            )
+
+        # 成功レスポンス
+        return {
+            "success": True,
+            "data": {
+                "report_id": result["report_id"],
+                "report_url": f"/api/reports/download/{result['report_id']}.{result['format']}",
+                "format": result["format"]
+            }
+        }
 
     except Exception as e:
-        logger.error(f"レポート生成リクエスト処理エラー: {e}")
-        return ReportResponse(
-            success=False,
-            error=f"レポート生成リクエストの処理中にエラーが発生しました: {str(e)}"
+        logger.exception(f"レポート生成中にエラーが発生しました: {e}")
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": f"レポート生成中にエラーが発生しました: {str(e)}"
+            },
+            status_code=500
         )
 
 @router.get("/download/{filename}")
@@ -370,36 +365,28 @@ async def download_report(filename: str):
         logger.error(f"レポートのダウンロード中にエラーが発生しました: {e}")
         raise HTTPException(status_code=500, detail=f"レポートのダウンロード中にエラーが発生しました: {str(e)}")
 
-@router.get("/templates")
-async def list_report_templates():
+@router.get("/templates", response_model=TemplateListResponse)
+async def list_report_templates(
+    current_user: User = Depends(get_current_user),
+    report_service = Depends(get_report_service)
+):
     """
-    利用可能なレポートテンプレート一覧を取得する
+    利用可能なレポートテンプレートをリストします。
     """
     try:
-        # テンプレートデータの定義（実際の環境では外部から読み込む）
-        templates = [
-            {
-                "id": "quarterly_financial",
-                "name": "四半期財務レポート",
-                "description": "四半期ごとの財務状況の詳細分析",
-                "sections": ["財務概要", "収益分析", "コスト分析", "キャッシュフロー", "予測"]
-            },
-            {
-                "id": "wellness_standard",
-                "name": "スタンダードウェルネスレポート",
-                "description": "スタートアップ企業の健康状態の標準レポート",
-                "sections": ["組織健全性", "コミュニケーション分析", "ストレス指標", "モチベーション傾向", "改善提案"]
-            },
-            {
-                "id": "vc_investment",
-                "name": "VC投資分析レポート",
-                "description": "投資判断のための包括的なスタートアップ分析",
-                "sections": ["市場機会", "チーム評価", "技術評価", "財務見通し", "リスク分析", "投資提案"]
+        templates = await report_service.list_templates()
+        return {
+            "success": True,
+            "data": {
+                "templates": templates
             }
-        ]
-
-        return templates
-
+        }
     except Exception as e:
-        logger.error(f"テンプレート一覧の取得中にエラーが発生しました: {e}")
-        raise HTTPException(status_code=500, detail="テンプレート一覧の取得に失敗しました")
+        logger.exception(f"テンプレート一覧取得中にエラーが発生しました: {e}")
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": f"テンプレート一覧取得中にエラーが発生しました: {str(e)}"
+            },
+            status_code=500
+        )

@@ -1,7 +1,7 @@
 """
 Redisインフラストラクチャパッケージ
 
-Redisを使用したキャッシュとパフォーマンス最適化のための実装を提供します。
+Redisを使用したリポジトリ実装を提供します。
 """
 
 from .redis_service import RedisService, create_redis_service

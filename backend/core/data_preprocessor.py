@@ -11,54 +11,41 @@ import logging
 from pandas import DataFrame, Series
 from pandas._libs.missing import NAType
 from pandas.api.types import is_numeric_dtype
-# 循環インポートを避けるため、遅延インポートに変更
-# from service.firestore.client import FirestoreService
+from .common_logger import get_logger
+from .exceptions import DataPreprocessingError
+from .patterns import Singleton, LazyImport
 
 # 型変数の定義
 T = TypeVar('T')
 FillMethod = Literal['backfill', 'bfill', 'ffill', 'pad']
 
 # ロギングの設定
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = get_logger(__name__)
 
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+# Firebaseクライアント用の遅延インポート
+firebase_client_module = LazyImport('core.firebase_client', 'get_firebase_client')
 
-class DataPreprocessingError(Exception):
-    """データ前処理に関するエラー"""
-    pass
-
+@Singleton
 class DataPreprocessor:
     """
     データの前処理と整形を行うクラス
     このクラスはシングルトンパターンで実装されており、アプリケーション全体で一貫したインスタンスを提供します。
     """
-    _instance = None
-    _firestore_service = None
-
-    def __new__(cls):
-        """シングルトンパターンによるインスタンス生成"""
-        if cls._instance is None:
-            cls._instance = super(DataPreprocessor, cls).__new__(cls)
-            cls._instance._initialize()
-        return cls._instance
-
-    def _initialize(self):
+    def __init__(self):
         """初期化処理"""
-        # FirestoreServiceは必要なときに遅延ロードする
-        pass
+        self._firestore_service = None
+        self.required_columns = {
+            'vas_data': ['startup_id', 'timestamp', 'score', 'category'],
+            'financial_data': ['startup_id', 'timestamp', 'revenue', 'expenses']
+        }
+        logger.info("DataPreprocessorを初期化しました")
 
     def _get_firestore_service(self):
         """FirestoreServiceを遅延ロードして返す"""
         if self._firestore_service is None:
-            # 必要なときに初めてインポート
-            from service.firestore.client import FirestoreService
-            self._firestore_service = FirestoreService()
-            logger.info("FirestoreServiceを初期化しました")
+            # 新しいFirebaseクライアントを使用
+            self._firestore_service = firebase_client_module()
+            logger.info("FirebaseClientを初期化しました")
         return self._firestore_service
 
     async def get_data(
@@ -80,12 +67,24 @@ class DataPreprocessor:
         """
         try:
             # FirestoreServiceを遅延ロード
-            firestore_service = self._get_firestore_service()
+            firebase_client = self._get_firestore_service()
+
+            # クエリ条件を新しいフォーマットに変換
+            filters = None
+            if conditions:
+                filters = [
+                    {
+                        "field": cond.get("field"),
+                        "op": cond.get("operator", "=="),
+                        "value": cond.get("value")
+                    }
+                    for cond in conditions
+                ]
 
             # Firestoreからデータを取得
-            results = await firestore_service.fetch_documents(
-                collection_name=collection_name,
-                conditions=conditions
+            results = await firebase_client.query_documents(
+                collection=collection_name,
+                filters=filters
             )
 
             if not results:

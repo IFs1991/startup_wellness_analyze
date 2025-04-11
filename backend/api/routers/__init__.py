@@ -14,11 +14,13 @@ from . import prediction
 from . import compliance
 from . import reports
 from . import gemini_visualization
+from . import visualization  # 新しく追加した可視化ルーター
 # from . import federated  # 連合学習ルーターを追加 (一時的に無効化)
 from . import financial  # 財務分析ルーターを追加
 from . import market     # 市場分析ルーターを追加
 from . import team       # チーム分析ルーターを追加
 from . import companies  # 企業情報ルーターを追加
+from . import api_monitoring  # API使用状況モニタリングルーターを追加
 
 # エクスポートするルーター一覧
 all_routers = [
@@ -28,11 +30,13 @@ all_routers = [
     compliance.router,
     reports.router,
     gemini_visualization.router,
+    visualization.router,  # 新しく追加した可視化ルーターを登録
     # federated.router,  # 連合学習ルーターを追加 (一時的に無効化)
     financial.router,  # 財務分析ルーターを追加
     market.router,     # 市場分析ルーターを追加
     team.router,       # チーム分析ルーターを追加
-    companies.router   # 企業情報ルーターを追加
+    companies.router,   # 企業情報ルーターを追加
+    api_monitoring.router  # API使用状況モニタリングルーターを追加
 ]
 
 __all__ = [
@@ -42,6 +46,7 @@ __all__ = [
     "compliance",
     "reports",
     "gemini_visualization",
+    "visualization",  # 新しく追加した可視化ルーター
     # "federated",  # 連合学習ルーターを追加 (一時的に無効化)
     "financial",  # 財務分析ルーターを追加
     "market",     # 市場分析ルーターを追加

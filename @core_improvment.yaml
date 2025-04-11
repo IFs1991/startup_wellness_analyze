@@ -1,0 +1,74 @@
+version: '1.0'
+created_at: '2023-10-25'
+last_updated: '2023-10-25'
+
+project_name: 'スタートアップウェルネス分析システム'
+description: 'コア機能改善ログ'
+
+improvements:
+  - id: 'core-001'
+    title: '循環インポート問題の解決'
+    date: '2023-10-25'
+    status: '完了'
+    severity: '高'
+    components:
+      - 'backend/core/auth_manager.py'
+      - 'backend/core/compliance_manager.py'
+    description: |
+      認証マネージャーとコンプライアンスマネージャー間の循環インポート問題を解決しました。
+      両クラスは相互に依存関係があり、直接インポートすると循環参照エラーが発生していました。
+    solution: |
+      LazyImportパターンを使用して循環参照を解決しました。
+      AuthManagerクラス内でComplianceManagerを遅延ロードする仕組みを実装し、
+      初期化時ではなく実際に必要になった時点でインスタンスを取得するように変更しました。
+    implementation_details: |
+      1. get_compliance_manager() メソッドを修正：
+         - ComplianceManagerをインポートする代わりにLazyImportを使用
+         - 最初の呼び出し時にのみインスタンスを初期化
+         - それ以降の呼び出しではキャッシュされたインスタンスを返す
+      2. コンプライアンスマネージャーの参照箇所を全て get_compliance_manager() 経由に変更
+      3. ロギングステートメントをインスタンスのロガーに修正
+    code_samples:
+      - description: 'LazyImportを使用した実装'
+        code: |
+          def get_compliance_manager(self):
+              """ComplianceManagerを遅延ロードして返す"""
+              if self.compliance_manager is None:
+                  self.compliance_manager = compliance_manager().get_instance()
+                  self.logger.info("ComplianceManagerを初期化しました")
+              return self.compliance_manager
+    benefits:
+      - 'アプリケーション起動時の循環参照エラーが解消'
+      - 'コードの依存関係がより明確に'
+      - '必要になるまでインスタンス化を遅延させることによるメモリ効率の向上'
+    recommended_patterns:
+      - pattern: 'LazyImport'
+        description: '循環参照を解決するためのパターン。実際に必要になるまでクラスのインポートとインスタンス化を遅延させる。'
+      - pattern: 'Singleton'
+        description: 'アプリケーション全体で単一のインスタンスを共有するためのパターン。認証やコンプライアンス管理などのサービスに適している。'
+
+future_improvements:
+  - id: 'core-002'
+    title: '認証プロセスの最適化'
+    description: 'MFA認証フローをより効率的にし、ユーザー体験を向上させる'
+    priority: '中'
+    estimated_delivery: 'Q4 2023'
+
+  - id: 'core-003'
+    title: 'キャッシュ層の導入'
+    description: 'Redisキャッシュを活用してデータベースアクセスを最小限に抑える'
+    priority: '中'
+    estimated_delivery: 'Q1 2024'
+
+  - id: 'core-004'
+    title: 'エラーハンドリングの強化'
+    description: 'よりユーザーフレンドリーなエラーメッセージと適切なフォールバック処理の実装'
+    priority: '低'
+    estimated_delivery: 'Q1 2024'
+
+references:
+  - title: 'Pythonの循環インポート問題の解決策'
+    url: 'https://realpython.com/circular-imports-python/'
+
+  - title: 'デザインパターン：遅延初期化（Lazy Initialization）'
+    url: 'https://refactoring.guru/design-patterns/proxy/python/example'
