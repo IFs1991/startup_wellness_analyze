@@ -7,7 +7,7 @@ from statsmodels.tsa.arima.model import ARIMA
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LassoCV
 import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Optional, Union, Any
+from typing import Dict, List, Tuple, Optional, Union, Any, Literal
 import logging
 import warnings
 import pymc as pm
@@ -18,6 +18,14 @@ import dowhy
 from dowhy import CausalModel
 from dataclasses import dataclass
 from datetime import datetime
+import gc
+import os
+import tempfile
+import joblib
+import weakref
+import shutil
+from contextlib import contextmanager
+import time
 
 # EconMLのインポート
 from econml.dml import CausalForestDML, LinearDML
@@ -88,10 +96,363 @@ class CausalInferenceAnalyzer:
     時系列因果推論を実装するクラス
     """
 
-    def __init__(self):
-        """初期化"""
+    def __init__(self, storage_mode: Literal['memory', 'disk', 'hybrid'] = 'memory',
+                 temp_dir: Optional[str] = None, max_memory_size: int = 1000):
+        """
+        初期化
+
+        Parameters:
+        -----------
+        storage_mode : str
+            結果保存モード ('memory'/'disk'/'hybrid')
+            - memory: すべてメモリに保存（小・中規模データに適合）
+            - disk: 大きなデータや中間結果をディスクに保存（大規模データに適合）
+            - hybrid: 統計情報はメモリに、詳細データはディスクに保存
+        temp_dir : str, optional
+            一時ファイル保存ディレクトリ（Noneの場合は自動生成）
+        max_memory_size : int, optional
+            メモリ使用量の目安値（MB単位）
+        """
         self.logger = logger
         self.logger.info("因果推論分析モジュールを初期化しました")
+
+        # ストレージ設定
+        self.storage_mode = storage_mode
+        self.max_memory_size = max_memory_size
+
+        # 一時ディレクトリの設定
+        if storage_mode in ['disk', 'hybrid']:
+            if temp_dir:
+                os.makedirs(temp_dir, exist_ok=True)
+                self.temp_dir = temp_dir
+            else:
+                self.temp_dir = tempfile.mkdtemp(prefix="causal_analysis_")
+            self.logger.info(f"一時ディレクトリを作成しました: {self.temp_dir}")
+        else:
+            self.temp_dir = None
+
+        # 一時ファイル追跡用
+        self.temp_files = set()
+
+        # モデルインスタンス追跡用
+        self.model_cache = weakref.WeakValueDictionary()
+
+        # 結果キャッシュ
+        self._result_cache = {}
+
+    def __del__(self):
+        """デストラクタ - リソースの自動解放"""
+        self.release_resources()
+
+    def release_resources(self):
+        """リソースを明示的に解放"""
+        # キャッシュのクリア
+        self._result_cache.clear()
+        self.model_cache.clear()
+
+        # 一時ファイルの削除
+        self._cleanup_temp_files()
+
+        # 一時ディレクトリの削除
+        if hasattr(self, 'temp_dir') and self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+                self.logger.info(f"一時ディレクトリを削除しました: {self.temp_dir}")
+            except Exception as e:
+                self.logger.warning(f"一時ディレクトリの削除に失敗: {str(e)}")
+
+        # メモリの明示的解放
+        gc.collect()
+        self.logger.info("リソースを解放しました")
+
+    def _cleanup_temp_files(self):
+        """一時ファイルのクリーンアップ"""
+        for file_path in self.temp_files.copy():
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    self.temp_files.remove(file_path)
+                    self.logger.debug(f"一時ファイルを削除しました: {file_path}")
+                except Exception as e:
+                    self.logger.warning(f"一時ファイル削除に失敗: {str(e)}")
+
+    @contextmanager
+    def _managed_data(self, data):
+        """データの効率的な管理のためのコンテキストマネージャー"""
+        try:
+            yield data
+        finally:
+            # 明示的にオブジェクト参照を削除
+            del data
+            # メモリ使用量が閾値を超えた場合にガベージコレクションを強制実行
+            if self._check_memory_usage():
+                gc.collect()
+
+    def _check_memory_usage(self) -> bool:
+        """
+        メモリ使用量をチェックし、閾値を超えているか判断
+
+        Returns:
+        --------
+        bool
+            メモリ使用量が閾値を超えている場合はTrue
+        """
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_usage_mb = memory_info.rss / (1024 * 1024)
+
+            # 閾値を超えているかチェック
+            if memory_usage_mb > self.max_memory_size:
+                self.logger.warning(f"メモリ使用量が閾値を超えています: {memory_usage_mb:.1f}MB > {self.max_memory_size}MB")
+                return True
+            return False
+        except ImportError:
+            # psutilが利用できない場合は単純にFalseを返す
+            return False
+
+    def _save_to_temp_file(self, data, prefix="data", suffix=".pkl"):
+        """
+        データを一時ファイルに保存
+
+        Parameters:
+        -----------
+        data : Any
+            保存するデータ
+        prefix : str
+            ファイル名のプレフィックス
+        suffix : str
+            ファイル名のサフィックス
+
+        Returns:
+        --------
+        str
+            保存したファイルのパス
+        """
+        if not self.temp_dir:
+            raise ValueError("一時ディレクトリが設定されていません")
+
+        file_path = os.path.join(self.temp_dir, f"{prefix}_{int(time.time())}_{id(data)}{suffix}")
+
+        # データサイズに基づいて保存方法を選択
+        try:
+            # メモリ消費を抑えるために適切な方法で保存
+            joblib.dump(data, file_path, compress=3, protocol=4)
+            self.temp_files.add(file_path)
+            self.logger.debug(f"データを一時ファイルに保存しました: {file_path}")
+            return file_path
+        except Exception as e:
+            self.logger.error(f"データの一時ファイル保存に失敗: {str(e)}")
+            raise
+
+    def _load_from_temp_file(self, file_path):
+        """
+        一時ファイルからデータを読み込み
+
+        Parameters:
+        -----------
+        file_path : str
+            読み込むファイルのパス
+
+        Returns:
+        --------
+        Any
+            読み込んだデータ
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"指定されたファイルが見つかりません: {file_path}")
+
+        try:
+            data = joblib.load(file_path)
+            return data
+        except Exception as e:
+            self.logger.error(f"一時ファイルからの読み込みに失敗: {str(e)}")
+            raise
+
+    def _save_model(self, model, model_id=None):
+        """
+        モデルを保存（メモリまたはディスク）
+
+        Parameters:
+        -----------
+        model : Any
+            保存するモデルインスタンス
+        model_id : str, optional
+            モデルの識別子
+
+        Returns:
+        --------
+        str or Any
+            ディスク保存の場合はファイルパス、メモリ保存の場合はモデル自体
+        """
+        if model_id is None:
+            model_id = str(id(model))
+
+        if self.storage_mode == 'memory':
+            # メモリに保存
+            self.model_cache[model_id] = model
+            return model
+        else:
+            # ディスクに保存
+            file_path = self._save_to_temp_file(model, prefix=f"model_{model_id}")
+            return file_path
+
+    def _load_model(self, model_ref, model_id=None):
+        """
+        保存したモデルを読み込み
+
+        Parameters:
+        -----------
+        model_ref : str or Any
+            モデルの参照（ファイルパスまたはモデル自体）
+        model_id : str, optional
+            モデルの識別子
+
+        Returns:
+        --------
+        Any
+            読み込んだモデルインスタンス
+        """
+        if isinstance(model_ref, str) and os.path.exists(model_ref):
+            # ディスクから読み込み
+            return self._load_from_temp_file(model_ref)
+        else:
+            # メモリから取得
+            return model_ref
+
+    def _manage_result(self, result, result_type, save_to_disk=False):
+        """
+        分析結果の管理（メモリ効率のため、必要に応じてディスクに保存）
+
+        Parameters:
+        -----------
+        result : Any
+            管理する結果オブジェクト
+        result_type : str
+            結果の種類を表す識別子
+        save_to_disk : bool, optional
+            強制的にディスクに保存するかどうか
+
+        Returns:
+        --------
+        Any or str
+            結果オブジェクトまたはディスクパス
+        """
+        # ハイブリッドモードや大きな結果データは、ディスクに保存
+        if save_to_disk or self.storage_mode in ['disk', 'hybrid']:
+            if hasattr(result, 'posterior_samples') and result.posterior_samples is not None:
+                # ベイジアン分析の後続サンプルは特に大きいので別途保存
+                posterior_path = self._save_to_temp_file(
+                    result.posterior_samples,
+                    prefix=f"posterior_{result_type}"
+                )
+                # 参照をパスに置き換え
+                result.posterior_samples = posterior_path
+
+            # 結果全体を保存
+            result_path = self._save_to_temp_file(result, prefix=f"result_{result_type}")
+            return result_path
+        else:
+            # メモリに保存
+            return result
+
+    def _get_result(self, result_ref):
+        """
+        結果参照から結果オブジェクトを取得
+
+        Parameters:
+        -----------
+        result_ref : Any or str
+            結果オブジェクトまたはディスクパス
+
+        Returns:
+        --------
+        Any
+            結果オブジェクト
+        """
+        if isinstance(result_ref, str) and os.path.exists(result_ref):
+            # ディスクから読み込み
+            result = self._load_from_temp_file(result_ref)
+
+            # posterior_samplesが参照であれば読み込み
+            if hasattr(result, 'posterior_samples') and isinstance(result.posterior_samples, str) and os.path.exists(result.posterior_samples):
+                result.posterior_samples = self._load_from_temp_file(result.posterior_samples)
+
+            return result
+        else:
+            # メモリオブジェクトをそのまま返す
+            return result_ref
+
+    def estimate_memory_usage(self, data_rows, data_cols, method='causal_impact_bayesian'):
+        """
+        メモリ使用量の概算と最適なストレージモードの推奨
+
+        Parameters:
+        -----------
+        data_rows : int
+            データの行数
+        data_cols : int
+            データの列数
+        method : str
+            使用する分析手法
+
+        Returns:
+        --------
+        Dict
+            メモリ使用量の概算と推奨設定
+        """
+        # 単一データポイントの概算サイズ (バイト単位)
+        bytes_per_element = 8  # 浮動小数点数
+
+        # 入力データサイズ
+        input_size_bytes = data_rows * data_cols * bytes_per_element
+
+        # 中間データと結果の推定サイズ
+        if method == 'causal_impact':
+            # 状態空間モデルの中間データ
+            multiplier = 3
+        elif method == 'causal_impact_bayesian':
+            # ベイズサンプリングの結果は元データよりもずっと大きい
+            multiplier = 20
+        elif method == 'synthetic_control':
+            multiplier = 2
+        elif method == 'estimate_heterogeneous_treatment_effects':
+            # 異質効果推定はモデル複雑性でメモリ使用量が増加
+            multiplier = 5
+        else:
+            multiplier = 2
+
+        # 総メモリ使用量の推定 (MB単位)
+        estimated_memory_mb = (input_size_bytes * multiplier) / (1024 * 1024)
+
+        # 推奨ストレージモード
+        if estimated_memory_mb > self.max_memory_size:
+            if estimated_memory_mb > self.max_memory_size * 3:
+                recommended_mode = 'disk'
+            else:
+                recommended_mode = 'hybrid'
+        else:
+            recommended_mode = 'memory'
+
+        return {
+            'estimated_memory_mb': estimated_memory_mb,
+            'recommended_storage_mode': recommended_mode,
+            'max_allowed_memory_mb': self.max_memory_size,
+            'data_size_mb': input_size_bytes / (1024 * 1024)
+        }
+
+    @contextmanager
+    def _progress_context(self, description="処理中", total=None):
+        """処理の進捗を管理するコンテキストマネージャー"""
+        start_time = time.time()
+        self.logger.info(f"{description}を開始")
+
+        try:
+            yield
+        finally:
+            elapsed = time.time() - start_time
+            self.logger.info(f"{description}が完了しました（経過時間: {elapsed:.2f}秒）")
 
     def analyze_difference_in_differences(
         self,
@@ -373,10 +734,14 @@ class CausalInferenceAnalyzer:
         intervention_time: str,
         target_col: str,
         control_cols: List[str] = None,
-        model_args: Dict = None
+        model_args: Dict = None,
+        batch_size: int = 200,
+        progress_callback: callable = None
     ) -> CausalImpactResult:
         """
         PyMCを使用したベイズ時系列因果推論
+
+        大規模データセットに最適化されたバージョン
 
         Parameters:
         -----------
@@ -390,126 +755,419 @@ class CausalInferenceAnalyzer:
             コントロール変数（予測モデルに使用する変数）のカラム名リスト
         model_args : Dict, optional
             モデルのパラメータ
+        batch_size : int, optional
+            予測バッチのサイズ（メモリ使用量の調整に使用）
+        progress_callback : callable, optional
+            進捗を報告するコールバック関数
 
         Returns:
         --------
         CausalImpactResult
             因果効果の推定結果
         """
-        self.logger.info(f"ベイズ時系列因果推論による分析を開始: 対象変数={target_col}, 介入時点={intervention_time}")
+        with self._progress_context(description=f"ベイズ時系列因果推論分析 - {target_col}", total=100):
+            self.logger.info(f"ベイズ時系列因果推論による分析を開始: 対象変数={target_col}, 介入時点={intervention_time}")
 
-        try:
-            # データの準備
-            df = time_series.copy()
+            # メモリ使用量の概算
+            data_rows = len(time_series)
+            data_cols = len(time_series.columns)
+            memory_estimate = self.estimate_memory_usage(data_rows, data_cols, 'causal_impact_bayesian')
 
-            # 介入前後のデータを分割
-            pre_data = df.loc[:intervention_time].copy()
-            post_data = df.loc[intervention_time:].copy()
+            if memory_estimate['estimated_memory_mb'] > self.max_memory_size:
+                self.logger.warning(
+                    f"メモリ使用量が多い可能性があります: 推定{memory_estimate['estimated_memory_mb']:.1f}MB > "
+                    f"設定{self.max_memory_size}MB。自動的に効率モードを有効化します。"
+                )
 
-            # 多変量ベイズ構造時系列モデル
-            # PyMCを使用したベイズモデル
-            with pm.Model() as model:
-                # 事前分布
-                if control_cols and len(control_cols) > 0:
-                    # 多変量モデル
-                    coeffs = pm.Normal('coeffs', mu=0, sigma=1, shape=len(control_cols))
-                    intercept = pm.Normal('intercept', mu=0, sigma=10)
-                    sigma = pm.HalfCauchy('sigma', beta=1)
+            try:
+                # 進捗報告 - 10%
+                if progress_callback:
+                    progress_callback(10, "データの準備中")
 
-                    # 回帰モデル（介入前データで学習）
-                    X_pre = pre_data[control_cols].values
-                    y_pre = pre_data[target_col].values
+                # データの準備 - コピーではなく参照を使用
+                with self._managed_data(time_series) as df:
+                    # 日付型への変換
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                        df.index = pd.to_datetime(df.index)
 
-                    # 線形予測
-                    mu = intercept + pm.math.dot(X_pre, coeffs)
-                else:
-                    # 単変量モデル - ローカルレベルモデル
-                    sigma_level = pm.HalfCauchy('sigma_level', beta=1)
-                    sigma_obs = pm.HalfCauchy('sigma_obs', beta=1)
+                    intervention_date = pd.to_datetime(intervention_time)
 
-                    # 状態空間表現
-                    level = pm.GaussianRandomWalk('level', sigma=sigma_level, shape=len(pre_data))
-                    mu = level
-                    sigma = sigma_obs
+                    # 介入前後のデータを分割 - コピーではなく参照を使用
+                    pre_data = df.loc[:intervention_time]
+                    post_data = df.loc[intervention_time:]
 
-                    y_pre = pre_data[target_col].values
+                    # 事前処理で必要なデータのみを抽出
+                    if control_cols and len(control_cols) > 0:
+                        # 多変量モデル用データ抽出
+                        X_pre = pre_data[control_cols].values
+                        y_pre = pre_data[target_col].values
+                        X_post = post_data[control_cols].values
+                    else:
+                        # 単変量モデル用データ抽出
+                        y_pre = pre_data[target_col].values
+                        X_pre = None
+                        X_post = None
 
-                # 尤度
-                likelihood = pm.Normal('y', mu=mu, sigma=sigma, observed=y_pre)
+                    # 進捗報告 - 20%
+                    if progress_callback:
+                        progress_callback(20, "ベイズモデルの構築中")
 
-                # サンプリング
-                trace = pm.sample(2000, tune=1000, cores=2, progressbar=False, random_seed=42)
-
-            # 介入後期間の反事実予測
-            if control_cols and len(control_cols) > 0:
-                # 多変量モデル - コントロール変数を使用
-                X_post = post_data[control_cols].values
-
-                # 予測分布からサンプリング
-                post_pred = np.zeros((len(trace) * 2, len(post_data)))
-                for i, sample in enumerate(az.extract(trace, var_names=['coeffs', 'intercept', 'sigma']).to_dict('records')):
-                    coeffs_sample = sample['coeffs']
-                    intercept_sample = sample['intercept']
-                    sigma_sample = sample['sigma']
-
-                    # 予測平均
-                    mu = intercept_sample + np.dot(X_post, coeffs_sample)
-
-                    # 予測からのサンプリング
-                    post_pred[i] = np.random.normal(mu, sigma_sample)
-            else:
-                # 単変量モデル - 予測
-                with model:
-                    # 状態空間モデルの予測
-                    forecast = pm.sample_posterior_predictive(
-                        trace,
-                        var_names=['y'],
-                        samples=1000,
-                        random_seed=42
+                    # モデル構築とサンプリングは一時的に大量のメモリを使用するため、
+                    # 別のスコープで実行してすぐに解放できるようにする
+                    model_results = self._run_bayesian_model(
+                        X_pre, y_pre, control_cols, model_args, progress_callback
                     )
 
-                # 予測値の抽出
-                post_pred = forecast['y']
+                    # 進捗報告 - 60%
+                    if progress_callback:
+                        progress_callback(60, "介入後の予測計算中")
 
-            # 予測の要約
-            predicted_mean = post_pred.mean(axis=0)
-            predicted_ci = np.percentile(post_pred, [2.5, 97.5], axis=0).T
+                    # 介入後期間の反事実予測 - バッチ処理による最適化
+                    post_samples = model_results['trace']
 
-            # 実際の値との差を計算して効果を推定
-            counterfactual = pd.Series(predicted_mean, index=post_data.index)
-            actual = post_data[target_col]
-            effect_series = actual - counterfactual
+                    # バッチ処理で予測を計算
+                    post_pred = self._predict_counterfactual_batches(
+                        post_samples, X_post, post_data,
+                        control_cols, model_results, batch_size,
+                        progress_callback
+                    )
 
-            # 効果の要約統計量
-            point_effect = effect_series.mean()
-            posterior_samples = np.array([actual.values - sample for sample in post_pred])
-            ci = np.percentile(posterior_samples.mean(axis=1), [2.5, 97.5])
-            cumulative_effect = effect_series.sum()
+                    # 予測の要約
+                    predicted_mean = np.mean(post_pred, axis=0)
+                    predicted_ci = np.percentile(post_pred, [2.5, 97.5], axis=0).T
 
-            # Bayesian p-value（事後確率）
-            # 効果がゼロより大きい（または小さい）確率
-            if point_effect > 0:
-                p_value = (posterior_samples.mean(axis=1) <= 0).mean()
+                    # 実際の値との差を計算して効果を推定
+                    actual = post_data[target_col].values
+                    counterfactual = pd.Series(predicted_mean, index=post_data.index)
+                    actual_series = pd.Series(actual, index=post_data.index)
+                    effect_series = actual_series - counterfactual
+
+                    # 効果の要約統計量
+                    point_effect = effect_series.mean()
+
+                    # メモリ効率のためバッチで計算
+                    # 事後効果サンプルを元データの配列形式に再構築せず、
+                    # 平均値のみを保持
+                    posterior_effect_means = np.array([
+                        np.mean(actual - post_pred[i])
+                        for i in range(len(post_pred))
+                    ])
+
+                    # 信頼区間
+                    ci = np.percentile(posterior_effect_means, [2.5, 97.5])
+
+                    # 累積効果
+                    cumulative_effect = effect_series.sum()
+
+                    # Bayesian p-value（事後確率）
+                    # 効果がゼロより大きい（または小さい）確率
+                    if point_effect > 0:
+                        p_value = (posterior_effect_means <= 0).mean()
+                    else:
+                        p_value = (posterior_effect_means >= 0).mean()
+
+                    # 進捗報告 - 90%
+                    if progress_callback:
+                        progress_callback(90, "結果のまとめ中")
+
+                    # メモリ効率のためにposterior_samplesは効果の平均値のみ保存
+                    result = CausalImpactResult(
+                        point_effect=point_effect,
+                        confidence_interval=(ci[0], ci[1]),
+                        p_value=p_value,
+                        posterior_samples=posterior_effect_means if self.storage_mode == 'memory' else None,
+                        counterfactual_series=counterfactual,
+                        effect_series=effect_series,
+                        cumulative_effect=cumulative_effect,
+                        model_summary=model_results.get('summary', {})
+                    )
+
+                    # メモリ効率のためにディスクストレージを使用する場合、ここで保存
+                    if self.storage_mode != 'memory':
+                        result = self._manage_result(result, f"bayes_{target_col}", save_to_disk=True)
+
+                    # 明示的に大きなオブジェクトを解放
+                    del post_pred, predicted_mean, predicted_ci, posterior_effect_means
+                    gc.collect()
+
+                    # 進捗報告 - 100%
+                    if progress_callback:
+                        progress_callback(100, "分析完了")
+
+                    self.logger.info(f"ベイズ時系列因果推論による分析が完了: 効果={point_effect}, 事後確率={1-p_value:.3f}")
+                    return result
+
+            except Exception as e:
+                self.logger.error(f"ベイズ時系列因果推論による分析中にエラーが発生: {str(e)}")
+                # 途中で例外が発生した場合でもリソースを解放
+                gc.collect()
+                raise
+
+    def _run_bayesian_model(self, X_pre, y_pre, control_cols, model_args=None, progress_callback=None):
+        """
+        ベイズモデルを構築し、MCMCサンプリングを実行
+
+        Parameters:
+        -----------
+        X_pre : np.ndarray or None
+            説明変数の配列（多変量モデルの場合）
+        y_pre : np.ndarray
+            目的変数の配列
+        control_cols : List[str] or None
+            コントロール変数のリスト
+        model_args : Dict, optional
+            モデル構築用の追加パラメータ
+        progress_callback : callable, optional
+            進捗コールバック関数
+
+        Returns:
+        --------
+        Dict
+            サンプリング結果とモデル情報を含む辞書
+        """
+        # デフォルトのモデルパラメータ
+        if model_args is None:
+            model_args = {}
+
+        # サンプリングパラメータの設定
+        n_samples = model_args.get('n_samples', 2000)
+        n_tune = model_args.get('n_tune', 1000)
+        n_chains = model_args.get('n_chains', 2)
+        n_cores = model_args.get('n_cores', 1)
+        random_seed = model_args.get('random_seed', 42)
+
+        # モデル構築
+        with pm.Model() as model:
+            # 進捗報告 - 25%
+            if progress_callback:
+                progress_callback(25, "モデルの事前分布を定義中")
+
+            # 事前分布
+            if control_cols and len(control_cols) > 0 and X_pre is not None:
+                # 多変量モデル
+                coeffs = pm.Normal('coeffs', mu=0, sigma=1, shape=len(control_cols))
+                intercept = pm.Normal('intercept', mu=0, sigma=10)
+                sigma = pm.HalfCauchy('sigma', beta=1)
+
+                # 線形予測
+                mu = intercept + pm.math.dot(X_pre, coeffs)
             else:
-                p_value = (posterior_samples.mean(axis=1) >= 0).mean()
+                # 単変量モデル - ローカルレベルモデル
+                sigma_level = pm.HalfCauchy('sigma_level', beta=1)
+                sigma_obs = pm.HalfCauchy('sigma_obs', beta=1)
 
-            result = CausalImpactResult(
-                point_effect=point_effect,
-                confidence_interval=(ci[0], ci[1]),
-                p_value=p_value,
-                posterior_samples=posterior_samples,
-                counterfactual_series=counterfactual,
-                effect_series=effect_series,
-                cumulative_effect=cumulative_effect,
-                model_summary={'report': report, 'summary': summary}
+                # 状態空間表現
+                level = pm.GaussianRandomWalk('level', sigma=sigma_level, shape=len(y_pre))
+                mu = level
+                sigma = sigma_obs
+
+            # 尤度
+            likelihood = pm.Normal('y', mu=mu, sigma=sigma, observed=y_pre)
+
+            # 進捗報告 - 30%
+            if progress_callback:
+                progress_callback(30, "サンプリング初期化中")
+
+            # サンプリング - メモリ効率を考慮した設定
+            trace = pm.sample(
+                n_samples,
+                tune=n_tune,
+                chains=n_chains,
+                cores=n_cores,
+                progressbar=False,
+                random_seed=random_seed,
+                return_inferencedata=False
             )
 
-            self.logger.info(f"ベイズ時系列因果推論による分析が完了: 効果={point_effect}, 事後確率={1-p_value:.3f}")
-            return result
+            # 進捗報告 - 50%
+            if progress_callback:
+                progress_callback(50, "サンプリング完了")
 
+        # モデル結果をまとめる
+        try:
+            # 結果の要約
+            summary = az.summary(trace)
+            summary_dict = summary.to_dict()
         except Exception as e:
-            self.logger.error(f"ベイズ時系列因果推論による分析中にエラーが発生: {str(e)}")
-            raise
+            self.logger.warning(f"モデル要約の生成に失敗: {str(e)}")
+            summary_dict = {"error": str(e)}
+
+        # モデル変数情報を抽出
+        var_names = trace.varnames
+        model_info = {
+            'has_coeffs': 'coeffs' in var_names,
+            'has_intercept': 'intercept' in var_names,
+            'has_level': 'level' in var_names
+        }
+
+        # トレースをディスクに保存するかどうかを決定
+        if self.storage_mode != 'memory':
+            trace_path = self._save_to_temp_file(trace, prefix="bayesian_trace")
+            trace = trace_path
+
+        return {
+            'trace': trace,
+            'summary': summary_dict,
+            'model_info': model_info
+        }
+
+    def _predict_counterfactual_batches(self, trace, X_post, post_data, control_cols, model_results,
+                                      batch_size=200, progress_callback=None):
+        """
+        バッチ処理による反事実予測
+
+        Parameters:
+        -----------
+        trace : MultiTrace or str
+            PyMCサンプリングのトレース、またはトレースファイルへのパス
+        X_post : np.ndarray or None
+            介入後期間の説明変数
+        post_data : pd.DataFrame
+            介入後期間のデータ
+        control_cols : List[str] or None
+            コントロール変数リスト
+        model_results : Dict
+            モデル構築結果
+        batch_size : int
+            バッチサイズ
+        progress_callback : callable, optional
+            進捗コールバック関数
+
+        Returns:
+        --------
+        np.ndarray
+            反事実予測値の配列
+        """
+        # トレースの読み込み（必要に応じて）
+        if isinstance(trace, str) and os.path.exists(trace):
+            trace = self._load_from_temp_file(trace)
+
+        model_info = model_results['model_info']
+        post_len = len(post_data)
+
+        # モデルタイプに基づいてサンプル数を決定
+        if hasattr(trace, 'nchains'):
+            n_samples = len(trace) * trace.nchains
+        else:
+            # ArviZ InferenceData形式
+            n_samples = len(trace)
+
+        # トレースから必要なパラメータを抽出
+        if model_info['has_coeffs'] and model_info['has_intercept'] and X_post is not None:
+            # 多変量モデル - パラメータ抽出
+            all_params = []
+
+            # バッチでパラメータを抽出（メモリ効率向上）
+            for i in range(0, n_samples, batch_size):
+                batch_end = min(i + batch_size, n_samples)
+                batch_indices = range(i, batch_end)
+
+                # パラメータの抽出
+                batch_params = []
+                for idx in batch_indices:
+                    sample_idx = idx % len(trace)
+                    chain_idx = idx // len(trace) if hasattr(trace, 'nchains') else 0
+
+                    if hasattr(trace, 'get_values'):
+                        # PyMC3互換
+                        coeffs = trace.get_values('coeffs', chains=chain_idx)[sample_idx]
+                        intercept = trace.get_values('intercept', chains=chain_idx)[sample_idx]
+                        sigma = trace.get_values('sigma', chains=chain_idx)[sample_idx]
+                    else:
+                        # PyMC新バージョン
+                        coeffs = trace['coeffs'][sample_idx]
+                        intercept = trace['intercept'][sample_idx]
+                        sigma = trace['sigma'][sample_idx]
+
+                    batch_params.append((coeffs, intercept, sigma))
+
+                all_params.extend(batch_params)
+
+                # 進捗報告
+                if progress_callback:
+                    progress_percent = 60 + (i / n_samples) * 20
+                    progress_callback(int(progress_percent), f"パラメータ抽出中 {i}/{n_samples}")
+
+            # 予測計算用の配列を初期化
+            post_pred = np.zeros((n_samples, post_len))
+
+            # バッチで予測を計算
+            for i in range(0, n_samples, batch_size):
+                batch_end = min(i + batch_size, n_samples)
+                batch_size_actual = batch_end - i
+
+                # このバッチのパラメータ
+                batch_params = all_params[i:batch_end]
+
+                # 各サンプルの予測値を計算
+                for j, (coeffs, intercept, sigma) in enumerate(batch_params):
+                    # 予測平均
+                    mu = intercept + np.dot(X_post, coeffs)
+
+                    # 予測からのサンプリング
+                    post_pred[i+j] = np.random.normal(mu, sigma)
+
+                # 進捗報告
+                if progress_callback:
+                    progress_percent = 80 + (i / n_samples) * 10
+                    progress_callback(int(progress_percent), f"予測計算中 {i}/{n_samples}")
+
+                # 一時的なメモリ解放
+                if i % (batch_size * 5) == 0:
+                    gc.collect()
+
+        else:
+            # 単変量モデル - ローカルレベルモデルの予測
+            # トレースから最後のレベル値を抽出
+            if hasattr(trace, 'get_values'):
+                level_samples = trace.get_values('level', chains=None)
+            else:
+                level_samples = trace['level']
+
+            # 各サンプルの最後のレベル値
+            last_levels = np.array([sample[-1] for sample in level_samples])
+
+            if hasattr(trace, 'get_values'):
+                sigma_level_samples = trace.get_values('sigma_level', chains=None)
+                sigma_obs_samples = trace.get_values('sigma_obs', chains=None)
+            else:
+                sigma_level_samples = trace['sigma_level']
+                sigma_obs_samples = trace['sigma_obs']
+
+            # 予測計算用の配列を初期化
+            post_pred = np.zeros((n_samples, post_len))
+
+            # バッチで予測を計算
+            for i in range(0, n_samples, batch_size):
+                batch_end = min(i + batch_size, n_samples)
+                batch_indices = range(i, batch_end)
+
+                for j, idx in enumerate(batch_indices):
+                    # ランダムウォークを継続
+                    last_level = last_levels[idx % len(last_levels)]
+                    sigma_level = sigma_level_samples[idx % len(sigma_level_samples)]
+                    sigma_obs = sigma_obs_samples[idx % len(sigma_obs_samples)]
+
+                    # 新しいレベルをシミュレート
+                    new_levels = np.zeros(post_len)
+                    new_levels[0] = last_level + np.random.normal(0, sigma_level)
+
+                    for t in range(1, post_len):
+                        new_levels[t] = new_levels[t-1] + np.random.normal(0, sigma_level)
+
+                    # 観測値をシミュレート
+                    post_pred[i+j] = new_levels + np.random.normal(0, sigma_obs, post_len)
+
+                # 進捗報告
+                if progress_callback:
+                    progress_percent = 80 + (i / n_samples) * 10
+                    progress_callback(int(progress_percent), f"予測計算中 {i}/{n_samples}")
+
+                # 一時的なメモリ解放
+                if i % (batch_size * 5) == 0:
+                    gc.collect()
+
+        return post_pred
 
     def estimate_revenue_impact(
         self,
@@ -518,10 +1176,14 @@ class CausalInferenceAnalyzer:
         company_id: str,
         intervention_date: str,
         control_features: List[str] = None,
-        method: str = 'causal_impact'
+        method: str = 'causal_impact',
+        progress_callback: callable = None,
+        storage_mode: str = None
     ) -> Dict:
         """
         Startup Wellnessプログラムによる売上への影響（ΔRevenue）を推定
+
+        メモリ効率化版
 
         Parameters:
         -----------
@@ -537,6 +1199,10 @@ class CausalInferenceAnalyzer:
             コントロール変数（共変量）のリスト
         method : str, optional
             使用する因果推論手法（'causal_impact', 'causal_impact_bayesian', 'synthetic_control', 'did'のいずれか）
+        progress_callback : callable, optional
+            進捗報告コールバック関数
+        storage_mode : str, optional
+            この分析用の一時的なストレージモード（Noneの場合はクラスのデフォルト設定を使用）
 
         Returns:
         --------
@@ -547,149 +1213,273 @@ class CausalInferenceAnalyzer:
             - relative_impact: 相対的な影響度（%）
             - details: 詳細な分析結果
         """
-        self.logger.info(f"売上影響度の推定を開始: 企業ID={company_id}, 介入日={intervention_date}")
+        with self._progress_context(description=f"売上影響度推定 - {company_id} - {method}"):
+            self.logger.info(f"売上影響度の推定を開始: 企業ID={company_id}, 介入日={intervention_date}")
 
-        try:
-            # 対象企業のデータを抽出
-            company_revenue = revenue_data[revenue_data['company_id'] == company_id].copy()
+            # この分析のための一時的なストレージモード設定
+            original_storage_mode = self.storage_mode
+            if storage_mode is not None:
+                self.storage_mode = storage_mode
 
-            # 日付列を確認し、必要に応じて変換
-            date_cols = [col for col in company_revenue.columns if 'date' in col.lower()]
-            if not date_cols:
-                raise ValueError("日付カラムが見つかりません")
+            try:
+                # 進捗報告 - 10%
+                if progress_callback:
+                    progress_callback(10, "データの準備中")
 
-            date_col = date_cols[0]
+                # 対象企業のデータを抽出 - 不要なコピーを避ける
+                with self._managed_data(revenue_data) as rd:
+                    company_revenue = rd[rd['company_id'] == company_id]
 
-            # 日付でソート
-            company_revenue = company_revenue.sort_values(date_col)
+                    # 日付列を確認し、必要に応じて変換
+                    date_cols = [col for col in company_revenue.columns if 'date' in col.lower()]
+                    if not date_cols:
+                        raise ValueError("日付カラムが見つかりません")
 
-            # 日付をインデックスに設定
-            if date_col != company_revenue.index.name:
-                company_revenue = company_revenue.set_index(date_col)
+                    date_col = date_cols[0]
 
-            # 介入日以降のデータが十分にあるか確認
-            if len(company_revenue.loc[intervention_date:]) < 3:
-                raise ValueError("介入後のデータポイントが不足しています（最低3ポイント必要）")
+                    # 日付でソート
+                    company_revenue = company_revenue.sort_values(date_col)
 
-            result = None
+                    # 日付をインデックスに設定
+                    if date_col != company_revenue.index.name:
+                        company_revenue = company_revenue.set_index(date_col)
 
-            if method == 'causal_impact' or method == 'causal_impact_bayesian':
-                # 売上カラムを特定
-                revenue_cols = [col for col in company_revenue.columns if 'revenue' in col.lower()]
-                if not revenue_cols:
-                    raise ValueError("売上データのカラムが見つかりません")
+                    # 介入日以降のデータが十分にあるか確認
+                    if len(company_revenue.loc[intervention_date:]) < 3:
+                        raise ValueError("介入後のデータポイントが不足しています（最低3ポイント必要）")
 
-                revenue_col = revenue_cols[0]  # 最初の売上カラムを使用
+                    # 進捗報告 - 20%
+                    if progress_callback:
+                        progress_callback(20, "分析手法の準備中")
 
-                # コントロール変数の準備
-                if not control_features:
-                    # コントロール変数が指定されていない場合、同業他社のデータを使用
-                    other_companies = revenue_data[revenue_data['company_id'] != company_id]
-                    # 他社の売上データを集約（例: 平均売上）
-                    other_companies_pivot = other_companies.pivot_table(
-                        index=date_col,
-                        columns='company_id',
-                        values=revenue_col,
-                        aggfunc='mean'
-                    )
-                    # ターゲット企業のデータとマージ
-                    merged_data = pd.DataFrame(company_revenue[revenue_col])
-                    merged_data = merged_data.join(other_companies_pivot, how='inner')
-                    control_cols = other_companies_pivot.columns.tolist()
-                else:
-                    # 指定されたコントロール変数を使用
-                    control_cols = [col for col in control_features if col in company_revenue.columns]
-                    merged_data = company_revenue[[revenue_col] + control_cols]
+                    result = None
 
-                # 因果推論分析の実行
-                if method == 'causal_impact':
-                    result = self.analyze_causal_impact(
-                        time_series=merged_data,
-                        intervention_time=intervention_date,
-                        target_col=revenue_col,
-                        control_cols=control_cols
-                    )
-                else:  # method == 'causal_impact_bayesian'
-                    result = self.analyze_causal_impact_bayesian(
-                        time_series=merged_data,
-                        intervention_time=intervention_date,
-                        target_col=revenue_col,
-                        control_cols=control_cols
-                    )
+                    if method == 'causal_impact' or method == 'causal_impact_bayesian':
+                        # 売上カラムを特定
+                        revenue_cols = [col for col in company_revenue.columns if 'revenue' in col.lower()]
+                        if not revenue_cols:
+                            raise ValueError("売上データのカラムが見つかりません")
 
-            elif method == 'synthetic_control':
-                # 合成コントロール法による分析
-                # 全企業のデータをパネル形式に整形
-                panel_data = revenue_data.pivot(index='company_id', columns=date_col, values='revenue')
-                panel_data = panel_data.reset_index()
+                        revenue_col = revenue_cols[0]  # 最初の売上カラムを使用
 
-                # 介入前後の期間を定義
-                all_dates = sorted(panel_data.columns[1:])  # 日付のみ（company_idを除く）
-                intervention_idx = all_dates.index(intervention_date)
-                pre_period = [all_dates[0], all_dates[intervention_idx-1]]
-                post_period = [all_dates[intervention_idx], all_dates[-1]]
+                        # コントロール変数の準備
+                        if not control_features:
+                            # 進捗報告 - 30%
+                            if progress_callback:
+                                progress_callback(30, "コントロール変数の構築中")
 
-                # 対照企業の選定（介入を受けていない企業）
-                intervention_companies = intervention_data['company_id'].unique().tolist()
-                control_units = [c for c in panel_data['company_id'].unique()
-                               if c != company_id and c not in intervention_companies]
+                            # コントロール変数が指定されていない場合、同業他社のデータを使用
+                            other_companies = revenue_data[revenue_data['company_id'] != company_id]
 
-                # パネルデータを長形式に変換
-                long_data = panel_data.melt(id_vars='company_id', var_name=date_col, value_name='revenue')
+                            # メモリ効率向上のため、必要な列のみを取得
+                            other_companies = other_companies[[date_col, 'company_id', revenue_col]]
 
-                # 合成コントロール法による分析実行
-                result = self.analyze_synthetic_control(
-                    data=long_data,
-                    target_unit=company_id,
-                    control_units=control_units,
-                    time_col=date_col,
-                    outcome_col='revenue',
-                    pre_period=pre_period,
-                    post_period=post_period
-                )
+                            # 他社の売上データを集約（例: 平均売上）
+                            other_companies_pivot = other_companies.pivot_table(
+                                index=date_col,
+                                columns='company_id',
+                                values=revenue_col,
+                                aggfunc='mean'
+                            )
 
-            elif method == 'did':
-                # 差分の差分法による分析
-                # 処置グループ（対象企業）と対照グループ（その他企業）の設定
-                revenue_data['treatment'] = revenue_data['company_id'] == company_id
+                            # 大量のコントロール変数がある場合は上位のみ使用
+                            if other_companies_pivot.shape[1] > 20:
+                                # 相関係数に基づいて上位のコントロール変数を選択
+                                corr_with_target = {}
+                                target_series = company_revenue[revenue_col]
 
-                # 処置前後の期間設定
-                revenue_data['post'] = pd.to_datetime(revenue_data[date_col]) >= pd.to_datetime(intervention_date)
+                                for col in other_companies_pivot.columns:
+                                    # 両方のデータがある部分のみを使用して相関を計算
+                                    common_idx = target_series.index.intersection(other_companies_pivot.index)
+                                    if len(common_idx) > 0:
+                                        corr = np.abs(np.corrcoef(
+                                            target_series.loc[common_idx],
+                                            other_companies_pivot.loc[common_idx, col]
+                                        )[0, 1])
+                                        if not np.isnan(corr):
+                                            corr_with_target[col] = corr
 
-                # DiD分析の実行
-                result = self.analyze_difference_in_differences(
-                    data=revenue_data,
-                    treatment_col='treatment',
-                    time_col='post',
-                    outcome_col='revenue',
-                    covariates=control_features
-                )
+                                # 相関が高い順にソート
+                                sorted_controls = sorted(
+                                    corr_with_target.items(),
+                                    key=lambda x: x[1],
+                                    reverse=True
+                                )
 
-            # 基準期間の平均売上（介入前）を計算
-            pre_avg_revenue = company_revenue.loc[:intervention_date]['revenue'].mean()
+                                # 上位20社のみを使用
+                                top_controls = [c[0] for c in sorted_controls[:20]]
+                                other_companies_pivot = other_companies_pivot[top_controls]
+                                self.logger.info(f"メモリ効率化のため、上位20社のみをコントロール変数として使用します")
 
-            # 相対的な影響度（%）を計算
-            relative_impact = (result.point_effect / pre_avg_revenue) * 100
+                            # ターゲット企業のデータとマージ
+                            merged_data = pd.DataFrame(company_revenue[revenue_col])
+                            merged_data = merged_data.join(other_companies_pivot, how='inner')
+                            control_cols = other_companies_pivot.columns.tolist()
+                        else:
+                            # 指定されたコントロール変数を使用
+                            control_cols = [col for col in control_features if col in company_revenue.columns]
+                            merged_data = company_revenue[[revenue_col] + control_cols]
 
-            # 結果をまとめる
-            output = {
-                'delta_revenue': result.point_effect,
-                'confidence_interval': result.confidence_interval,
-                'relative_impact': relative_impact,
-                'cumulative_effect': result.cumulative_effect,
-                'details': {
-                    'method': method,
-                    'model_summary': result.model_summary,
-                    'p_value': result.p_value,
-                }
-            }
+                        # 進捗報告 - 40%
+                        if progress_callback:
+                            progress_callback(40, "因果推論分析の実行中")
 
-            self.logger.info(f"売上影響度の推定が完了: ΔRevenue={result.point_effect}, 相対影響度={relative_impact}%")
-            return output
+                        # 因果推論分析の実行
+                        if method == 'causal_impact':
+                            result = self.analyze_causal_impact(
+                                time_series=merged_data,
+                                intervention_time=intervention_date,
+                                target_col=revenue_col,
+                                control_cols=control_cols
+                            )
+                        else:  # method == 'causal_impact_bayesian'
+                            result = self.analyze_causal_impact_bayesian(
+                                time_series=merged_data,
+                                intervention_time=intervention_date,
+                                target_col=revenue_col,
+                                control_cols=control_cols,
+                                progress_callback=lambda p, m: progress_callback(40 + p * 0.5, m) if progress_callback else None
+                            )
 
-        except Exception as e:
-            self.logger.error(f"売上影響度の推定中にエラーが発生: {str(e)}")
-            raise
+                    elif method == 'synthetic_control':
+                        # 進捗報告 - 40%
+                        if progress_callback:
+                            progress_callback(40, "合成コントロール法分析の準備中")
+
+                        # 合成コントロール法による分析
+                        # メモリ効率化: 必要な列のみ使用
+                        revenue_cols = [col for col in revenue_data.columns if 'revenue' in col.lower()]
+                        if not revenue_cols:
+                            raise ValueError("売上データのカラムが見つかりません")
+
+                        revenue_col = revenue_cols[0]
+
+                        # パネルデータ構築の効率化
+                        panel_data = revenue_data.pivot(
+                            index='company_id',
+                            columns=date_col,
+                            values=revenue_col
+                        )
+
+                        # 介入前後の期間を定義
+                        all_dates = sorted(panel_data.columns)
+                        try:
+                            intervention_idx = all_dates.index(intervention_date)
+                        except ValueError:
+                            # 正確な日付が見つからない場合は最も近い日付を使用
+                            intervention_dates = [d for d in all_dates if d >= intervention_date]
+                            if not intervention_dates:
+                                raise ValueError(f"介入日付 {intervention_date} 以降のデータがありません")
+                            intervention_date = intervention_dates[0]
+                            intervention_idx = all_dates.index(intervention_date)
+
+                        pre_period = [all_dates[0], all_dates[intervention_idx-1]]
+                        post_period = [all_dates[intervention_idx], all_dates[-1]]
+
+                        # 対照企業の選定（介入を受けていない企業）
+                        intervention_companies = intervention_data['company_id'].unique().tolist()
+                        control_units = [c for c in panel_data.index.unique()
+                                       if c != company_id and c not in intervention_companies]
+
+                        # メモリ効率化: 必要なデータのみを含むパネルデータの構築
+                        reduced_panel = panel_data.loc[[company_id] + control_units]
+
+                        # パネルデータを長形式に変換
+                        long_data = reduced_panel.reset_index().melt(
+                            id_vars='company_id',
+                            var_name=date_col,
+                            value_name=revenue_col
+                        )
+
+                        # 進捗報告 - 60%
+                        if progress_callback:
+                            progress_callback(60, "合成コントロール法分析の実行中")
+
+                        # 合成コントロール法による分析実行
+                        result = self.analyze_synthetic_control(
+                            data=long_data,
+                            target_unit=company_id,
+                            control_units=control_units,
+                            time_col=date_col,
+                            outcome_col=revenue_col,
+                            pre_period=pre_period,
+                            post_period=post_period
+                        )
+
+                    elif method == 'did':
+                        # 進捗報告 - 40%
+                        if progress_callback:
+                            progress_callback(40, "差分の差分法分析の準備中")
+
+                        # 差分の差分法による分析
+                        # 処置グループ（対象企業）と対照グループ（その他企業）の設定
+                        did_data = revenue_data.copy()
+                        did_data['treatment'] = did_data['company_id'] == company_id
+
+                        # 処置前後の期間設定
+                        did_data['post'] = pd.to_datetime(did_data[date_col]) >= pd.to_datetime(intervention_date)
+
+                        # 進捗報告 - 60%
+                        if progress_callback:
+                            progress_callback(60, "差分の差分法分析の実行中")
+
+                        # DiD分析の実行
+                        result = self.analyze_difference_in_differences(
+                            data=did_data,
+                            treatment_col='treatment',
+                            time_col='post',
+                            outcome_col='revenue',
+                            covariates=control_features
+                        )
+
+                    # 進捗報告 - 80%
+                    if progress_callback:
+                        progress_callback(80, "結果の分析中")
+
+                    # 基準期間の平均売上（介入前）を計算
+                    pre_avg_revenue = company_revenue.loc[:intervention_date]['revenue'].mean()
+
+                    # 相対的な影響度（%）を計算
+                    relative_impact = (result.point_effect / pre_avg_revenue) * 100
+
+                    # 結果をまとめる
+                    output = {
+                        'delta_revenue': result.point_effect,
+                        'confidence_interval': result.confidence_interval,
+                        'relative_impact': relative_impact,
+                        'cumulative_effect': result.cumulative_effect,
+                        'details': {
+                            'method': method,
+                            'model_summary': result.model_summary,
+                            'p_value': result.p_value,
+                        }
+                    }
+
+                    # 進捗報告 - 100%
+                    if progress_callback:
+                        progress_callback(100, "分析完了")
+
+                    self.logger.info(f"売上影響度の推定が完了: ΔRevenue={result.point_effect}, 相対影響度={relative_impact}%")
+                    return output
+
+            except Exception as e:
+                self.logger.error(f"売上影響度の推定中にエラーが発生: {str(e)}")
+                # リソース解放
+                gc.collect()
+                raise
+            finally:
+                # ストレージモードを元に戻す
+                if storage_mode is not None:
+                    self.storage_mode = original_storage_mode
+
+    def __enter__(self):
+        """コンテキストマネージャプロトコルをサポート"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """コンテキストブロック終了時にリソースを解放"""
+        self.release_resources()
+        return False  # 例外が発生した場合は再送出
 
     def calculate_roi_components(
         self,
@@ -1017,6 +1807,8 @@ class CausalInferenceAnalyzer:
         """
         因果効果の可視化
 
+        メモリリークを防ぐための最適化版
+
         Parameters:
         -----------
         result : CausalImpactResult
@@ -1031,58 +1823,76 @@ class CausalInferenceAnalyzer:
         plt.Figure
             matplotlib図オブジェクト
         """
+        # 結果がディスク上にある場合はロード
+        if isinstance(result, str) and os.path.exists(result):
+            result = self._get_result(result)
+
+        # 必要なデータの確認
         if result.counterfactual_series is None or result.effect_series is None:
             raise ValueError("可視化に必要な時系列データがありません")
 
-        fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+        try:
+            # コンテキストマネージャーを使用してプロットリソースを管理
+            with plt.style.context('default'):
+                # 新しい図を作成
+                plt.close('all')  # 既存の図をクリア
+                fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
 
-        # 実測値と反事実予測の比較
-        ax1 = axes[0]
-        actual = result.counterfactual_series + result.effect_series
-        actual.plot(ax=ax1, label='実測値', color='black', linewidth=2)
-        result.counterfactual_series.plot(ax=ax1, label='反事実予測（介入がなかった場合）',
-                               color='blue', linestyle='--', linewidth=2)
+                # 実測値と反事実予測の比較
+                ax1 = axes[0]
+                actual = result.counterfactual_series + result.effect_series
+                actual.plot(ax=ax1, label='実測値', color='black', linewidth=2)
+                result.counterfactual_series.plot(ax=ax1, label='反事実予測（介入がなかった場合）',
+                                   color='blue', linestyle='--', linewidth=2)
 
-        # 介入時点に縦線を引く
-        intervention_date = result.counterfactual_series.index[0]
-        ax1.axvline(intervention_date, color='red', linestyle='-', alpha=0.5, label='介入時点')
+                # 介入時点に縦線を引く
+                intervention_date = result.counterfactual_series.index[0]
+                ax1.axvline(intervention_date, color='red', linestyle='-', alpha=0.5, label='介入時点')
 
-        ax1.set_title('実測値と反事実予測の比較')
-        ax1.set_ylabel('値')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
+                ax1.set_title('実測値と反事実予測の比較')
+                ax1.set_ylabel('値')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
 
-        # 効果の時系列
-        ax2 = axes[1]
-        result.effect_series.plot(ax=ax2, label='推定効果', color='green', linewidth=2)
-        ax2.axhline(0, color='red', linestyle='--', alpha=0.5)
-        ax2.axvline(intervention_date, color='red', linestyle='-', alpha=0.5)
+                # 効果の時系列
+                ax2 = axes[1]
+                result.effect_series.plot(ax=ax2, label='推定効果', color='green', linewidth=2)
+                ax2.axhline(0, color='red', linestyle='--', alpha=0.5)
+                ax2.axvline(intervention_date, color='red', linestyle='-', alpha=0.5)
 
-        # 累積効果情報を追加
-        cumulative_text = f"累積効果: {result.cumulative_effect:.2f}"
-        avg_effect_text = f"平均効果: {result.point_effect:.2f}"
-        p_value_text = f"p値: {result.p_value:.3f}" if result.p_value is not None else ""
+                # 累積効果情報を追加
+                cumulative_text = f"累積効果: {result.cumulative_effect:.2f}"
+                avg_effect_text = f"平均効果: {result.point_effect:.2f}"
+                p_value_text = f"p値: {result.p_value:.3f}" if result.p_value is not None else ""
 
-        info_text = cumulative_text + "\n" + avg_effect_text
-        if p_value_text:
-            info_text += "\n" + p_value_text
+                info_text = cumulative_text + "\n" + avg_effect_text
+                if p_value_text:
+                    info_text += "\n" + p_value_text
 
-        ax2.text(0.02, 0.95, info_text, transform=ax2.transAxes,
-                 fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
+                ax2.text(0.02, 0.95, info_text, transform=ax2.transAxes,
+                         fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
 
-        ax2.set_title('推定効果の時系列変化')
-        ax2.set_ylabel('効果')
-        ax2.set_xlabel('日付')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+                ax2.set_title('推定効果の時系列変化')
+                ax2.set_ylabel('効果')
+                ax2.set_xlabel('日付')
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
 
-        fig.suptitle(title, fontsize=16)
-        fig.tight_layout()
+                fig.suptitle(title, fontsize=16)
+                fig.tight_layout()
 
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+                if save_path:
+                    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+                    plt.close(fig)  # ファイル保存後に図を閉じる
 
-        return fig
+                return fig
+        except Exception as e:
+            self.logger.error(f"因果効果の可視化中にエラーが発生: {str(e)}")
+            plt.close('all')  # エラー発生時も図を閉じる
+            raise
+        finally:
+            # リソースのクリーンアップ
+            gc.collect()
 
     def visualize_bayesian_posterior(
         self,
@@ -1092,6 +1902,8 @@ class CausalInferenceAnalyzer:
     ) -> plt.Figure:
         """
         ベイズ事後分布の可視化
+
+        メモリリークを防ぐための最適化版
 
         Parameters:
         -----------
@@ -1107,90 +1919,105 @@ class CausalInferenceAnalyzer:
         plt.Figure
             matplotlib図オブジェクト
         """
-        fig, ax = plt.subplots(figsize=(10, 6))
+        try:
+            # 新しい図を作成
+            plt.close('all')  # 既存の図をクリア
+            fig, ax = plt.subplots(figsize=(10, 6))
 
-        # 分布タイプに応じてプロット
-        if posterior_distribution['distribution'] == 'normal':
-            mu = posterior_distribution['mu']
-            sigma = posterior_distribution['sigma']
+            # 分布タイプに応じてプロット
+            if posterior_distribution['distribution'] == 'normal':
+                mu = posterior_distribution['mu']
+                sigma = posterior_distribution['sigma']
 
-            # 95%信用区間
-            lower = mu - 1.96 * sigma
-            upper = mu + 1.96 * sigma
+                # 95%信用区間
+                lower = mu - 1.96 * sigma
+                upper = mu + 1.96 * sigma
 
-            # x軸の範囲
-            x = np.linspace(lower - 2 * sigma, upper + 2 * sigma, 1000)
+                # x軸の範囲 - 効率的な実装
+                x = np.linspace(lower - 2 * sigma, upper + 2 * sigma, 1000)
 
-            # 確率密度関数
-            y = 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-(x - mu)**2 / (2 * sigma**2))
+                # 確率密度関数 - ベクトル化した実装
+                y = 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-(x - mu)**2 / (2 * sigma**2))
 
-            # プロット
-            ax.plot(x, y, 'b-', linewidth=2)
+                # プロット
+                ax.plot(x, y, 'b-', linewidth=2)
 
-            # 95%信用区間
-            ax.axvline(mu, color='r', linestyle='-', label=f'平均: {mu:.2f}')
-            ax.axvline(lower, color='g', linestyle='--', label=f'95%信用区間: [{lower:.2f}, {upper:.2f}]')
-            ax.axvline(upper, color='g', linestyle='--')
+                # 95%信用区間
+                ax.axvline(mu, color='r', linestyle='-', label=f'平均: {mu:.2f}')
+                ax.axvline(lower, color='g', linestyle='--', label=f'95%信用区間: [{lower:.2f}, {upper:.2f}]')
+                ax.axvline(upper, color='g', linestyle='--')
 
-            # 事前分布も表示
-            prior_mu = posterior_distribution['prior']['mu']
-            prior_sigma = posterior_distribution['prior']['sigma']
-            prior_y = 1 / (prior_sigma * np.sqrt(2 * np.pi)) * np.exp(-(x - prior_mu)**2 / (2 * prior_sigma**2))
-            ax.plot(x, prior_y, 'k--', alpha=0.5, linewidth=1.5, label='事前分布')
+                # 事前分布も表示
+                prior_mu = posterior_distribution['prior']['mu']
+                prior_sigma = posterior_distribution['prior']['sigma']
+                prior_y = 1 / (prior_sigma * np.sqrt(2 * np.pi)) * np.exp(-(x - prior_mu)**2 / (2 * prior_sigma**2))
+                ax.plot(x, prior_y, 'k--', alpha=0.5, linewidth=1.5, label='事前分布')
 
-            ax.set_xlabel('ROI (%)')
+                ax.set_xlabel('ROI (%)')
 
-        elif posterior_distribution['distribution'] == 'beta':
-            alpha = posterior_distribution['alpha']
-            beta = posterior_distribution['beta']
+            elif posterior_distribution['distribution'] == 'beta':
+                alpha = posterior_distribution['alpha']
+                beta = posterior_distribution['beta']
 
-            # x軸の範囲
-            x = np.linspace(0, 1, 1000)
+                # x軸の範囲
+                x = np.linspace(0, 1, 1000)
 
-            # ベータ分布の確率密度関数
-            from scipy.special import beta as beta_func
-            y = x**(alpha-1) * (1-x)**(beta-1) / beta_func(alpha, beta)
+                # ベータ分布の確率密度関数
+                from scipy.special import beta as beta_func
+                y = x**(alpha-1) * (1-x)**(beta-1) / beta_func(alpha, beta)
 
-            # 平均と95%信用区間
-            mean = alpha / (alpha + beta)
-            from scipy import stats
-            lower, upper = stats.beta.ppf([0.025, 0.975], alpha, beta)
+                # 平均と95%信用区間
+                mean = alpha / (alpha + beta)
+                from scipy import stats
+                lower, upper = stats.beta.ppf([0.025, 0.975], alpha, beta)
 
-            # プロット
-            ax.plot(x, y, 'b-', linewidth=2)
+                # プロット
+                ax.plot(x, y, 'b-', linewidth=2)
 
-            # 95%信用区間
-            ax.axvline(mean, color='r', linestyle='-', label=f'平均: {mean:.2f}')
-            ax.axvline(lower, color='g', linestyle='--', label=f'95%信用区間: [{lower:.2f}, {upper:.2f}]')
-            ax.axvline(upper, color='g', linestyle='--')
+                # 95%信用区間
+                ax.axvline(mean, color='r', linestyle='-', label=f'平均: {mean:.2f}')
+                ax.axvline(lower, color='g', linestyle='--', label=f'95%信用区間: [{lower:.2f}, {upper:.2f}]')
+                ax.axvline(upper, color='g', linestyle='--')
 
-            # 事前分布も表示
-            prior_alpha = posterior_distribution['prior']['alpha']
-            prior_beta = posterior_distribution['prior']['beta']
-            prior_y = x**(prior_alpha-1) * (1-x)**(prior_beta-1) / beta_func(prior_alpha, prior_beta)
-            ax.plot(x, prior_y, 'k--', alpha=0.5, linewidth=1.5, label='事前分布')
+                # 事前分布も表示
+                prior_alpha = posterior_distribution['prior']['alpha']
+                prior_beta = posterior_distribution['prior']['beta']
+                prior_y = x**(prior_alpha-1) * (1-x)**(prior_beta-1) / beta_func(prior_alpha, prior_beta)
+                ax.plot(x, prior_y, 'k--', alpha=0.5, linewidth=1.5, label='事前分布')
 
-            ax.set_xlabel('成功確率')
+                ax.set_xlabel('成功確率')
 
-        ax.set_ylabel('確率密度')
-        ax.set_title(title)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+            ax.set_ylabel('確率密度')
+            ax.set_title(title)
+            ax.legend()
+            ax.grid(True, alpha=0.3)
 
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            if save_path:
+                fig.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)  # ファイル保存後に図を閉じる
 
-        return fig
+            return fig
+
+        except Exception as e:
+            self.logger.error(f"ベイズ事後分布の可視化中にエラーが発生: {str(e)}")
+            plt.close('all')  # エラー発生時も図を閉じる
+            raise
+        finally:
+            # リソースのクリーンアップ
+            gc.collect()
 
     def visualize_network_effect(
         self,
         network_result: Dict,
         roi_data: pd.DataFrame,
         title: str = "ポートフォリオネットワーク効果",
-        save_path: str = None
+        save_path: str = None,
+        max_nodes: int = 50  # 大規模ネットワークの自動縮小のための閾値
     ) -> plt.Figure:
         """
         ポートフォリオネットワーク効果の可視化
+
+        メモリリークを防ぐための最適化版
 
         Parameters:
         -----------
@@ -1202,6 +2029,8 @@ class CausalInferenceAnalyzer:
             図のタイトル
         save_path : str, optional
             保存先のパス
+        max_nodes : int, optional
+            表示する最大ノード数（大規模ネットワークの自動サンプリング用）
 
         Returns:
         --------
@@ -1210,231 +2039,110 @@ class CausalInferenceAnalyzer:
         """
         import networkx as nx
 
-        # ネットワークグラフの構築
-        G = nx.Graph()
-
-        # ノードの追加
-        ecosystem_impact = network_result['ecosystem_impact']
-        for company, impact in ecosystem_impact.items():
-            # ROI値の取得
-            company_roi = roi_data[roi_data['company_id'] == company]['roi'].values
-            roi = company_roi[0] if len(company_roi) > 0 else 0
-
-            # ノード属性の設定
-            G.add_node(company, impact=impact, roi=roi)
-
-        # エッジの追加（単純なモデル: すべての企業間に弱いつながりがあると仮定）
-        companies = list(ecosystem_impact.keys())
-        for i, company1 in enumerate(companies):
-            for company2 in companies[i+1:]:
-                # 共通の業界がある場合は強い関係
-                industry1 = roi_data[roi_data['company_id'] == company1]['industry'].values[0]
-                industry2 = roi_data[roi_data['company_id'] == company2]['industry'].values[0]
-
-                if industry1 == industry2:
-                    # 同じ業界の場合は強い関係
-                    weight = 0.8
-                else:
-                    # 異なる業界の場合は弱い関係
-                    weight = 0.2
-
-                G.add_edge(company1, company2, weight=weight)
-
-        # 図の作成
-        fig, ax = plt.subplots(figsize=(12, 10))
-
-        # ノードの位置を計算
-        pos = nx.spring_layout(G, seed=42)
-
-        # ノードサイズをエコシステム影響度に基づいて設定
-        node_sizes = [ecosystem_impact[node] * 1000 + 200 for node in G.nodes()]
-
-        # ノード色をROI値に基づいて設定
-        node_colors = [G.nodes[node]['roi'] for node in G.nodes()]
-
-        # エッジの幅を重みに基づいて設定
-        edge_widths = [G.edges[edge]['weight'] * 2 for edge in G.edges()]
-
-        # ネットワークの描画
-        nodes = nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors,
-                                      cmap=plt.cm.viridis, ax=ax)
-        edges = nx.draw_networkx_edges(G, pos, width=edge_widths, alpha=0.6, edge_color='gray', ax=ax)
-        labels = nx.draw_networkx_labels(G, pos, font_size=10, font_color='black', ax=ax)
-
-        # カラーバーの追加
-        cbar = plt.colorbar(nodes, ax=ax, label='ROI (%)')
-
-        # 凡例の追加
-        sizes = [200, 600, 1000]
-        labels = ['低', '中', '高']
-        for size, label in zip(sizes, labels):
-            plt.scatter([], [], s=size, label=f'エコシステム影響度: {label}')
-
-        ax.legend(scatterpoints=1, frameon=True, labelspacing=1)
-
-        # タイトルと軸ラベル
-        ax.set_title(title)
-        ax.axis('off')
-
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
-
-        return fig
-
-    def estimate_heterogeneous_treatment_effects(
-        self,
-        data: pd.DataFrame,
-        treatment_col: str,
-        outcome_col: str,
-        features: List[str],
-        method: str = 'causal_forest',
-        inference_method: str = 'bootstrap',
-        n_estimators: int = 100,
-        max_depth: int = 5,
-        min_samples_leaf: int = 10,
-        bootstrap_samples: int = 1000,
-        random_state: int = 42
-    ) -> HeterogeneousTreatmentEffectResult:
-        """
-        EconMLを使用した異質処理効果（CATE）の推定
-
-        Parameters:
-        -----------
-        data : pd.DataFrame
-            分析対象データ
-        treatment_col : str
-            処置変数のカラム名（0/1のバイナリ変数）
-        outcome_col : str
-            アウトカム変数のカラム名
-        features : List[str]
-            特徴量（共変量）のカラム名リスト
-        method : str, optional
-            使用するモデル（'causal_forest', 'linear_dml', 'dr_learner', 't_learner', 's_learner', 'x_learner'）
-        inference_method : str, optional
-            推論方法（'bootstrap', 'auto'）
-        n_estimators : int, optional
-            モデルの推定器数（ツリーベースのモデル用）
-        max_depth : int, optional
-            ツリーの最大深さ
-        min_samples_leaf : int, optional
-            リーフノードに必要な最小サンプル数
-        bootstrap_samples : int, optional
-            ブートストラップサンプル数
-        random_state : int, optional
-            乱数シード
-
-        Returns:
-        --------
-        HeterogeneousTreatmentEffectResult
-            異質処理効果の推定結果
-        """
-        self.logger.info(f"異質処理効果（CATE）推定を開始: モデル={method}, 対象変数={outcome_col}")
-
         try:
-            # データの準備
-            X = data[features].copy()
-            T = data[treatment_col].values
-            Y = data[outcome_col].values
+            # コンテキストマネージャーを使用してネットワークリソースを管理
+            with self._managed_data(network_result) as result:
+                # 新しい図を作成
+                plt.close('all')  # 既存の図をクリア
+                fig, ax = plt.subplots(figsize=(12, 10))
 
-            # 特徴量の標準化
-            scaler = StandardScaler()
-            X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+                # ネットワークグラフの構築
+                G = nx.Graph()
 
-            # 推論方法の設定
-            if inference_method == 'bootstrap':
-                inference = BootstrapInference(n_bootstrap_samples=bootstrap_samples)
-            else:
-                inference = 'auto'
+                # ノードの追加
+                ecosystem_impact = result['ecosystem_impact']
 
-            # モデルの選択と初期化
-            if method == 'causal_forest':
-                model = CausalForestDML(
-                    n_estimators=n_estimators,
-                    max_depth=max_depth,
-                    min_samples_leaf=min_samples_leaf,
-                    random_state=random_state,
-                    inference=inference
-                )
-            elif method == 'linear_dml':
-                model = LinearDML(
-                    model_y=LassoCV(cv=5, random_state=random_state),
-                    model_t=LassoCV(cv=5, random_state=random_state),
-                    random_state=random_state,
-                    inference=inference
-                )
-            elif method == 'dr_learner':
-                model = DRLearner(
-                    model_propensity=LassoCV(cv=5, random_state=random_state),
-                    model_regression=LassoCV(cv=5, random_state=random_state),
-                    model_final=LassoCV(cv=5, random_state=random_state),
-                    random_state=random_state,
-                    inference=inference
-                )
-            elif method == 't_learner':
-                model = TLearner(
-                    models=LassoCV(cv=5, random_state=random_state),
-                    random_state=random_state
-                )
-            elif method == 's_learner':
-                model = SLearner(
-                    overall_model=LassoCV(cv=5, random_state=random_state),
-                    random_state=random_state
-                )
-            elif method == 'x_learner':
-                model = XLearner(
-                    models=LassoCV(cv=5, random_state=random_state),
-                    propensity_model=LassoCV(cv=5, random_state=random_state),
-                    random_state=random_state
-                )
-            else:
-                raise ValueError(f"サポートされていないメソッド: {method}")
+                # 大規模ネットワークの場合は自動的にサンプリングして表示ノード数を制限
+                companies = list(ecosystem_impact.keys())
+                if len(companies) > max_nodes:
+                    # 影響度の高い順にノードを選択
+                    sorted_companies = sorted(
+                        companies,
+                        key=lambda c: ecosystem_impact[c],
+                        reverse=True
+                    )[:max_nodes]
+                    self.logger.info(f"ネットワーク表示を最適化: {len(companies)}ノードから{max_nodes}ノードにサンプリング")
+                    companies = sorted_companies
 
-            # モデルの学習
-            model.fit(Y, T, X=X_scaled)
+                # ノード属性の設定
+                for company in companies:
+                    # ROI値の取得
+                    company_roi = roi_data[roi_data['company_id'] == company]['roi'].values
+                    roi = company_roi[0] if len(company_roi) > 0 else 0
 
-            # 個別の処理効果を予測
-            cate_estimates = model.effect(X_scaled)
+                    # ノード属性の設定
+                    G.add_node(company, impact=ecosystem_impact[company], roi=roi)
 
-            # 平均処理効果（ATE）
-            average_effect = float(np.mean(cate_estimates))
+                # エッジの追加（単純なモデル: すべての企業間に弱いつながりがあると仮定）
+                for i, company1 in enumerate(companies):
+                    for company2 in companies[i+1:]:
+                        # 共通の業界がある場合は強い関係
+                        try:
+                            industry1 = roi_data[roi_data['company_id'] == company1]['industry'].values[0]
+                            industry2 = roi_data[roi_data['company_id'] == company2]['industry'].values[0]
 
-            # 特徴量重要度（CausalForestの場合のみ）
-            feature_importance = None
-            if method == 'causal_forest' and hasattr(model, 'feature_importances_'):
-                feature_importance = dict(zip(features, model.feature_importances_))
+                            if industry1 == industry2:
+                                # 同じ業界の場合は強い関係
+                                weight = 0.8
+                            else:
+                                # 異なる業界の場合は弱い関係
+                                weight = 0.2
 
-            # 信頼区間と統計的推論（可能な場合）
-            confidence_intervals = None
-            p_values = None
+                            G.add_edge(company1, company2, weight=weight)
+                        except IndexError:
+                            # インデックスエラーが発生した場合は弱い関係を追加
+                            G.add_edge(company1, company2, weight=0.1)
 
-            if inference_method != 'none' and hasattr(model, 'effect_inference'):
-                try:
-                    effect_inference = model.effect_inference(X_scaled)
-                    confidence_intervals = np.column_stack([
-                        effect_inference.point_estimate - 1.96 * effect_inference.stderr,
-                        effect_inference.point_estimate + 1.96 * effect_inference.stderr
-                    ])
-                    p_values = effect_inference.pvalue
-                except Exception as e:
-                    self.logger.warning(f"効果の統計的推論に失敗しました: {str(e)}")
+                # ノードの位置を計算
+                pos = nx.spring_layout(G, seed=42)
 
-            # 結果の作成
-            result = HeterogeneousTreatmentEffectResult(
-                model_type=method,
-                average_effect=average_effect,
-                conditional_effects=cate_estimates,
-                feature_importance=feature_importance,
-                confidence_intervals=confidence_intervals,
-                p_values=p_values,
-                model_instance=model
-            )
+                # ノードサイズをエコシステム影響度に基づいて設定
+                node_sizes = [ecosystem_impact[node] * 1000 + 200 for node in G.nodes()]
 
-            self.logger.info(f"異質処理効果（CATE）推定が完了: 平均効果={average_effect}")
-            return result
+                # ノード色をROI値に基づいて設定
+                node_colors = [G.nodes[node]['roi'] for node in G.nodes()]
+
+                # エッジの幅を重みに基づいて設定
+                edge_widths = [G.edges[edge]['weight'] * 2 for edge in G.edges()]
+
+                # ネットワークの描画
+                nodes = nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors,
+                                              cmap=plt.cm.viridis, ax=ax)
+                edges = nx.draw_networkx_edges(G, pos, width=edge_widths, alpha=0.6, edge_color='gray', ax=ax)
+
+                # メモリ効率のため、ラベルは表示ノード数が少ない場合のみ表示
+                if len(G.nodes()) <= 20:
+                    labels = nx.draw_networkx_labels(G, pos, font_size=10, font_color='black', ax=ax)
+
+                # カラーバーの追加
+                cbar = plt.colorbar(nodes, ax=ax, label='ROI (%)')
+
+                # 凡例の追加
+                sizes = [200, 600, 1000]
+                labels = ['低', '中', '高']
+                for size, label in zip(sizes, labels):
+                    plt.scatter([], [], s=size, label=f'エコシステム影響度: {label}')
+
+                ax.legend(scatterpoints=1, frameon=True, labelspacing=1)
+
+                # タイトルと軸ラベル
+                ax.set_title(title)
+                ax.axis('off')
+
+                if save_path:
+                    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+                    plt.close(fig)  # ファイル保存後に図を閉じる
+
+                return fig
 
         except Exception as e:
-            self.logger.error(f"異質処理効果（CATE）推定中にエラーが発生: {str(e)}")
+            self.logger.error(f"ポートフォリオネットワーク効果の可視化中にエラーが発生: {str(e)}")
+            plt.close('all')  # エラー発生時も図を閉じる
             raise
+        finally:
+            # リソースのクリーンアップ
+            del G
+            gc.collect()
 
     def visualize_heterogeneous_effects(
         self,
@@ -1443,10 +2151,13 @@ class CausalInferenceAnalyzer:
         features: List[str],
         top_features: int = 3,
         title: str = "異質処理効果（CATE）の分析",
-        save_path: str = None
+        save_path: str = None,
+        max_scatter_points: int = 1000  # スキャッタープロット用の最大データポイント数
     ) -> plt.Figure:
         """
         異質処理効果（CATE）の視覚化
+
+        メモリリークを防ぐための最適化版
 
         Parameters:
         -----------
@@ -1462,22 +2173,31 @@ class CausalInferenceAnalyzer:
             図のタイトル
         save_path : str, optional
             図の保存先パス
+        max_scatter_points : int, optional
+            散布図に表示する最大のデータポイント数（大規模データセット用）
 
         Returns:
         --------
         plt.Figure
             matplotlib図オブジェクト
         """
+        # 結果がディスク上にある場合はロード
+        if isinstance(result, str) and os.path.exists(result):
+            result = self._get_result(result)
+
         self.logger.info(f"異質処理効果（CATE）の視覚化を開始")
 
         try:
-            # 図の作成
+            # 新しい図を作成
+            plt.close('all')  # 既存の図をクリア
             fig = plt.figure(figsize=(15, 10))
             gs = fig.add_gridspec(2, 2)
 
             # 1. 個別処理効果のヒストグラム
             ax1 = fig.add_subplot(gs[0, 0])
-            ax1.hist(result.conditional_effects, bins=30, alpha=0.7, color='blue')
+            # 効率的なヒストグラム計算
+            ax1.hist(result.conditional_effects, bins=min(30, len(result.conditional_effects)//20),
+                     alpha=0.7, color='blue')
             ax1.axvline(result.average_effect, color='red', linestyle='--',
                         label=f'平均効果: {result.average_effect:.4f}')
             ax1.set_title('個別処理効果の分布')
@@ -1494,12 +2214,12 @@ class CausalInferenceAnalyzer:
                     result.feature_importance.items(),
                     key=lambda x: x[1],
                     reverse=True
-                )[:top_features])
+                )[:min(top_features, len(result.feature_importance))])
 
-                features = list(sorted_importance.keys())
-                importance = list(sorted_importance.values())
+                feature_names = list(sorted_importance.keys())
+                importance_values = list(sorted_importance.values())
 
-                ax2.barh(features, importance, color='green', alpha=0.7)
+                ax2.barh(feature_names, importance_values, color='green', alpha=0.7)
                 ax2.set_title('特徴量重要度')
                 ax2.set_xlabel('重要度')
                 ax2.set_ylabel('特徴量')
@@ -1509,6 +2229,7 @@ class CausalInferenceAnalyzer:
                         ha='center', va='center', fontsize=12)
                 ax2.set_title('特徴量重要度 (利用不可)')
                 ax2.axis('off')
+
 
             # 3. 処理効果の散布図（上位2つの特徴量に対して）
             ax3 = fig.add_subplot(gs[1, :])

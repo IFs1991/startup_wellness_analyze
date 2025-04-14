@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Union, Any
+import gc
+import weakref
+from typing import Dict, List, Tuple, Optional, Union, Any, ContextManager
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 import statsmodels.api as sm
 from scipy import stats
 from .base import BaseAnalyzer
@@ -18,13 +21,181 @@ class FinancialAnalyzer(BaseAnalyzer):
         FinancialAnalyzerの初期化
         """
         super().__init__(analysis_type='financial')
+        self._temp_data_refs = weakref.WeakValueDictionary()
+        self._plot_resources = weakref.WeakValueDictionary()
         self.logger.info("FinancialAnalyzer initialized")
+
+    def __del__(self):
+        """デストラクタ - リソース自動解放"""
+        self.release_resources()
+
+    def release_resources(self):
+        """明示的なリソース解放メソッド"""
+        try:
+            # 一時データの解放
+            self._temp_data_refs.clear()
+
+            # プロットリソースの解放
+            for plot in list(self._plot_resources.values()):
+                try:
+                    import matplotlib.pyplot as plt
+                    plt.close(plot)
+                except:
+                    pass
+            self._plot_resources.clear()
+
+            gc.collect()
+            self.logger.info("FinancialAnalyzer resources released")
+        except Exception as e:
+            self.logger.error(f"リソース解放中にエラーが発生しました: {str(e)}")
+
+    @contextmanager
+    def _managed_dataframe(self, df: pd.DataFrame, name: str = "temp_df") -> ContextManager[pd.DataFrame]:
+        """
+        データフレームのリソース管理用コンテキストマネージャ
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            管理対象のデータフレーム
+        name : str
+            データフレームの識別名
+
+        Yields
+        ------
+        pd.DataFrame
+            管理対象のデータフレーム
+        """
+        try:
+            # データフレームを弱参照辞書に登録
+            self._temp_data_refs[name] = df
+            self.logger.debug(f"Dataframe {name} registered for management")
+            yield df
+        finally:
+            # 明示的に参照を削除
+            if name in self._temp_data_refs:
+                del self._temp_data_refs[name]
+                self.logger.debug(f"Dataframe {name} released from management")
+            # 部分的なガベージコレクションを実行
+            gc.collect()
+
+    @contextmanager
+    def _plot_context(self, name: str = "temp_plot"):
+        """
+        プロットリソース管理用コンテキストマネージャ
+
+        Parameters
+        ----------
+        name : str
+            プロットの識別名
+
+        Yields
+        ------
+        int または Figure
+            プロットIDまたはFigureオブジェクト
+        """
+        import matplotlib.pyplot as plt
+
+        try:
+            # 新しいフィギュアを作成
+            fig = plt.figure()
+            self._plot_resources[name] = fig
+            self.logger.debug(f"Plot {name} registered for management")
+            yield fig
+        finally:
+            # 明示的にプロットリソースをクリーンアップ
+            plt.close(fig)
+            if name in self._plot_resources:
+                del self._plot_resources[name]
+            self.logger.debug(f"Plot {name} released from management")
+
+    def _optimize_dataframe_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        データフレームのデータ型を最適化してメモリ使用量を削減
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            最適化対象のデータフレーム
+
+        Returns
+        -------
+        pd.DataFrame
+            最適化されたデータフレーム
+        """
+        try:
+            # 数値データ型の最適化
+            for col in df.select_dtypes(include=['int64']).columns:
+                c_min, c_max = df[col].min(), df[col].max()
+                if c_min >= 0:
+                    if c_max < 255:
+                        df[col] = df[col].astype(np.uint8)
+                    elif c_max < 65535:
+                        df[col] = df[col].astype(np.uint16)
+                    elif c_max < 4294967295:
+                        df[col] = df[col].astype(np.uint32)
+                else:
+                    if c_min > -128 and c_max < 127:
+                        df[col] = df[col].astype(np.int8)
+                    elif c_min > -32768 and c_max < 32767:
+                        df[col] = df[col].astype(np.int16)
+                    elif c_min > -2147483648 and c_max < 2147483647:
+                        df[col] = df[col].astype(np.int32)
+
+            # 浮動小数点の最適化
+            for col in df.select_dtypes(include=['float64']).columns:
+                df[col] = df[col].astype(np.float32)
+
+            return df
+        except Exception as e:
+            self.logger.warning(f"データ型最適化中にエラーが発生しました: {str(e)}")
+            return df  # 元のデータフレームを返す
+
+    def estimate_memory_usage(self, data_rows: int, data_cols: int) -> Dict[str, float]:
+        """
+        メモリ使用量を推定する
+
+        Parameters
+        ----------
+        data_rows : int
+            データの行数
+        data_cols : int
+            データの列数
+
+        Returns
+        -------
+        Dict[str, float]
+            推定メモリ使用量(MB)
+        """
+        try:
+            # 基本的なメモリ使用量の推定
+            # 1. 入力データフレームのサイズ推定 (8バイト/セル)
+            df_size_mb = (data_rows * data_cols * 8) / (1024 * 1024)
+
+            # 2. 計算結果と中間データのサイズ
+            results_mb = data_rows * 0.1  # 結果サイズの概算
+
+            # 3. その他のオーバーヘッド
+            overhead_mb = 20  # 固定オーバーヘッド
+
+            total_mb = df_size_mb + results_mb + overhead_mb
+
+            return {
+                'dataframe_mb': df_size_mb,
+                'results_mb': results_mb,
+                'overhead_mb': overhead_mb,
+                'total_mb': total_mb
+            }
+        except Exception as e:
+            self.logger.error(f"メモリ使用量推定中にエラーが発生しました: {str(e)}")
+            return {'total_mb': 50}  # デフォルト値を返す
 
     def calculate_burn_rate(self,
                           financial_data: pd.DataFrame,
                           period: str = 'monthly',
                           cash_column: str = 'cash_balance',
-                          expense_columns: Optional[List[str]] = None) -> Dict[str, Any]:
+                          expense_columns: Optional[List[str]] = None,
+                          optimize_memory: bool = True) -> Dict[str, Any]:
         """
         キャッシュバーン率とランウェイ（資金枯渇までの期間）を計算
 
@@ -38,6 +209,8 @@ class FinancialAnalyzer(BaseAnalyzer):
             現金残高のカラム名（デフォルト: 'cash_balance'）
         expense_columns : List[str], optional
             費用項目のカラム名リスト。指定がなければ現金残高の変化から計算
+        optimize_memory : bool, optional
+            メモリ最適化を行うかどうか (デフォルト: True)
 
         Returns
         -------
@@ -45,56 +218,138 @@ class FinancialAnalyzer(BaseAnalyzer):
             バーン率、ランウェイ、関連指標を含む辞書
         """
         try:
-            if not isinstance(financial_data.index, pd.DatetimeIndex):
-                self.logger.warning("Financial data index is not DatetimeIndex, attempting to convert")
-                try:
-                    financial_data = financial_data.set_index(pd.DatetimeIndex(financial_data.index))
-                except:
-                    raise ValueError("Could not convert index to DatetimeIndex")
+            self.logger.info(f"バーン率計算を開始: データサイズ={len(financial_data)}行, 期間={period}")
+
+            # メモリ使用量の推定
+            memory_estimate = self.estimate_memory_usage(len(financial_data), len(financial_data.columns))
+            self.logger.debug(f"推定メモリ使用量: {memory_estimate['total_mb']:.2f} MB")
+
+            # 入力データの検証
+            if not financial_data.index.is_all_dates and not isinstance(financial_data.index, pd.DatetimeIndex):
+                self.logger.warning("インデックスが日付型ではありません。変換を試みます。")
+                date_columns = [col for col in financial_data.columns if 'date' in col.lower()]
+
+                # 日付列があれば最初の列をインデックスに使用
+                if date_columns and date_columns[0] in financial_data.columns:
+                    try:
+                        with self._managed_dataframe(financial_data.copy(), "financial_data_original") as df:
+                            df[date_columns[0]] = pd.to_datetime(df[date_columns[0]])
+                            df = df.set_index(date_columns[0])
+                            return self._calculate_burn_rate_internal(
+                                df, period, cash_column, expense_columns, optimize_memory
+                            )
+                    except Exception as date_error:
+                        self.logger.error(f"日付列の変換中にエラーが発生しました: {str(date_error)}")
+                        raise ValueError(f"日付インデックスへの変換に失敗しました: {str(date_error)}")
+                else:
+                    raise ValueError("データにはDatetimeIndexまたは日付列が必要です")
+            else:
+                with self._managed_dataframe(financial_data, "financial_data") as df:
+                    return self._calculate_burn_rate_internal(
+                        df, period, cash_column, expense_columns, optimize_memory
+                    )
+
+        except Exception as e:
+            self.logger.error(f"バーン率計算中にエラーが発生しました: {str(e)}")
+            raise
+        finally:
+            # 明示的なメモリ解放
+            gc.collect()
+
+    def _calculate_burn_rate_internal(self,
+                                    data: pd.DataFrame,
+                                    period: str,
+                                    cash_column: str,
+                                    expense_columns: Optional[List[str]],
+                                    optimize_memory: bool) -> Dict[str, Any]:
+        """
+        バーン率計算の内部実装
+
+        Parameters
+        ----------
+        同calculate_burn_rateと同様
+
+        Returns
+        -------
+        同calculate_burn_rateと同様
+        """
+        try:
+            # データ型の最適化（メモリ消費削減）
+            if optimize_memory:
+                data = self._optimize_dataframe_types(data)
 
             # 期間ごとのデータにリサンプリング
             if period == 'monthly':
-                data = financial_data.resample('M').last()
+                resampled_data = data.resample('M').last()
                 months_factor = 1
             elif period == 'quarterly':
-                data = financial_data.resample('Q').last()
+                resampled_data = data.resample('Q').last()
                 months_factor = 3
             else:
                 raise ValueError("Period must be 'monthly' or 'quarterly'")
 
-            # キャッシュバーン率の計算
-            if expense_columns:
-                # 費用項目から直接計算
-                expenses = data[expense_columns].sum(axis=1)
-                burn_rate = expenses.mean()
-            else:
-                # 現金残高の変化から計算
-                cash_changes = data[cash_column].diff().dropna()
-                # 負の値（現金減少）だけを抽出して平均を計算
-                negative_changes = cash_changes[cash_changes < 0]
-                burn_rate = abs(negative_changes.mean()) if not negative_changes.empty else 0
+            with self._managed_dataframe(resampled_data, "resampled_data") as period_data:
+                # 入力データの検証
+                if cash_column not in period_data.columns:
+                    raise ValueError(f"現金残高カラム '{cash_column}' がデータに見つかりません")
 
-            # 最新の現金残高を取得
-            latest_cash = data[cash_column].iloc[-1]
+                if expense_columns:
+                    # 指定された費用項目を検証
+                    missing_columns = [col for col in expense_columns if col not in period_data.columns]
+                    if missing_columns:
+                        self.logger.warning(f"以下の費用項目がデータに見つかりません: {', '.join(missing_columns)}")
+                        expense_columns = [col for col in expense_columns if col in period_data.columns]
+                        if not expense_columns:
+                            self.logger.warning("有効な費用項目がないため、現金残高の変化からバーン率を計算します")
+                            expense_columns = None
 
-            # ランウェイの計算（月数）
-            runway_months = latest_cash / burn_rate if burn_rate > 0 else float('inf')
+                # キャッシュバーン率の計算
+                if expense_columns:
+                    # 費用項目から直接計算
+                    with self._managed_dataframe(period_data[expense_columns], "expenses_data") as expenses_df:
+                        expenses = expenses_df.sum(axis=1)
+                        burn_rate = expenses.mean()
+                        self.logger.info(f"費用項目から計算したバーン率: {burn_rate:.2f}")
+                else:
+                    # 現金残高の変化から計算
+                    cash_changes = period_data[cash_column].diff().dropna()
+                    # 負の値（現金減少）だけを抽出して平均を計算
+                    negative_changes = cash_changes[cash_changes < 0]
+                    if negative_changes.empty:
+                        self.logger.warning("現金減少が見つかりません。バーン率をゼロとします。")
+                        burn_rate = 0
+                    else:
+                        burn_rate = abs(negative_changes.mean())
+                        self.logger.info(f"現金残高の変化から計算したバーン率: {burn_rate:.2f}")
 
-            # 結果の格納
-            result = {
-                'burn_rate': burn_rate,
-                'runway_months': runway_months,
-                'runway_quarters': runway_months / 3,
-                'runway_years': runway_months / 12,
-                'latest_cash': latest_cash,
-                'period': period,
-                'calculation_date': datetime.now().strftime('%Y-%m-%d')
-            }
+                # 最新の現金残高を取得
+                latest_cash = period_data[cash_column].iloc[-1]
 
-            self.logger.info(f"Burn rate calculated: {burn_rate:.2f} per {period} period, runway: {runway_months:.2f} months")
-            return result
+                # ランウェイの計算（月数）
+                if burn_rate > 0:
+                    runway_months = latest_cash / burn_rate
+                    self.logger.info(f"ランウェイ: {runway_months:.2f}ヶ月")
+                else:
+                    runway_months = float('inf')
+                    self.logger.info("バーン率がゼロのため、ランウェイは無限大")
+
+                # 結果の格納
+                result = {
+                    'burn_rate': burn_rate,
+                    'runway_months': runway_months,
+                    'runway_quarters': runway_months / 3,
+                    'runway_years': runway_months / 12,
+                    'latest_cash': latest_cash,
+                    'period': period,
+                    'calculation_timestamp': datetime.now().isoformat(),
+                    'data_points': len(period_data),
+                    'calculation_method': 'expense_items' if expense_columns else 'cash_changes',
+                    'memory_usage_mb': memory_estimate['total_mb'] if 'memory_estimate' in locals() else None
+                }
+
+                return result
         except Exception as e:
-            self.logger.error(f"Error calculating burn rate: {str(e)}")
+            self.logger.error(f"バーン率内部計算中にエラーが発生しました: {str(e)}")
             raise
 
     def compare_burn_rate_to_benchmarks(self,

@@ -14,12 +14,31 @@ import seaborn as sns
 import io
 import base64
 import logging
-from typing import Dict, List, Tuple, Any, Optional, Union
+import contextlib
+from typing import Dict, List, Tuple, Any, Optional, Union, Generator
 import scipy.stats as stats
 from .base import AnalysisError
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
+
+@contextlib.contextmanager
+def plot_context(figsize: Tuple[int, int] = (10, 6)) -> Generator[plt.Figure, None, None]:
+    """
+    プロット作成のためのコンテキストマネージャー
+    コンテキスト終了時に自動的にリソースを解放する
+
+    Args:
+        figsize: 図のサイズ
+
+    Yields:
+        matplotlib Figureオブジェクト
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    try:
+        yield fig
+    finally:
+        plt.close(fig)
 
 class PlotUtility:
     """
@@ -58,14 +77,15 @@ class PlotUtility:
             if len(x_data) != len(y_data):
                 raise ValueError(f"X軸データ({len(x_data)}個)とY軸データ({len(y_data)}個)の長さが一致しません")
 
-            fig, ax = plt.subplots(figsize=figsize)
-            ax.plot(x_data, y_data, color=color)
-            ax.set_title(title)
-            ax.set_xlabel(x_label)
-            ax.set_ylabel(y_label)
-            ax.grid(True, linestyle='--', alpha=0.7)
+            with plot_context(figsize) as fig:
+                ax = fig.gca()
+                ax.plot(x_data, y_data, color=color)
+                ax.set_title(title)
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(y_label)
+                ax.grid(True, linestyle='--', alpha=0.7)
 
-            return fig
+                return fig
         except Exception as e:
             error_msg = f"基本プロット生成中にエラーが発生しました: {str(e)}"
             logger.error(error_msg)
@@ -112,31 +132,31 @@ class PlotUtility:
             if actual_bins != bins:
                 logger.warning(f"ビン数を{bins}から{actual_bins}に調整しました（データが少なすぎます）")
 
-            fig, ax = plt.subplots(figsize=figsize)
+            with plot_context(figsize) as fig:
+                ax = fig.gca()
+                sns.histplot(valid_data, bins=actual_bins, kde=True, ax=ax)
 
-            sns.histplot(valid_data, bins=actual_bins, kde=True, ax=ax)
+                ax.set_title(title)
+                ax.set_xlabel(x_label)
+                ax.set_ylabel('頻度')
+                ax.grid(True, linestyle='--', alpha=0.7)
 
-            ax.set_title(title)
-            ax.set_xlabel(x_label)
-            ax.set_ylabel('頻度')
-            ax.grid(True, linestyle='--', alpha=0.7)
+                # 信頼区間を表示
+                if confidence_intervals:
+                    if 'percentile' in confidence_intervals:
+                        ci_lower, ci_upper = confidence_intervals['percentile']
+                        ax.axvline(x=ci_lower, color='r', linestyle='--', alpha=0.8,
+                                 label=f'{(1-0.95)*100/2:.1f}%パーセンタイル')
+                        ax.axvline(x=ci_upper, color='r', linestyle='--', alpha=0.8,
+                                 label=f'{(1-(1-0.95)*100/2):.1f}%パーセンタイル')
 
-            # 信頼区間を表示
-            if confidence_intervals:
-                if 'percentile' in confidence_intervals:
-                    ci_lower, ci_upper = confidence_intervals['percentile']
-                    ax.axvline(x=ci_lower, color='r', linestyle='--', alpha=0.8,
-                              label=f'{(1-0.95)*100/2:.1f}%パーセンタイル')
-                    ax.axvline(x=ci_upper, color='r', linestyle='--', alpha=0.8,
-                              label=f'{(1-(1-0.95)*100/2):.1f}%パーセンタイル')
+                    if 'mean' in confidence_intervals:
+                        ax.axvline(x=confidence_intervals['mean'], color='g', linestyle='-', alpha=0.8,
+                                 label='平均')
 
-                if 'mean' in confidence_intervals:
-                    ax.axvline(x=confidence_intervals['mean'], color='g', linestyle='-', alpha=0.8,
-                              label='平均')
+                    ax.legend()
 
-                ax.legend()
-
-            return fig
+                return fig
         except Exception as e:
             error_msg = f"ヒストグラムプロット生成中にエラーが発生しました: {str(e)}"
             logger.error(error_msg)
@@ -173,40 +193,40 @@ class PlotUtility:
             # 残差の計算
             residuals = y_true - y_pred
 
-            # 2x2のサブプロットを作成
-            fig, axes = plt.subplots(2, 2, figsize=figsize)
+            with plot_context(figsize) as fig:
+                # 2x2のサブプロットを作成
+                axes = fig.subplots(2, 2)
 
-            # 1. 残差のヒストグラム
-            sns.histplot(residuals, kde=True, ax=axes[0, 0])
-            axes[0, 0].set_title('残差の分布')
-            axes[0, 0].set_xlabel('残差')
-            axes[0, 0].set_ylabel('頻度')
+                # 1. 残差のヒストグラム
+                sns.histplot(residuals, kde=True, ax=axes[0, 0])
+                axes[0, 0].set_title('残差の分布')
+                axes[0, 0].set_xlabel('残差')
+                axes[0, 0].set_ylabel('頻度')
 
-            # 2. 予測値に対する残差のスキャッタープロット
-            axes[0, 1].scatter(y_pred, residuals, alpha=0.5)
-            axes[0, 1].axhline(y=0, color='r', linestyle='-')
-            axes[0, 1].set_title('予測値 vs 残差')
-            axes[0, 1].set_xlabel('予測値')
-            axes[0, 1].set_ylabel('残差')
+                # 2. 予測値に対する残差のスキャッタープロット
+                axes[0, 1].scatter(y_pred, residuals, alpha=0.5)
+                axes[0, 1].axhline(y=0, color='r', linestyle='-')
+                axes[0, 1].set_title('予測値 vs 残差')
+                axes[0, 1].set_xlabel('予測値')
+                axes[0, 1].set_ylabel('残差')
 
-            # 3. 実際の値と予測値の散布図
-            axes[1, 0].scatter(y_true, y_pred, alpha=0.5)
-            min_val = min(min(y_true), min(y_pred))
-            max_val = max(max(y_true), max(y_pred))
-            axes[1, 0].plot([min_val, max_val], [min_val, max_val], 'r--')
-            axes[1, 0].set_title('実際の値 vs 予測値')
-            axes[1, 0].set_xlabel('実際の値')
-            axes[1, 0].set_ylabel('予測値')
+                # 3. 実際の値と予測値の散布図
+                axes[1, 0].scatter(y_true, y_pred, alpha=0.5)
+                min_val = min(min(y_true), min(y_pred))
+                max_val = max(max(y_true), max(y_pred))
+                axes[1, 0].plot([min_val, max_val], [min_val, max_val], 'r--')
+                axes[1, 0].set_title('実際の値 vs 予測値')
+                axes[1, 0].set_xlabel('実際の値')
+                axes[1, 0].set_ylabel('予測値')
 
-            # 4. QQプロット（残差の正規性の確認）
-            from scipy import stats
-            stats.probplot(residuals, dist="norm", plot=axes[1, 1])
-            axes[1, 1].set_title('残差の正規Q-Qプロット')
+                # 4. QQプロット（残差の正規性の確認）
+                stats.probplot(residuals, dist="norm", plot=axes[1, 1])
+                axes[1, 1].set_title('残差の正規Q-Qプロット')
 
-            # レイアウト調整
-            plt.tight_layout()
+                # レイアウト調整
+                plt.tight_layout()
 
-            return fig
+                return fig
         except Exception as e:
             error_msg = f"残差プロット生成中にエラーが発生しました: {str(e)}"
             logger.error(error_msg)
@@ -228,16 +248,50 @@ class PlotUtility:
         """
         try:
             buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=100)
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
             buf.seek(0)
             img_str = base64.b64encode(buf.read()).decode('utf-8')
-            plt.close(fig)
+            plt.close(fig)  # 明示的にfigureをクローズ
+            buf.close()  # BytesIOバッファを明示的に閉じる
             return img_str
         except Exception as e:
             error_msg = f"プロットのBase64エンコード中にエラーが発生しました: {str(e)}"
             logger.error(error_msg)
             raise AnalysisError(error_msg) from e
 
+    @classmethod
+    def create_and_save_plot(cls, plot_type: str, plot_data: Dict[str, Any]) -> str:
+        """
+        プロットを作成してBase64エンコードまで一括処理するユーティリティメソッド
+
+        Args:
+            plot_type: プロットタイプ ('basic', 'histogram', 'residual')
+            plot_data: プロット生成に必要なデータ
+
+        Returns:
+            Base64エンコードされた画像文字列
+
+        Raises:
+            AnalysisError: プロット生成・エンコード時にエラーが発生した場合
+        """
+        fig = None
+        try:
+            if plot_type == 'basic':
+                fig = cls.generate_basic_plot(**plot_data)
+            elif plot_type == 'histogram':
+                fig = cls.generate_histogram_plot(**plot_data)
+            elif plot_type == 'residual':
+                fig = cls.generate_residual_plot(**plot_data)
+            else:
+                raise ValueError(f"未対応のプロットタイプです: {plot_type}")
+
+            return cls.save_plot_to_base64(fig)
+        except Exception as e:
+            if fig is not None:
+                plt.close(fig)  # エラー時にもリソースを確実に解放
+            error_msg = f"プロット生成・エンコード中にエラーが発生しました: {str(e)}"
+            logger.error(error_msg)
+            raise AnalysisError(error_msg) from e
 
 class StatisticsUtility:
     """

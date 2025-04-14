@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Union
+import gc
+import weakref
+from typing import Dict, List, Tuple, Optional, Union, ContextManager
+from contextlib import contextmanager
 from .base import BaseAnalyzer
 from .utils import HealthImpactWeightUtility
 
@@ -16,7 +19,167 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
         HealthInvestmentEffectIndexCalculatorの初期化
         """
         super().__init__()
+        self._temp_data_refs = weakref.WeakValueDictionary()
+        self._plot_resources = weakref.WeakValueDictionary()
         self.logger.info("HealthInvestmentEffectIndexCalculator initialized")
+
+    def __del__(self):
+        """デストラクタ - リソース自動解放"""
+        self.release_resources()
+
+    def release_resources(self):
+        """明示的なリソース解放メソッド"""
+        try:
+            # 一時データの解放
+            self._temp_data_refs.clear()
+            self._plot_resources.clear()
+            gc.collect()
+            self.logger.info("HealthInvestmentEffectIndexCalculator resources released")
+        except Exception as e:
+            self.logger.error(f"リソース解放中にエラーが発生しました: {str(e)}")
+
+    @contextmanager
+    def _managed_dataframe(self, df: pd.DataFrame, name: str = "temp_df") -> ContextManager[pd.DataFrame]:
+        """
+        データフレームのリソース管理用コンテキストマネージャ
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            管理対象のデータフレーム
+        name : str
+            データフレームの識別名
+
+        Yields
+        ------
+        pd.DataFrame
+            管理対象のデータフレーム
+        """
+        try:
+            # データフレームを弱参照辞書に登録
+            self._temp_data_refs[name] = df
+            self.logger.debug(f"Dataframe {name} registered for management")
+            yield df
+        finally:
+            # 明示的に参照を削除
+            if name in self._temp_data_refs:
+                del self._temp_data_refs[name]
+                self.logger.debug(f"Dataframe {name} released from management")
+            # 部分的なガベージコレクションを実行
+            gc.collect()
+
+    @contextmanager
+    def _plot_context(self, name: str = "temp_plot"):
+        """
+        プロットリソース管理用コンテキストマネージャ
+
+        Parameters
+        ----------
+        name : str
+            プロットの識別名
+
+        Yields
+        ------
+        int
+            プロットID (実際の値は重要ではない)
+        """
+        import matplotlib.pyplot as plt
+
+        try:
+            # 新しいフィギュアを作成
+            fig = plt.figure()
+            self._plot_resources[name] = fig
+            self.logger.debug(f"Plot {name} registered for management")
+            yield 1  # プロットIDは重要ではない
+        finally:
+            # 明示的にプロットリソースをクリーンアップ
+            plt.close(fig)
+            if name in self._plot_resources:
+                del self._plot_resources[name]
+            self.logger.debug(f"Plot {name} released from management")
+
+    def _optimize_dataframe_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        データフレームのデータ型を最適化してメモリ使用量を削減
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            最適化対象のデータフレーム
+
+        Returns
+        -------
+        pd.DataFrame
+            最適化されたデータフレーム
+        """
+        try:
+            # 数値データ型の最適化
+            for col in df.select_dtypes(include=['int64']).columns:
+                c_min, c_max = df[col].min(), df[col].max()
+                if c_min >= 0:
+                    if c_max < 255:
+                        df[col] = df[col].astype(np.uint8)
+                    elif c_max < 65535:
+                        df[col] = df[col].astype(np.uint16)
+                    elif c_max < 4294967295:
+                        df[col] = df[col].astype(np.uint32)
+                else:
+                    if c_min > -128 and c_max < 127:
+                        df[col] = df[col].astype(np.int8)
+                    elif c_min > -32768 and c_max < 32767:
+                        df[col] = df[col].astype(np.int16)
+                    elif c_min > -2147483648 and c_max < 2147483647:
+                        df[col] = df[col].astype(np.int32)
+
+            # 浮動小数点の最適化
+            for col in df.select_dtypes(include=['float64']).columns:
+                df[col] = df[col].astype(np.float32)
+
+            return df
+        except Exception as e:
+            self.logger.warning(f"データ型最適化中にエラーが発生しました: {str(e)}")
+            return df  # 元のデータフレームを返す
+
+    def estimate_memory_usage(self,
+                            data_size: int,
+                            num_variables: int) -> Dict[str, float]:
+        """
+        メモリ使用量を推定する
+
+        Parameters
+        ----------
+        data_size : int
+            データ行数
+        num_variables : int
+            変数の数
+
+        Returns
+        -------
+        Dict[str, float]
+            推定メモリ使用量(MB)
+        """
+        try:
+            # 基本的なメモリ使用量の推定
+            # 1. データフレームのサイズ推定 (8バイト/セル)
+            df_size_mb = (data_size * num_variables * 8) / (1024 * 1024)
+
+            # 2. 計算結果の推定サイズ
+            results_mb = 10  # 基本サイズ
+
+            # 3. その他のオーバーヘッド
+            overhead_mb = 20  # 固定オーバーヘッド
+
+            total_mb = df_size_mb + results_mb + overhead_mb
+
+            return {
+                'dataframe_mb': df_size_mb,
+                'results_mb': results_mb,
+                'overhead_mb': overhead_mb,
+                'total_mb': total_mb
+            }
+        except Exception as e:
+            self.logger.error(f"メモリ使用量推定中にエラーが発生しました: {str(e)}")
+            return {'total_mb': 50}  # デフォルト値を返す
 
     def calculate_hiei(self,
                       vas_improvement: float,
@@ -155,21 +318,36 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
         float
             VASスケールの平均改善率（%）
         """
-        improvements = []
+        try:
+            improvements = []
+            common_columns = set(vas_before.columns).intersection(set(vas_after.columns))
 
-        for column in vas_before.columns:
-            if column in vas_after.columns:
-                before_mean = vas_before[column].mean()
-                after_mean = vas_after[column].mean()
+            if not common_columns:
+                self.logger.warning("VASデータに共通カラムがありません")
+                return 0.0
 
-                # 改善率を計算 (VASスケールは値が小さいほど良いと仮定)
-                if before_mean > 0:
-                    improvement = (before_mean - after_mean) / before_mean * 100
-                    improvements.append(improvement)
+            for column in common_columns:
+                try:
+                    before_mean = vas_before[column].mean()
+                    after_mean = vas_after[column].mean()
 
-        if improvements:
-            return np.mean(improvements)
-        else:
+                    # 改善率を計算 (VASスケールは値が小さいほど良いと仮定)
+                    if before_mean > 0:
+                        improvement = (before_mean - after_mean) / before_mean * 100
+                        improvements.append(improvement)
+                except Exception as column_error:
+                    self.logger.warning(f"カラム '{column}' の処理中にエラーが発生しました: {str(column_error)}")
+                    continue
+
+            if improvements:
+                mean_improvement = np.mean(improvements)
+                self.logger.info(f"VAS改善率: {mean_improvement:.2f}%")
+                return mean_improvement
+            else:
+                self.logger.warning("有効な改善率を計算できませんでした")
+                return 0.0
+        except Exception as e:
+            self.logger.error(f"VAS改善率計算中にエラーが発生しました: {str(e)}")
             return 0.0
 
     def _get_vas_improvement_details(self, vas_before: pd.DataFrame, vas_after: pd.DataFrame) -> Dict[str, float]:
@@ -188,19 +366,33 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
         Dict[str, float]
             VASスケール項目ごとの改善率を含む辞書
         """
-        details = {}
+        try:
+            details = {}
+            common_columns = set(vas_before.columns).intersection(set(vas_after.columns))
 
-        for column in vas_before.columns:
-            if column in vas_after.columns:
-                before_mean = vas_before[column].mean()
-                after_mean = vas_after[column].mean()
+            if not common_columns:
+                self.logger.warning("VASデータに共通カラムがありません")
+                return {}
 
-                # 改善率を計算 (VASスケールは値が小さいほど良いと仮定)
-                if before_mean > 0:
-                    improvement = (before_mean - after_mean) / before_mean * 100
-                    details[column] = improvement
+            for column in common_columns:
+                try:
+                    before_mean = vas_before[column].mean()
+                    after_mean = vas_after[column].mean()
 
-        return details
+                    # 改善率を計算 (VASスケールは値が小さいほど良いと仮定)
+                    if before_mean > 0:
+                        improvement = (before_mean - after_mean) / before_mean * 100
+                        details[column] = improvement
+                    else:
+                        details[column] = 0.0
+                except Exception as column_error:
+                    self.logger.warning(f"カラム '{column}' の詳細計算中にエラーが発生しました: {str(column_error)}")
+                    details[column] = 0.0
+
+            return details
+        except Exception as e:
+            self.logger.error(f"VAS改善詳細計算中にエラーが発生しました: {str(e)}")
+            return {}
 
     def _calculate_productivity_improvement(self,
                                           financial_data_before: pd.DataFrame,
@@ -221,31 +413,58 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
             生産性の向上率（%）
         """
         try:
-            # 従業員1人あたりの収益で生産性を計算する想定
-            if 'revenue' in financial_data_before.columns and 'employees' in financial_data_before.columns:
-                revenue_before = financial_data_before['revenue'].mean()
-                employees_before = financial_data_before['employees'].mean()
-
-                revenue_after = financial_data_after['revenue'].mean()
-                employees_after = financial_data_after['employees'].mean()
-
-                # 従業員数が0の場合のエラー処理
-                if employees_before <= 0 or employees_after <= 0:
-                    self.logger.warning("Employee count is zero or negative, using alternative productivity metric")
-                    return (revenue_after - revenue_before) / revenue_before * 100 if revenue_before > 0 else 0
-
-                productivity_before = revenue_before / employees_before
-                productivity_after = revenue_after / employees_after
-
-                if productivity_before > 0:
-                    return (productivity_after - productivity_before) / productivity_before * 100
-                else:
+            # カラムの存在確認
+            required_columns = ['revenue', 'employees']
+            for column in required_columns:
+                if column not in financial_data_before.columns:
+                    self.logger.warning(f"導入前データに必須カラム '{column}' がありません")
                     return 0.0
-            else:
-                self.logger.warning("Required columns not found in financial data, returning 0")
+                if column not in financial_data_after.columns:
+                    self.logger.warning(f"導入後データに必須カラム '{column}' がありません")
+                    return 0.0
+
+            # NaN値の確認
+            for df, label in [(financial_data_before, "導入前"), (financial_data_after, "導入後")]:
+                for column in required_columns:
+                    if df[column].isna().any():
+                        self.logger.warning(f"{label}データの '{column}' カラムにNaN値があります")
+                        # NaNを0で置換
+                        df[column] = df[column].fillna(0)
+
+            # 従業員1人あたりの収益で生産性を計算
+            revenue_before = financial_data_before['revenue'].mean()
+            employees_before = financial_data_before['employees'].mean()
+
+            revenue_after = financial_data_after['revenue'].mean()
+            employees_after = financial_data_after['employees'].mean()
+
+            # 従業員数が0の場合のエラー処理
+            if employees_before <= 0 or employees_after <= 0:
+                self.logger.warning("従業員数がゼロまたは負数です。代替生産性指標を使用します")
+
+                if revenue_before <= 0:
+                    self.logger.warning("導入前の収益がゼロまたは負数です。生産性向上率を計算できません")
+                    return 0.0
+
+                # 代替計算: 単純な収益成長率
+                improvement = (revenue_after - revenue_before) / revenue_before * 100
+                self.logger.info(f"代替生産性指標(収益成長率): {improvement:.2f}%")
+                return improvement
+
+            # 通常の生産性計算
+            productivity_before = revenue_before / employees_before
+            productivity_after = revenue_after / employees_after
+
+            if productivity_before <= 0:
+                self.logger.warning("導入前の生産性がゼロまたは負数です。生産性向上率を計算できません")
                 return 0.0
+
+            improvement = (productivity_after - productivity_before) / productivity_before * 100
+            self.logger.info(f"生産性向上率: {improvement:.2f}%")
+            return improvement
+
         except Exception as e:
-            self.logger.error(f"Error calculating productivity improvement: {str(e)}")
+            self.logger.error(f"生産性向上率計算中にエラーが発生しました: {str(e)}")
             return 0.0
 
     def calculate_ecosystem_impact(self,
@@ -267,35 +486,69 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
             各企業のエコシステム内での影響度
         """
         try:
-            # 結果格納用の辞書
-            ecosystem_impact = {}
+            self.logger.info(f"エコシステム影響度計算を開始: {len(hiei_values)}企業、{network_adjacency.shape}の隣接行列")
 
-            # 企業ごとの計算
-            for company in hiei_values.keys():
-                if company in network_adjacency.index and company in network_adjacency.columns:
-                    # 当該企業と関連のある企業の重みを取得
-                    connected_companies = network_adjacency.loc[company]
+            # 入力データの検証
+            if not hiei_values:
+                self.logger.warning("HIEI値が空です")
+                return {}
 
-                    # 影響度を計算
-                    impact = hiei_values[company]  # 自社のHIEI
+            if network_adjacency.empty:
+                self.logger.warning("ネットワーク隣接行列が空です")
+                return hiei_values  # 影響がないので元のHIEI値をそのまま返す
 
-                    # 接続企業からの影響を加算
-                    for other_company, weight in connected_companies.items():
-                        if other_company in hiei_values and other_company != company:
-                            impact += hiei_values[other_company] * weight * 0.1  # 接続企業のHIEIの10%を重み付けで加算
+            # 行列のサイズが大きい場合のメモリ最適化
+            with self._managed_dataframe(network_adjacency, "network_adjacency") as adj_matrix:
+                # データ型の最適化（必要に応じて）
+                if adj_matrix.size > 10000:  # 大規模行列の場合
+                    self.logger.info("大規模隣接行列のメモリ最適化を実行")
+                    # 浮動小数点の精度を下げる
+                    for col in adj_matrix.select_dtypes(include=['float64']).columns:
+                        adj_matrix[col] = adj_matrix[col].astype(np.float32)
 
-                    ecosystem_impact[company] = impact
-                else:
-                    # ネットワークに含まれていない場合は自社のHIEIをそのまま使用
-                    ecosystem_impact[company] = hiei_values[company]
+                # 結果格納用の辞書
+                ecosystem_impact = {}
 
-            self.logger.info(f"Ecosystem impact calculation completed for {len(ecosystem_impact)} companies")
-            return ecosystem_impact
+                # 進捗ログのための準備
+                total_companies = len(hiei_values)
+                log_interval = max(1, total_companies // 10)  # 10%ごとに進捗ログ
+
+                # 企業ごとの計算
+                for i, company in enumerate(hiei_values.keys()):
+                    # 定期的な進捗ログ
+                    if i % log_interval == 0:
+                        self.logger.info(f"エコシステム影響度計算進捗: {i}/{total_companies}企業 ({i/total_companies*100:.1f}%)")
+
+                    if company in adj_matrix.index and company in adj_matrix.columns:
+                        # 当該企業と関連のある企業の重みを取得
+                        connected_companies = adj_matrix.loc[company]
+
+                        # 影響度を計算
+                        impact = hiei_values[company]  # 自社のHIEI
+
+                        # 接続企業からの影響を加算
+                        for other_company, weight in connected_companies.items():
+                            if other_company in hiei_values and other_company != company:
+                                impact += hiei_values[other_company] * weight * 0.1  # 接続企業のHIEIの10%を重み付けで加算
+
+                        ecosystem_impact[company] = impact
+                    else:
+                        # ネットワークに含まれていない場合は自社のHIEIをそのまま使用
+                        ecosystem_impact[company] = hiei_values[company]
+
+                self.logger.info(f"エコシステム影響度計算が完了しました: {len(ecosystem_impact)}企業")
+                return ecosystem_impact
+
         except Exception as e:
-            self.logger.error(f"Error calculating ecosystem impact: {str(e)}")
-            raise
+            self.logger.error(f"エコシステム影響度計算中にエラーが発生しました: {str(e)}")
+            # エラー時は元のHIEI値を返す
+            return {k: v for k, v in hiei_values.items()}
+        finally:
+            # 明示的なメモリ解放
+            gc.collect()
 
-    def calculate_industry_benchmarks(self, hiei_values: Dict[str, float],
+    def calculate_industry_benchmarks(self,
+                                    hiei_values: Dict[str, float],
                                     industry_mapping: Dict[str, str]) -> Dict[str, float]:
         """
         業界ごとのHIEIベンチマークを計算
@@ -313,8 +566,20 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
             業界ごとの平均HIEI値
         """
         try:
+            self.logger.info(f"業界ベンチマーク計算を開始: {len(hiei_values)}企業、{len(industry_mapping)}業界マッピング")
+
+            # 入力データの検証
+            if not hiei_values:
+                self.logger.warning("HIEI値が空です")
+                return {}
+
+            if not industry_mapping:
+                self.logger.warning("業界マッピングが空です")
+                return {}
+
             # 業界ごとにHIEI値をグループ化
             industry_hiei = {}
+            missing_mapping = 0
 
             for company, industry in industry_mapping.items():
                 if company in hiei_values:
@@ -322,18 +587,47 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
                         industry_hiei[industry] = []
 
                     industry_hiei[industry].append(hiei_values[company])
+                else:
+                    missing_mapping += 1
 
-            # 業界ごとの平均値を計算
-            industry_benchmarks = {
-                industry: np.mean(values) if values else 0
-                for industry, values in industry_hiei.items()
-            }
+            if missing_mapping > 0:
+                self.logger.warning(f"{missing_mapping}企業がHIEI値に見つかりませんでした")
 
-            self.logger.info(f"Industry benchmarks calculated for {len(industry_benchmarks)} industries")
+            # 業界ごとの統計量を計算
+            industry_benchmarks = {}
+            for industry, values in industry_hiei.items():
+                if not values:
+                    industry_benchmarks[industry] = 0
+                    continue
+
+                try:
+                    # 平均値の計算
+                    mean_value = np.mean(values)
+
+                    # 異常値の確認と処理
+                    if not np.isfinite(mean_value):
+                        self.logger.warning(f"業界 '{industry}' の平均値が無効です。0を使用します。")
+                        mean_value = 0
+
+                    industry_benchmarks[industry] = mean_value
+
+                    # 詳細なログ記録
+                    self.logger.debug(f"業界 '{industry}': サンプル数={len(values)}, 平均={mean_value:.2f}, "
+                                      f"最小={min(values):.2f}, 最大={max(values):.2f}")
+
+                except Exception as industry_error:
+                    self.logger.error(f"業界 '{industry}' のベンチマーク計算中にエラーが発生しました: {str(industry_error)}")
+                    industry_benchmarks[industry] = 0
+
+            self.logger.info(f"業界ベンチマーク計算が完了しました: {len(industry_benchmarks)}業界")
             return industry_benchmarks
+
         except Exception as e:
-            self.logger.error(f"Error calculating industry benchmarks: {str(e)}")
-            raise
+            self.logger.error(f"業界ベンチマーク計算中にエラーが発生しました: {str(e)}")
+            return {}
+        finally:
+            # 明示的なメモリ解放
+            gc.collect()
 
     def calculate_role_weighted_hiei(self,
                                     vas_improvements: Dict[str, float],
@@ -374,11 +668,19 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
         try:
             self.logger.info("役職別重み付けHIEI計算を開始")
 
+            # 入力データの検証
             if 'industry' not in company_data:
-                raise ValueError("企業データに業種情報（industry）が含まれていません")
+                error_msg = "企業データに業種情報（industry）が含まれていません"
+                self.logger.error(error_msg)
+                raise ValueError(error_msg)
 
             industry_name = company_data['industry']
             self.logger.info(f"対象業種: {industry_name}")
+
+            # 役職データの検証
+            if not vas_improvements:
+                self.logger.warning("VAS改善データが空です")
+                return {'hiei': 0, 'error': '役職データが不足しています'}
 
             # デフォルトの指標間重み
             if custom_weights is None:
@@ -391,28 +693,50 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
             # 役職ごとの役職別HIEI値を計算
             role_hiei_values = {}
             role_weights = {}
+            calculation_errors = []
 
-            # 各役職について処理
-            for role in vas_improvements.keys():
-                # 役職の健康影響度の重み係数を取得
-                weight = HealthImpactWeightUtility.get_health_impact_weight(
-                    db_connection, industry_name, role
-                )
-                role_weights[role] = weight
+            try:
+                # 各役職について処理
+                for role in vas_improvements.keys():
+                    try:
+                        # 役職の健康影響度の重み係数を取得
+                        try:
+                            weight = HealthImpactWeightUtility.get_health_impact_weight(
+                                db_connection, industry_name, role
+                            )
+                            role_weights[role] = weight
+                        except Exception as weight_error:
+                            self.logger.warning(f"役職 '{role}' の重み取得中にエラーが発生しました: {str(weight_error)}")
+                            # デフォルト値を使用
+                            role_weights[role] = 1.0
+                            calculation_errors.append(f"役職 '{role}' の重み取得エラー: {str(weight_error)}")
 
-                # 役職ごとのHIEI値を計算
-                role_hiei = self.calculate_hiei(
-                    vas_improvements.get(role, 0),
-                    productivity_improvements.get(role, 0),
-                    turnover_reductions.get(role, 0),
-                    custom_weights
-                )
-                role_hiei_values[role] = role_hiei
+                        # 役職ごとのHIEI値を計算
+                        vas_value = vas_improvements.get(role, 0)
+                        productivity_value = productivity_improvements.get(role, 0)
+                        turnover_value = turnover_reductions.get(role, 0)
+
+                        role_hiei = self.calculate_hiei(
+                            vas_value, productivity_value, turnover_value, custom_weights
+                        )
+                        role_hiei_values[role] = role_hiei
+
+                        self.logger.debug(f"役職 '{role}' のHIEI: {role_hiei:.2f}, 重み: {role_weights[role]}")
+
+                    except Exception as role_error:
+                        self.logger.error(f"役職 '{role}' のHIEI計算中にエラーが発生しました: {str(role_error)}")
+                        calculation_errors.append(f"役職 '{role}' の計算エラー: {str(role_error)}")
+                        role_hiei_values[role] = 0
+            except Exception as roles_error:
+                self.logger.error(f"役職処理中にエラーが発生しました: {str(roles_error)}")
+                raise
 
             # 全体の重み付け合計を計算
             total_weight = sum(role_weights.values())
             if total_weight <= 0:
-                raise ValueError("役職の重み係数の合計が0以下です")
+                error_msg = "役職の重み係数の合計が0以下です"
+                self.logger.error(error_msg)
+                raise ValueError(error_msg)
 
             # 正規化された役職の重み
             normalized_weights = {role: weight/total_weight for role, weight in role_weights.items()}
@@ -428,19 +752,27 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
                 'industry': industry_name
             }
 
+            # 計算エラーがあれば追加
+            if calculation_errors:
+                result['calculation_warnings'] = calculation_errors
+
             self.logger.info(f"役職別重み付けHIEI計算が完了しました。最終HIEI値: {final_hiei:.2f}")
             return result
 
         except Exception as e:
             self.logger.error(f"役職別重み付けHIEI計算中にエラーが発生しました: {str(e)}")
             raise
+        finally:
+            # 明示的なメモリ解放
+            gc.collect()
 
     def calculate_team_based_hiei(self,
                                  team_data: pd.DataFrame,
                                  health_metrics: pd.DataFrame,
                                  performance_metrics: pd.DataFrame,
                                  company_data: Dict[str, str],
-                                 db_connection) -> Dict[str, float]:
+                                 db_connection,
+                                 optimize_memory: bool = True) -> Dict[str, float]:
         """
         チーム構成と役職分布を考慮したHIEI値を計算
 
@@ -460,6 +792,8 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
             必須キー: 'industry'（業種名）
         db_connection
             PostgreSQLデータベース接続オブジェクト
+        optimize_memory : bool, optional
+            メモリ最適化を行うかどうか (デフォルト: True)
 
         Returns
         -------
@@ -469,43 +803,53 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
         try:
             self.logger.info("チームベースのHIEI計算を開始")
 
+            # 入力データの検証
             if 'industry' not in company_data:
-                raise ValueError("企業データに業種情報（industry）が含まれていません")
+                error_msg = "企業データに業種情報（industry）が含まれていません"
+                self.logger.error(error_msg)
+                raise ValueError(error_msg)
 
             industry_name = company_data['industry']
+            self.logger.info(f"対象業種: {industry_name}, データサイズ: チーム={len(team_data)}行, 健康指標={len(health_metrics)}行, パフォーマンス={len(performance_metrics)}行")
 
-            # チームデータと健康/パフォーマンスデータを結合
-            merged_data = pd.merge(team_data, health_metrics, on='employee_id')
-            merged_data = pd.merge(merged_data, performance_metrics, on='employee_id')
+            # 必須カラムの確認
+            required_columns = {
+                'team_data': ['employee_id', 'position_title'],
+                'health_metrics': ['employee_id', 'vas_before', 'vas_after'],
+                'performance_metrics': ['employee_id', 'productivity_before', 'productivity_after']
+            }
 
-            # 役職ごとにグループ化して平均改善率を計算
-            role_improvements = merged_data.groupby('position_title').apply(
-                lambda x: {
-                    'vas_improvement': (x['vas_after'].mean() - x['vas_before'].mean()) / x['vas_before'].mean() * 100,
-                    'productivity_improvement': (x['productivity_after'].mean() - x['productivity_before'].mean()) / x['productivity_before'].mean() * 100,
-                    'count': len(x)
-                }
-            ).to_dict()
+            for df_name, columns in required_columns.items():
+                df = eval(df_name)  # 各データフレームを取得
+                missing_columns = [col for col in columns if col not in df.columns]
+                if missing_columns:
+                    error_msg = f"{df_name}に必須カラムがありません: {', '.join(missing_columns)}"
+                    self.logger.error(error_msg)
+                    raise ValueError(error_msg)
 
-            # 離職率のデータがなければ仮のゼロ値を設定
-            turnover_reductions = {role: 0 for role in role_improvements.keys()}
+            # メモリ最適化が必要な場合
+            if optimize_memory:
+                self.logger.info("データフレームのメモリ最適化を開始")
+                with self._managed_dataframe(team_data, "team_data") as opt_team_data, \
+                     self._managed_dataframe(health_metrics, "health_metrics") as opt_health_metrics, \
+                     self._managed_dataframe(performance_metrics, "performance_metrics") as opt_performance_metrics:
 
-            # 改善データを役職ごとに整理
-            vas_improvements = {role: data['vas_improvement'] for role, data in role_improvements.items()}
-            productivity_improvements = {role: data['productivity_improvement'] for role, data in role_improvements.items()}
+                    # データ型の最適化
+                    self._optimize_dataframe_types(opt_team_data)
+                    self._optimize_dataframe_types(opt_health_metrics)
+                    self._optimize_dataframe_types(opt_performance_metrics)
 
-            # 役職別重み付けHIEI値を計算
-            result = self.calculate_role_weighted_hiei(
-                vas_improvements,
-                productivity_improvements,
-                turnover_reductions,
-                company_data,
-                db_connection
-            )
-
-            # チーム構成情報を追加
-            result['team_composition'] = {role: data['count'] for role, data in role_improvements.items()}
-            result['total_team_size'] = merged_data['employee_id'].nunique()
+                    # 計算の実行
+                    result = self._execute_team_based_hiei_calculation(
+                        opt_team_data, opt_health_metrics, opt_performance_metrics,
+                        company_data, db_connection
+                    )
+            else:
+                # 最適化なしでの実行
+                result = self._execute_team_based_hiei_calculation(
+                    team_data, health_metrics, performance_metrics,
+                    company_data, db_connection
+                )
 
             self.logger.info(f"チームベースのHIEI計算が完了しました。最終HIEI値: {result['hiei']:.2f}")
             return result
@@ -513,3 +857,88 @@ class HealthInvestmentEffectIndexCalculator(BaseAnalyzer):
         except Exception as e:
             self.logger.error(f"チームベースのHIEI計算中にエラーが発生しました: {str(e)}")
             raise
+        finally:
+            # 明示的なメモリ解放
+            gc.collect()
+
+    def _execute_team_based_hiei_calculation(self,
+                                           team_data: pd.DataFrame,
+                                           health_metrics: pd.DataFrame,
+                                           performance_metrics: pd.DataFrame,
+                                           company_data: Dict[str, str],
+                                           db_connection) -> Dict[str, float]:
+        """
+        チームベースHIEI計算の実行部分（内部メソッド）
+
+        Parameters
+        ----------
+        同calculate_team_based_hieiと同様
+
+        Returns
+        -------
+        Dict[str, float]
+            計算結果を含む辞書
+        """
+        try:
+            # チームデータと健康/パフォーマンスデータを結合
+            with self._managed_dataframe(pd.merge(team_data, health_metrics, on='employee_id'), "merged_health") as merged_data:
+                merged_data = pd.merge(merged_data, performance_metrics, on='employee_id')
+
+                # データ検証 - 結合後に行数が0にならないか確認
+                if len(merged_data) == 0:
+                    self.logger.warning("結合後のデータが空になりました。マージキーを確認してください。")
+                    return {'hiei': 0, 'error': 'データ結合エラー: 結合結果が空です'}
+
+                # 役職ごとにグループ化して平均改善率を計算
+                role_data = {}
+                for role, group in merged_data.groupby('position_title'):
+                    # NaN値のチェックと処理
+                    vas_before_mean = group['vas_before'].fillna(0).mean()
+                    vas_after_mean = group['vas_after'].fillna(0).mean()
+                    prod_before_mean = group['productivity_before'].fillna(0).mean()
+                    prod_after_mean = group['productivity_after'].fillna(0).mean()
+
+                    # 改善率の計算 (ゼロ除算を回避)
+                    vas_improvement = 0
+                    if vas_before_mean > 0:
+                        vas_improvement = (vas_after_mean - vas_before_mean) / vas_before_mean * 100
+
+                    prod_improvement = 0
+                    if prod_before_mean > 0:
+                        prod_improvement = (prod_after_mean - prod_before_mean) / prod_before_mean * 100
+
+                    role_data[role] = {
+                        'vas_improvement': vas_improvement,
+                        'productivity_improvement': prod_improvement,
+                        'count': len(group)
+                    }
+
+                # 改善データを役職ごとに整理
+                vas_improvements = {role: data['vas_improvement'] for role, data in role_data.items()}
+                productivity_improvements = {role: data['productivity_improvement'] for role, data in role_data.items()}
+
+                # 離職率のデータがなければ仮のゼロ値を設定
+                turnover_reductions = {role: 0 for role in role_data.keys()}
+
+                # 役職別重み付けHIEI値を計算
+                result = self.calculate_role_weighted_hiei(
+                    vas_improvements,
+                    productivity_improvements,
+                    turnover_reductions,
+                    company_data,
+                    db_connection
+                )
+
+                # チーム構成情報を追加
+                result['team_composition'] = {role: data['count'] for role, data in role_data.items()}
+                result['total_team_size'] = merged_data['employee_id'].nunique()
+                result['calculation_details'] = {
+                    'vas_improvements': vas_improvements,
+                    'productivity_improvements': productivity_improvements
+                }
+
+                return result
+
+        except Exception as e:
+            self.logger.error(f"チームベースHIEI計算の実行中にエラーが発生しました: {str(e)}")
+            raise ValueError(f"チームベースHIEI計算エラー: {str(e)}")

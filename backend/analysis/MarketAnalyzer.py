@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Union, Any
+from typing import Dict, List, Tuple, Optional, Union, Any, Iterator, ContextManager
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
@@ -10,6 +10,9 @@ import json
 from datetime import datetime, timedelta
 import re
 from .base import BaseAnalyzer
+import gc
+import weakref
+from contextlib import contextmanager
 
 class MarketAnalyzer(BaseAnalyzer):
     """
@@ -24,6 +27,37 @@ class MarketAnalyzer(BaseAnalyzer):
         """
         super().__init__(analysis_type='market')
         self.logger.info("MarketAnalyzer initialized")
+        self._temp_data = weakref.WeakValueDictionary()  # 一時データを弱参照で管理
+        self._temp_figures = weakref.WeakValueDictionary()  # 図表を弱参照で管理
+        self._pca_models = weakref.WeakValueDictionary()  # PCAモデルを弱参照で管理
+
+    @contextmanager
+    def _managed_dataframe(self, df: pd.DataFrame, name: str = "default") -> Iterator[pd.DataFrame]:
+        """
+        データフレームのライフサイクルを管理するコンテキストマネージャー
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            管理対象のデータフレーム
+        name : str, optional
+            データフレームの識別名 (デフォルト: "default")
+
+        Yields
+        ------
+        pd.DataFrame
+            管理されたデータフレーム
+        """
+        try:
+            # データフレームを弱参照辞書に登録
+            self._temp_data[name] = df
+            yield df
+        finally:
+            # コンテキスト終了時にデータフレーム参照を削除
+            if name in self._temp_data:
+                del self._temp_data[name]
+            # 明示的なガベージコレクション
+            gc.collect()
 
     def estimate_market_size(self,
                            market_data: Dict[str, Any],
@@ -112,6 +146,7 @@ class MarketAnalyzer(BaseAnalyzer):
             return result
         except Exception as e:
             self.logger.error(f"Error estimating market size: {str(e)}")
+            self._cleanup_on_error()
             raise
 
     def create_competitive_map(self,
@@ -142,126 +177,130 @@ class MarketAnalyzer(BaseAnalyzer):
                 competitor_data = competitor_data.copy()
                 competitor_data.index.name = 'company'
 
-            # 2次元マッピングか多次元マッピングかを判断
-            direct_mapping = len(dimensions) == 2
+            # 大規模データフレームの場合、メモリ効率管理
+            with self._managed_dataframe(competitor_data, "competitor_data") as managed_competitor_data:
+                # 2次元マッピングか多次元マッピングかを判断
+                direct_mapping = len(dimensions) == 2
 
-            if direct_mapping:
-                # 2次元の直接マッピング
-                x_dimension, y_dimension = dimensions
+                if direct_mapping:
+                    # 2次元の直接マッピング
+                    x_dimension, y_dimension = dimensions
 
-                if x_dimension not in competitor_data.columns or y_dimension not in competitor_data.columns:
-                    raise ValueError(f"Dimensions {dimensions} not found in competitor data")
+                    if x_dimension not in managed_competitor_data.columns or y_dimension not in managed_competitor_data.columns:
+                        raise ValueError(f"Dimensions {dimensions} not found in competitor data")
 
-                # マッピングデータの作成
-                map_data = competitor_data[[x_dimension, y_dimension]].copy()
-                dimension_names = {
-                    'x': x_dimension,
-                    'y': y_dimension
+                    # マッピングデータの作成
+                    map_data = managed_competitor_data[[x_dimension, y_dimension]].copy()
+                    dimension_names = {
+                        'x': x_dimension,
+                        'y': y_dimension
+                    }
+
+                else:
+                    # 多次元から2次元への削減（PCA）
+                    if any(dim not in managed_competitor_data.columns for dim in dimensions):
+                        missing_dims = [dim for dim in dimensions if dim not in managed_competitor_data.columns]
+                        raise ValueError(f"Dimensions {missing_dims} not found in competitor data")
+
+                    # 次元削減用のデータ
+                    reduction_data = managed_competitor_data[dimensions].copy()
+
+                    # 欠損値処理
+                    if reduction_data.isnull().any().any():
+                        reduction_data = reduction_data.fillna(reduction_data.mean())
+
+                    # スケーリング
+                    scaler = StandardScaler()
+                    scaled_data = scaler.fit_transform(reduction_data)
+
+                    # PCAの実行
+                    pca = PCA(n_components=2)
+                    self._pca_models["competitive_map"] = pca
+                    pca_result = pca.fit_transform(scaled_data)
+
+                    # 結果をDataFrameに変換
+                    map_data = pd.DataFrame(
+                        pca_result,
+                        index=managed_competitor_data.index,
+                        columns=['PC1', 'PC2']
+                    )
+
+                    # 次元の解釈（各主成分における元の次元の寄与度）
+                    loadings = pd.DataFrame(
+                        pca.components_.T,
+                        index=dimensions,
+                        columns=['PC1', 'PC2']
+                    )
+
+                    dimension_names = {
+                        'x': 'PC1',
+                        'y': 'PC2',
+                        'loadings': loadings.to_dict(),
+                        'explained_variance': pca.explained_variance_ratio_.tolist(),
+                        'original_dimensions': dimensions
+                    }
+
+                # 象限の識別（各社の位置）
+                map_data['quadrant'] = 0
+                map_data.loc[(map_data.iloc[:, 0] > 0) & (map_data.iloc[:, 1] > 0), 'quadrant'] = 1  # 右上
+                map_data.loc[(map_data.iloc[:, 0] < 0) & (map_data.iloc[:, 1] > 0), 'quadrant'] = 2  # 左上
+                map_data.loc[(map_data.iloc[:, 0] < 0) & (map_data.iloc[:, 1] < 0), 'quadrant'] = 3  # 左下
+                map_data.loc[(map_data.iloc[:, 0] > 0) & (map_data.iloc[:, 1] < 0), 'quadrant'] = 4  # 右下
+
+                # 企業間の相対的な距離
+                if len(managed_competitor_data) > 1:
+                    companies = map_data.index.tolist()
+                    distances = {}
+
+                    for i, company1 in enumerate(companies):
+                        distances[company1] = {}
+                        for company2 in companies[i+1:]:
+                            pos1 = map_data.loc[company1, [map_data.columns[0], map_data.columns[1]]].values
+                            pos2 = map_data.loc[company2, [map_data.columns[0], map_data.columns[1]]].values
+                            distance = np.linalg.norm(pos1 - pos2)
+                            distances[company1][company2] = distance
+
+                            # 両方向の距離を記録
+                            if company2 not in distances:
+                                distances[company2] = {}
+                            distances[company2][company1] = distance
+
+                    # 各企業の最も近い競合とその距離
+                    nearest_competitors = {}
+                    for company in companies:
+                        company_distances = {other: dist for other, dist in distances[company].items()}
+                        if company_distances:
+                            nearest = min(company_distances.items(), key=lambda x: x[1])
+                            nearest_competitors[company] = {
+                                'nearest_competitor': nearest[0],
+                                'distance': nearest[1]
+                            }
+                else:
+                    nearest_competitors = {}
+
+                # 焦点企業のハイライト
+                if focal_company and focal_company in map_data.index:
+                    map_data.loc[focal_company, 'is_focal'] = True
+                else:
+                    map_data['is_focal'] = False
+
+                # 結果の整形
+                result = {
+                    'mapping_type': 'direct' if direct_mapping else 'pca',
+                    'dimensions': dimension_names,
+                    'positions': map_data.reset_index().to_dict('records'),
+                    'distances': distances if len(managed_competitor_data) > 1 else {},
+                    'nearest_competitors': nearest_competitors,
+                    'focal_company': focal_company if focal_company in map_data.index else None,
+                    'quadrant_distribution': map_data['quadrant'].value_counts().to_dict(),
+                    'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
 
-            else:
-                # 多次元から2次元への削減（PCA）
-                if any(dim not in competitor_data.columns for dim in dimensions):
-                    missing_dims = [dim for dim in dimensions if dim not in competitor_data.columns]
-                    raise ValueError(f"Dimensions {missing_dims} not found in competitor data")
-
-                # 次元削減用のデータ
-                reduction_data = competitor_data[dimensions].copy()
-
-                # 欠損値処理
-                if reduction_data.isnull().any().any():
-                    reduction_data = reduction_data.fillna(reduction_data.mean())
-
-                # スケーリング
-                scaler = StandardScaler()
-                scaled_data = scaler.fit_transform(reduction_data)
-
-                # PCAの実行
-                pca = PCA(n_components=2)
-                pca_result = pca.fit_transform(scaled_data)
-
-                # 結果をDataFrameに変換
-                map_data = pd.DataFrame(
-                    pca_result,
-                    index=competitor_data.index,
-                    columns=['PC1', 'PC2']
-                )
-
-                # 次元の解釈（各主成分における元の次元の寄与度）
-                loadings = pd.DataFrame(
-                    pca.components_.T,
-                    index=dimensions,
-                    columns=['PC1', 'PC2']
-                )
-
-                dimension_names = {
-                    'x': 'PC1',
-                    'y': 'PC2',
-                    'loadings': loadings.to_dict(),
-                    'explained_variance': pca.explained_variance_ratio_.tolist(),
-                    'original_dimensions': dimensions
-                }
-
-            # 象限の識別（各社の位置）
-            map_data['quadrant'] = 0
-            map_data.loc[(map_data.iloc[:, 0] > 0) & (map_data.iloc[:, 1] > 0), 'quadrant'] = 1  # 右上
-            map_data.loc[(map_data.iloc[:, 0] < 0) & (map_data.iloc[:, 1] > 0), 'quadrant'] = 2  # 左上
-            map_data.loc[(map_data.iloc[:, 0] < 0) & (map_data.iloc[:, 1] < 0), 'quadrant'] = 3  # 左下
-            map_data.loc[(map_data.iloc[:, 0] > 0) & (map_data.iloc[:, 1] < 0), 'quadrant'] = 4  # 右下
-
-            # 企業間の相対的な距離
-            if len(competitor_data) > 1:
-                companies = map_data.index.tolist()
-                distances = {}
-
-                for i, company1 in enumerate(companies):
-                    distances[company1] = {}
-                    for company2 in companies[i+1:]:
-                        pos1 = map_data.loc[company1, [map_data.columns[0], map_data.columns[1]]].values
-                        pos2 = map_data.loc[company2, [map_data.columns[0], map_data.columns[1]]].values
-                        distance = np.linalg.norm(pos1 - pos2)
-                        distances[company1][company2] = distance
-
-                        # 両方向の距離を記録
-                        if company2 not in distances:
-                            distances[company2] = {}
-                        distances[company2][company1] = distance
-
-                # 各企業の最も近い競合とその距離
-                nearest_competitors = {}
-                for company in companies:
-                    company_distances = {other: dist for other, dist in distances[company].items()}
-                    if company_distances:
-                        nearest = min(company_distances.items(), key=lambda x: x[1])
-                        nearest_competitors[company] = {
-                            'nearest_competitor': nearest[0],
-                            'distance': nearest[1]
-                        }
-            else:
-                nearest_competitors = {}
-
-            # 焦点企業のハイライト
-            if focal_company and focal_company in map_data.index:
-                map_data.loc[focal_company, 'is_focal'] = True
-            else:
-                map_data['is_focal'] = False
-
-            # 結果の整形
-            result = {
-                'mapping_type': 'direct' if direct_mapping else 'pca',
-                'dimensions': dimension_names,
-                'positions': map_data.reset_index().to_dict('records'),
-                'distances': distances if len(competitor_data) > 1 else {},
-                'nearest_competitors': nearest_competitors,
-                'focal_company': focal_company if focal_company in map_data.index else None,
-                'quadrant_distribution': map_data['quadrant'].value_counts().to_dict(),
-                'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-
-            self.logger.info(f"Competitive mapping created with {len(map_data)} companies")
-            return result
+                self.logger.info(f"Competitive mapping created with {len(map_data)} companies")
+                return result
         except Exception as e:
             self.logger.error(f"Error creating competitive map: {str(e)}")
+            self._cleanup_on_error()
             raise
 
     def analyze_competitive_positioning(self,
@@ -387,6 +426,7 @@ class MarketAnalyzer(BaseAnalyzer):
             return result
         except Exception as e:
             self.logger.error(f"Error analyzing competitive positioning: {str(e)}")
+            self._cleanup_on_error()
             raise
 
     def track_competitors(self,
@@ -433,6 +473,7 @@ class MarketAnalyzer(BaseAnalyzer):
             # 各競合企業のアクティビティ集計
             competitor_activities = {}
 
+            # 大量データ処理のためのバッチ処理
             for competitor, data in competitor_data.items():
                 activities = {}
 
@@ -469,6 +510,11 @@ class MarketAnalyzer(BaseAnalyzer):
                             activities[metric]['senior_ratio'] = senior_count / len(period_data) if period_data else 0
 
                 competitor_activities[competitor] = activities
+
+                # 各バッチ処理後にメモリ解放を促進
+                if 'period_data' in locals():
+                    del period_data
+                    gc.collect()
 
             # アクティビティのランキング
             rankings = {}
@@ -532,12 +578,14 @@ class MarketAnalyzer(BaseAnalyzer):
             return result
         except Exception as e:
             self.logger.error(f"Error tracking competitors: {str(e)}")
+            self._cleanup_on_error()
             raise
 
     def analyze_market_trends(self,
                             keyword_data: Dict[str, List],
                             date_range: Optional[Tuple[str, str]] = None,
-                            industry: Optional[str] = None) -> Dict[str, Any]:
+                            industry: Optional[str] = None,
+                            batch_size: int = 1000) -> Dict[str, Any]:
         """
         市場トレンドを分析
 
@@ -549,6 +597,8 @@ class MarketAnalyzer(BaseAnalyzer):
             分析対象期間 ('YYYY-MM-DD', 'YYYY-MM-DD')
         industry : str, optional
             業界カテゴリ
+        batch_size : int, optional
+            大量データ処理用のバッチサイズ
 
         Returns
         -------
@@ -567,7 +617,14 @@ class MarketAnalyzer(BaseAnalyzer):
                 # デフォルトは全期間
                 all_dates = []
                 for keyword, data_points in keyword_data.items():
-                    all_dates.extend([datetime.fromisoformat(dp['date']) for dp in data_points])
+                    # バッチ処理でデータを扱う
+                    for i in range(0, len(data_points), batch_size):
+                        batch = data_points[i:i+batch_size]
+                        all_dates.extend([datetime.fromisoformat(dp['date']) for dp in batch])
+
+                        # バッチ処理後にメモリ解放
+                        del batch
+                        gc.collect()
 
                 if all_dates:
                     start_date = min(all_dates)
@@ -575,132 +632,204 @@ class MarketAnalyzer(BaseAnalyzer):
                 else:
                     raise ValueError("No date information found in keyword data")
 
-            # 各キーワードの時系列データをDataFrameに変換
-            trend_data = pd.DataFrame()
+            # 各キーワードの時系列データをDataFrameに変換 - メモリ効率を考慮した実装
+            trend_df_list = []
 
             for keyword in keywords:
                 # 日付とスコアのリストを抽出
                 data_points = keyword_data[keyword]
-                dates = [datetime.fromisoformat(dp['date']) for dp in data_points]
-                values = [dp['value'] for dp in data_points]
 
-                # キーワードのDataFrameを作成
-                keyword_df = pd.DataFrame({
-                    'date': dates,
-                    keyword: values
-                })
+                # バッチ処理でデータを扱う
+                keyword_df_list = []
+                for i in range(0, len(data_points), batch_size):
+                    batch = data_points[i:i+batch_size]
+                    batch_dates = [datetime.fromisoformat(dp['date']) for dp in batch]
+                    batch_values = [dp['value'] for dp in batch]
 
-                # 日付でフィルタリング
-                keyword_df = keyword_df[
-                    (keyword_df['date'] >= start_date) &
-                    (keyword_df['date'] <= end_date)
-                ]
+                    # バッチごとのDataFrameを作成
+                    batch_df = pd.DataFrame({
+                        'date': batch_dates,
+                        keyword: batch_values
+                    })
 
-                if trend_data.empty:
-                    trend_data = keyword_df
+                    # 日付でフィルタリング
+                    batch_df = batch_df[
+                        (batch_df['date'] >= start_date) &
+                        (batch_df['date'] <= end_date)
+                    ]
+
+                    keyword_df_list.append(batch_df)
+
+                    # バッチ処理後にメモリ解放
+                    del batch, batch_dates, batch_values
+                    gc.collect()
+
+                # バッチごとのDataFrameを結合
+                if keyword_df_list:
+                    keyword_df = pd.concat(keyword_df_list, ignore_index=True)
+                    trend_df_list.append(keyword_df)
+
+                    # 不要になったリストを解放
+                    del keyword_df_list
+                    gc.collect()
+
+            # 各キーワードのDataFrameをマージ
+            if trend_df_list:
+                with self._managed_dataframe(trend_df_list[0], "base_trend") as trend_data:
+                    for df in trend_df_list[1:]:
+                        with self._managed_dataframe(df, f"merge_{df.columns[1]}") as to_merge:
+                            trend_data = pd.merge(
+                                trend_data, to_merge,
+                                on='date',
+                                how='outer'
+                            )
+
+                # 欠損値の処理
+                trend_data = trend_data.ffill().bfill()
+
+                # 各キーワードの傾向分析
+                keyword_trends = {}
+
+                for keyword in keywords:
+                    if keyword in trend_data.columns:
+                        # トレンドラインの計算（線形回帰）
+                        x = np.arange(len(trend_data))
+                        y = trend_data[keyword].values
+
+                        # 単純な線形トレンド（最小二乗法）
+                        if len(x) > 1:  # 少なくとも2点が必要
+                            slope, intercept = np.polyfit(x, y, 1)
+                        else:
+                            slope, intercept = 0, y[0] if len(y) > 0 else 0
+
+                        # トレンドの方向判定
+                        if slope > 0.05:
+                            trend_direction = 'increasing'
+                        elif slope < -0.05:
+                            trend_direction = 'decreasing'
+                        else:
+                            trend_direction = 'stable'
+
+                        # 成長率の計算
+                        first_value = trend_data[keyword].iloc[0] if not trend_data.empty else 0
+                        last_value = trend_data[keyword].iloc[-1] if not trend_data.empty else 0
+
+                        if first_value > 0:
+                            growth_rate = (last_value - first_value) / first_value
+                        else:
+                            growth_rate = float('inf') if last_value > 0 else 0
+
+                        # 変動性（標準偏差 / 平均）
+                        mean_value = trend_data[keyword].mean()
+                        std_value = trend_data[keyword].std()
+                        volatility = std_value / mean_value if mean_value > 0 else 0
+
+                        # 結果をまとめる
+                        keyword_trends[keyword] = {
+                            'slope': slope,
+                            'trend_direction': trend_direction,
+                            'growth_rate': growth_rate,
+                            'volatility': volatility,
+                            'mean': mean_value,
+                            'latest_value': last_value,
+                            'peak_value': trend_data[keyword].max(),
+                            'peak_date': trend_data.loc[trend_data[keyword].idxmax(), 'date'].strftime('%Y-%m-%d') if not trend_data.empty else None
+                        }
+
+                # キーワード間の相関分析
+                correlation_matrix = {}
+
+                if len(keywords) > 1:
+                    keyword_columns = [k for k in keywords if k in trend_data.columns]
+                    corr_df = trend_data[keyword_columns].corr()
+
+                    for k1 in keyword_columns:
+                        correlation_matrix[k1] = {}
+                        for k2 in keyword_columns:
+                            if k1 != k2:
+                                correlation_matrix[k1][k2] = corr_df.loc[k1, k2]
+
+                # 全体的な市場トレンドの判定
+                overall_growth_rates = [kt['growth_rate'] for kt in keyword_trends.values()]
+                overall_growth_rate = np.mean(overall_growth_rates) if overall_growth_rates else 0
+
+                if overall_growth_rate > 0.1:
+                    overall_trend = 'strongly_growing'
+                elif overall_growth_rate > 0:
+                    overall_trend = 'moderately_growing'
+                elif overall_growth_rate > -0.1:
+                    overall_trend = 'stable'
                 else:
-                    # 既存のDataFrameとマージ
-                    trend_data = pd.merge(
-                        trend_data, keyword_df,
-                        on='date',
-                        how='outer'
-                    )
+                    overall_trend = 'declining'
 
-            # 欠損値の処理
-            trend_data = trend_data.ffill().bfill()
+                # 結果の整形
+                result = {
+                    'date_range': {
+                        'start': start_date.strftime('%Y-%m-%d'),
+                        'end': end_date.strftime('%Y-%m-%d')
+                    },
+                    'keywords': keywords,
+                    'keyword_trends': keyword_trends,
+                    'correlation_matrix': correlation_matrix,
+                    'overall_trend': overall_trend,
+                    'overall_growth_rate': overall_growth_rate,
+                    'industry': industry,
+                    'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
 
-            # 各キーワードの傾向分析
-            keyword_trends = {}
-
-            for keyword in keywords:
-                if keyword in trend_data.columns:
-                    # トレンドラインの計算（線形回帰）
-                    x = np.arange(len(trend_data))
-                    y = trend_data[keyword].values
-
-                    # 単純な線形トレンド（最小二乗法）
-                    if len(x) > 1:  # 少なくとも2点が必要
-                        slope, intercept = np.polyfit(x, y, 1)
-                    else:
-                        slope, intercept = 0, y[0] if len(y) > 0 else 0
-
-                    # トレンドの方向判定
-                    if slope > 0.05:
-                        trend_direction = 'increasing'
-                    elif slope < -0.05:
-                        trend_direction = 'decreasing'
-                    else:
-                        trend_direction = 'stable'
-
-                    # 成長率の計算
-                    first_value = trend_data[keyword].iloc[0] if not trend_data.empty else 0
-                    last_value = trend_data[keyword].iloc[-1] if not trend_data.empty else 0
-
-                    if first_value > 0:
-                        growth_rate = (last_value - first_value) / first_value
-                    else:
-                        growth_rate = float('inf') if last_value > 0 else 0
-
-                    # 変動性（標準偏差 / 平均）
-                    mean_value = trend_data[keyword].mean()
-                    std_value = trend_data[keyword].std()
-                    volatility = std_value / mean_value if mean_value > 0 else 0
-
-                    # 結果をまとめる
-                    keyword_trends[keyword] = {
-                        'slope': slope,
-                        'trend_direction': trend_direction,
-                        'growth_rate': growth_rate,
-                        'volatility': volatility,
-                        'mean': mean_value,
-                        'latest_value': last_value,
-                        'peak_value': trend_data[keyword].max(),
-                        'peak_date': trend_data.loc[trend_data[keyword].idxmax(), 'date'].strftime('%Y-%m-%d') if not trend_data.empty else None
-                    }
-
-            # キーワード間の相関分析
-            correlation_matrix = {}
-
-            if len(keywords) > 1:
-                keyword_columns = [k for k in keywords if k in trend_data.columns]
-                corr_df = trend_data[keyword_columns].corr()
-
-                for k1 in keyword_columns:
-                    correlation_matrix[k1] = {}
-                    for k2 in keyword_columns:
-                        if k1 != k2:
-                            correlation_matrix[k1][k2] = corr_df.loc[k1, k2]
-
-            # 全体的な市場トレンドの判定
-            overall_growth_rates = [kt['growth_rate'] for kt in keyword_trends.values()]
-            overall_growth_rate = np.mean(overall_growth_rates) if overall_growth_rates else 0
-
-            if overall_growth_rate > 0.1:
-                overall_trend = 'strongly_growing'
-            elif overall_growth_rate > 0:
-                overall_trend = 'moderately_growing'
-            elif overall_growth_rate > -0.1:
-                overall_trend = 'stable'
+                self.logger.info(f"Market trends analysis completed for {len(keywords)} keywords")
+                return result
             else:
-                overall_trend = 'declining'
-
-            # 結果の整形
-            result = {
-                'date_range': {
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
-                },
-                'keywords': keywords,
-                'keyword_trends': keyword_trends,
-                'correlation_matrix': correlation_matrix,
-                'overall_trend': overall_trend,
-                'overall_growth_rate': overall_growth_rate,
-                'industry': industry,
-                'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-
-            self.logger.info(f"Market trends analysis completed for {len(keywords)} keywords")
-            return result
+                raise ValueError("No valid trend data could be created")
         except Exception as e:
             self.logger.error(f"Error analyzing market trends: {str(e)}")
+            self._cleanup_on_error()
             raise
+
+    def release_resources(self) -> None:
+        """
+        メモリリソースを解放します。
+        """
+        try:
+            # 一時データの削除
+            self._temp_data.clear()
+
+            # 図表の削除
+            self._temp_figures.clear()
+
+            # PCAモデルの削除
+            self._pca_models.clear()
+
+            # 明示的なガベージコレクション
+            gc.collect()
+            self.logger.info("リソースが正常に解放されました")
+        except Exception as e:
+            self.logger.error(f"リソース解放中にエラーが発生しました: {str(e)}")
+
+    def _cleanup_on_error(self) -> None:
+        """
+        エラー発生時のクリーンアップ処理
+        """
+        try:
+            self.release_resources()
+        except Exception as e:
+            self.logger.error(f"エラークリーンアップ中に問題が発生しました: {str(e)}")
+
+    def __del__(self):
+        """
+        デストラクタ - リソース解放を保証
+        """
+        self.release_resources()
+
+    def __enter__(self):
+        """
+        コンテキストマネージャのエントリーポイント
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        コンテキストマネージャの終了処理
+        """
+        self.release_resources()
+        return False  # 例外を伝播させる
