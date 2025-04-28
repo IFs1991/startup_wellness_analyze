@@ -3,15 +3,16 @@ version: '3.8'
 services:
   frontend:
     build:
-      context: .
+      context: ./frontend  # frontend ディレクトリをビルドコンテキストとして指定
       dockerfile: Dockerfile
       args:
         - NODE_ENV=production
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8000/api}
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "80:3000"
     environment:
+      # 実行時の環境変数 (ビルド時にも一部使用される可能性あり)
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8000/api}
       - NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY}
       - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}
@@ -31,9 +32,15 @@ services:
     networks:
       - app-network
 
-  # バックエンドサービスの定義（メインのdocker-compose.ymlファイルに存在しない場合）
+  # バックエンドサービスの定義
   backend:
-    image: ${BACKEND_IMAGE:-backend:latest}
+    # backend サービスのイメージを指定してください。
+    # ローカルでビルドする場合は build セクションを、
+    # Docker Hub などから取得する場合は image セクションを記述します。
+    # 例:
+    # build: ./backend
+    # image: your-dockerhub-username/backend:latest
+    image: ${BACKEND_IMAGE:-backend:latest} # 環境変数またはデフォルト値を使用
     restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-1spel!2stack3win}
@@ -50,7 +57,7 @@ services:
     networks:
       - app-network
 
-  # データベースサービスの定義（メインのdocker-compose.ymlファイルに存在しない場合）
+  # データベースサービスの定義
   db:
     image: postgres:14-alpine
     restart: unless-stopped
@@ -58,15 +65,19 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-1spel!2stack3win}
       - POSTGRES_DB=${POSTGRES_DB:-startup_wellness_analyze}
     volumes:
+      # 名前付きボリュームを使用してデータを永続化
       - postgres_data:/var/lib/postgresql/data
     ports:
+      # ホストの 5432 をコンテナの 5432 にマッピング（開発時など必要に応じて）
       - "5432:5432"
     networks:
       - app-network
 
+# ネットワークの定義
 networks:
   app-network:
     driver: bridge
 
+# ボリュームの定義
 volumes:
-  postgres_data:
+  postgres_data: # データベースデータ用の名前付きボリューム

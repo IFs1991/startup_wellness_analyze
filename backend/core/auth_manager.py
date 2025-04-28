@@ -34,7 +34,7 @@ from redis.exceptions import RedisError
 from .patterns import LazyImport, Singleton
 from .common_logger import get_logger
 from dotenv import load_dotenv
-from database.connection import DatabaseManager, get_db
+from database.connection import Database as DatabaseManager
 
 # compliance_managerを遅延インポート
 ComplianceManager = LazyImport('core.compliance_manager', 'ComplianceManager')
@@ -58,10 +58,10 @@ if os.getenv("ENVIRONMENT") != "production":
 # 絶対インポートを使用する（ベストプラクティス）
 try:
     # プロジェクトのデータベースパッケージからインポート
-    from database.database import DatabaseManager
+    from database.connection import Database as DatabaseManager
 except ImportError:
     # フォールバック: ベースモジュールからインポート
-    from database import DatabaseManager
+    from database import connection
 
 from .rate_limiter import RateLimiter
 from .auth_metrics import AuthMetricsCollector

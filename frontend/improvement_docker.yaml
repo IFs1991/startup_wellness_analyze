@@ -1,0 +1,131 @@
+# Docker Compose設定修正・検証計画
+
+version: 1.0
+planName: Frontend Docker Configuration Refinement
+phases:
+  - phase: 1
+    name: ポート設定の整合性確保とDockerfile検証
+    description: docker-compose.yml、Dockerfile、healthcheck.sh間でのポート設定の不一致を解消し、Dockerfileが正しくアプリケーションをビルド・実行できることを確認します。
+    objective: コンテナ内外のポートマッピングとヘルスチェックの整合性をとり、基本的なDockerビルドと実行を成功させる。
+    affectedFiles:
+      - docker-compose.yml
+      - healthcheck.sh
+      - Dockerfile  # 新規作成またはレビューが必要
+      - package.json # startスクリプト確認のため
+    tasks:
+      - id: 1.1
+        description: コンテナ内部ポートの決定
+        details: Next.jsをコンテナ内部でポート3000で実行し、ホストのポート80にマッピングする方針を採用します。（変更が必要な場合はDockerfileと関連設定を調整）
+      - id: 1.2
+        description: docker-compose.ymlの修正
+        details: 'frontendサービスのports設定を "- "80:3000"" に変更します。'
+        targetFile: docker-compose.yml
+      - id: 1.3
+        description: healthcheck.shの確認
+        details: ヘルスチェックが引き続きコンテナ内部の `http://localhost:3000/` を対象としていることを確認します。
+        targetFile: healthcheck.sh
+      - id: 1.4
+        description: Dockerfileのレビューまたは作成
+        details: |
+          - 必要なファイル（package.json, pnpm-lock.yaml, ソースコード等）が適切にコピーされているか確認。
+          - 依存関係のインストール（例: pnpm install）が正しく実行されるか確認。
+          - Next.jsのビルド（例: pnpm build）が正しく実行されるか確認。
+          - `EXPOSE 3000` が記述されているか確認。
+          - コンテナ起動コマンド（CMDまたはENTRYPOINT）が `pnpm start` または `next start` を実行し、ポート3000でリッスンすることを確認。`entrypoint.sh` を使う場合は最終的にNext.jsがポート3000で起動することを確認。
+        targetFile: Dockerfile
+    verification:
+      - description: Dockerイメージのビルド
+        command: "docker compose build frontend"
+        expectedResult: ビルドがエラーなく完了する。
+      - description: コンテナの起動
+        command: "docker compose up -d frontend"
+        expectedResult: コンテナが正常に起動する。
+      - description: コンテナログの確認
+        command: "docker compose logs frontend"
+        expectedResult: 起動時エラーが発生していない。
+      - description: ヘルスチェックステータスの確認
+        command: "docker compose ps"
+        expectedResult: frontendサービスのSTATUSが 'healthy' になる。
+      - description: アプリケーションへのアクセス確認
+        command: "ホストマシンのブラウザで http://localhost:80 にアクセス"
+        expectedResult: アプリケーションが正常に表示・動作する。
+
+  - phase: 2
+    name: ビルド時エラーチェックの有効化
+    description: 本番環境でのコード品質を確保するため、Dockerビルド時にTypeScriptおよびESLintのエラーチェックを有効にします。
+    objective: ビルドプロセスで型エラーやリントエラーを検出し、修正する。
+    affectedFiles:
+      - next.config.mjs
+      - Dockerfile # ビルドエラー発生時の修正のため
+      - potentially any .ts/.tsx file with errors
+    tasks:
+      - id: 2.1
+        description: next.config.mjsの修正
+        details: |
+          - `eslint.ignoreDuringBuilds` を `false` に変更。
+          - `typescript.ignoreBuildErrors` を `false` に変更。
+        targetFile: next.config.mjs
+      - id: 2.2
+        description: Dockerイメージの再ビルドとエラー修正
+        details: `docker compose build frontend` を実行し、ビルド時に報告されるTypeScriptまたはESLintのエラーをすべて修正します。
+        targetFile: Various .ts/.tsx files, Dockerfile if build steps need adjustment
+    verification:
+      - description: エラーチェック有効でのDockerビルド
+        command: "docker compose build frontend"
+        expectedResult: ビルドがエラーなく完了する（TypeScript/ESLintエラーが修正されている）。
+      - description: コンテナ起動と動作確認
+        command: "docker compose up -d frontend && curl -f http://localhost:80"
+        expectedResult: コンテナが起動し、アプリケーションが基本的な応答を返す。
+
+  - phase: 3
+    name: 最終レビューと統合テスト
+    description: すべての設定が連携して正しく機能し、アプリケーションがDocker環境で期待通りに動作することを確認します。
+    objective: 設定全体の一貫性を確認し、Docker化されたアプリケーションの基本的な機能テストを実施する。
+    affectedFiles:
+      - docker-compose.yml
+      - Dockerfile
+      - healthcheck.sh
+      - entrypoint.sh
+      - next.config.mjs
+      - package.json
+      - Application source code
+    tasks:
+      - id: 3.1
+        description: 設定ファイル間の整合性レビュー
+        details: 関連する設定ファイル（docker-compose.yml, Dockerfile, healthcheck.sh, entrypoint.sh, next.config.mjs, package.json等）を見直し、ポート番号、環境変数、起動コマンド等に矛盾がないか確認します。
+      - id: 3.2
+        description: 基本的な機能テスト
+        details: Dockerコンテナ内で実行されているアプリケーションの主要な機能（ログイン、主要ページの表示、基本的な操作など）をテストします。
+    verification:
+      - description: アプリケーションのアクセスと機能性
+        command: "Manual testing via browser at http://localhost:80"
+        expectedResult: 主要機能が期待通り動作する。
+      - description: ヘルスチェックの安定性確認
+        command: "Observe 'docker compose ps' over a few minutes"
+        expectedResult: frontendサービスのSTATUSが継続的に 'healthy' である。
+      - description: コンテナログの最終確認
+        command: "docker compose logs frontend"
+        expectedResult: 運用中にクリティカルなエラーログが出力されていない。
+
+タスク完了:
+  ステータス: 完了
+  内容: フェーズ2のタスク2.1を実行しました
+  変更点:
+    - next.config.mjsの`eslint.ignoreDuringBuilds`を`true`から`false`に変更
+    - next.config.mjsの`typescript.ignoreBuildErrors`を`true`から`false`に変更
+  効果:
+    - TypeScriptの型エラーがビルド時に検出されるようになります
+    - ESLintの警告・エラーがビルド時に検出されるようになります
+  次のステップ:
+    - タスク2.2: `docker compose build frontend`を実行し、ビルド時に報告されるTypeScriptまたはESLintのエラーを修正する
+
+タスク実行状況:
+  タスク: フェーズ2のタスク2.2（Dockerイメージの再ビルドとエラー修正）
+  ステータス: 実行試行
+  問題点:
+    - Dockerサービスが停止しています（com.docker.service）
+    - 「docker compose build frontend」実行時にエラーが発生
+    - エラーメッセージ: "error during connect: Head "http://%2F%2F.%2Fpipe%2FdockerDesktopLinuxEngine/_ping": open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+  対応策:
+    - Docker Desktopを起動してからコマンドを再実行する必要があります
+    - Docker Desktopが正常に動作していることを確認してください

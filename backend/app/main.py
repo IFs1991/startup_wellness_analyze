@@ -84,7 +84,7 @@ from api.dependencies import ServiceProvider, service_provider
 
 # Import routers and dependencies
 from service.firestore.client import FirestoreService, StorageError, ValidationError
-from database.connection import get_db
+from database.connection import get_db, init_db, get_neo4j_driver
 
 # Neo4jの初期化をインポート
 from database.neo4j import init_neo4j, Neo4jService
@@ -411,6 +411,17 @@ try:
     service_provider.register_service("company_analysis_service", CompanyAnalysisService)
 except ImportError:
     logger.warning("CompanyAnalysisServiceをインポートできませんでした。会社分析機能が制限されます。")
+
+# 起動時のNeo4j初期化処理を更新
+@app.on_event("startup")
+async def startup_event():
+    """アプリケーション起動時に実行される処理"""
+    # データベース初期化
+    try:
+        init_db()
+        logger.info("データベースを初期化しました")
+    except Exception as e:
+        logger.error(f"データベース初期化中にエラーが発生しました: {str(e)}")
 
 # アプリケーションの起動（直接実行された場合のみ）
 if __name__ == "__main__":

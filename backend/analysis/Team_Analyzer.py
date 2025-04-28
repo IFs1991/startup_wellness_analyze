@@ -11,8 +11,12 @@ Startup Wellness データ分析システム
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional, Any, Union
+from typing import Dict, List, Tuple, Optional, Any, Union, Callable, Iterator
 import logging
+import gc
+import weakref
+from functools import lru_cache
+import contextlib
 from google.cloud import firestore
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -20,9 +24,6 @@ import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 import networkx as nx
 import matplotlib.pyplot as plt
-import gc
-import weakref
-from contextlib import contextmanager
 # wordcloudをtry-exceptで囲んで依存関係エラーを防止
 try:
     from wordcloud import WordCloud
@@ -31,10 +32,6 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.warning("wordcloud パッケージがインストールされていません。テキスト視覚化機能は制限されます。")
     WORDCLOUD_AVAILABLE = False
-
-# 基底クラスと共通ユーティリティのインポート
-from .base import BaseAnalyzer
-from .utils import plot_context, PlotUtility
 
 # NLTKリソースのダウンロード（初回実行時に必要）
 try:
@@ -51,7 +48,83 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-class TeamAnalyzer(BaseAnalyzer):
+class AnalysisCache:
+    """
+    分析結果をキャッシュするためのクラス
+    """
+    def __init__(self, max_size=50):
+        self._cache = weakref.WeakValueDictionary()
+        self._max_size = max_size
+        self._access_count = {}
+
+    def get(self, key):
+        """キャッシュからデータを取得"""
+        if key in self._cache:
+            self._access_count[key] = self._access_count.get(key, 0) + 1
+            return self._cache[key]
+        return None
+
+    def put(self, key, value):
+        """キャッシュにデータを格納"""
+        # キャッシュが最大サイズに達した場合、最も使用頻度の低いアイテムを削除
+        if len(self._cache) >= self._max_size:
+            min_key = min(self._access_count.items(), key=lambda x: x[1])[0]
+            del self._cache[min_key]
+            del self._access_count[min_key]
+
+        self._cache[key] = value
+        self._access_count[key] = 1
+
+    def clear(self):
+        """キャッシュをクリア"""
+        self._cache.clear()
+        self._access_count.clear()
+        gc.collect()
+
+
+@contextlib.contextmanager
+def managed_df(df, copy=False):
+    """
+    データフレームの効率的な管理のためのコンテキストマネージャ
+
+    Args:
+        df: 管理対象のデータフレーム
+        copy: Trueの場合、データフレームのコピーを作成
+
+    Yields:
+        管理対象のデータフレーム（またはそのコピー）
+    """
+    try:
+        if copy:
+            # コピーが必要な場合のみコピーを作成
+            df_copy = df.copy()
+            yield df_copy
+        else:
+            # コピーが不要な場合は参照を返す
+            yield df
+    finally:
+        # コンテキスト終了時の処理
+        if copy:
+            # 明示的にメモリを解放
+            del df_copy
+            gc.collect()
+
+
+@contextlib.contextmanager
+def plot_context():
+    """
+    Matplotlibプロットリソースを安全に管理するためのコンテキストマネージャ
+    """
+    try:
+        # コンテキスト開始時の処理
+        yield
+    finally:
+        # コンテキスト終了時に確実にプロットをクリア
+        plt.close('all')
+        gc.collect()
+
+
+class TeamAnalyzer:
     """
     チーム・組織分析を行うクラス
 
@@ -66,7 +139,6 @@ class TeamAnalyzer(BaseAnalyzer):
         Args:
             db: Firestoreデータベースクライアント（Noneの場合は新規作成）
         """
-        super().__init__(analysis_type="team", firestore_client=db)
         try:
             # 環境変数のエラーを回避するための初期化方法
             if db:
@@ -90,10 +162,11 @@ class TeamAnalyzer(BaseAnalyzer):
 
         self.sia = SentimentIntensityAnalyzer()
 
-        # グラフオブジェクト追跡用の辞書
-        self._network_graphs = weakref.WeakValueDictionary()
-        # プロットバッファの追跡リスト
-        self._plot_buffers = []
+        # 分析結果キャッシュの初期化
+        self._analysis_cache = AnalysisCache(max_size=50)
+
+        # データ格納用の弱参照辞書
+        self._temp_data = weakref.WeakValueDictionary()
 
         # 業界ごとの標準スコア（実際の環境では外部データソースから取得）
         self.industry_benchmarks = {
@@ -179,74 +252,54 @@ class TeamAnalyzer(BaseAnalyzer):
         }
 
     def __del__(self):
-        """オブジェクト破棄時のクリーンアップ処理"""
+        """
+        デストラクタ - リソースの解放を確実に行う
+        """
         self.release_resources()
 
     def release_resources(self):
-        """保持しているリソースを明示的に解放する"""
-        # ネットワークグラフの解放
-        self._network_graphs.clear()
+        """
+        使用したリソースを明示的に解放する
+        """
+        # キャッシュのクリア
+        if hasattr(self, '_analysis_cache'):
+            self._analysis_cache.clear()
 
-        # プロットバッファのクリーンアップ
-        for buf in self._plot_buffers:
-            try:
-                if hasattr(buf, 'close'):
-                    buf.close()
-            except Exception as e:
-                self.logger.warning(f"プロットバッファの解放中にエラー: {e}")
-        self._plot_buffers.clear()
+        # 一時データの解放
+        if hasattr(self, '_temp_data'):
+            self._temp_data.clear()
 
-        # 親クラスのリソース解放メソッドを呼び出し
-        super().release_resources()
+        # SIAオブジェクトの解放
+        if hasattr(self, 'sia'):
+            self.sia = None
 
-        # 明示的なガベージコレクション
+        # グラフをクリア
+        plt.close('all')
+
+        # ガベージコレクションを呼び出し
         gc.collect()
 
-    @contextmanager
-    def _managed_network(self, graph_id=None):
-        """ネットワークグラフを管理するコンテキストマネージャー
-
-        Args:
-            graph_id: グラフの識別子（省略時は自動生成）
-
-        Yields:
-            nx.Graph: 管理されたグラフオブジェクト
+    def _get_cached_or_compute(self, cache_key, compute_func, *args, **kwargs):
         """
-        if graph_id is None:
-            graph_id = f"graph_{datetime.now().timestamp()}"
-
-        graph = nx.Graph()
-        self._network_graphs[graph_id] = graph
-
-        try:
-            yield graph
-        finally:
-            # グラフが大きくなりすぎた場合は明示的に解放
-            if graph_id in self._network_graphs and len(graph.nodes()) > 1000:
-                del self._network_graphs[graph_id]
-                gc.collect()
-
-    def _shared_data_processing(self, data_key: str, processor_fn, *args, **kwargs):
-        """データ処理結果を共有するためのヘルパーメソッド
-
-        同じパラメータでの重複計算を避け、メモリ効率を向上させる
+        キャッシュから結果を取得するか、計算して保存する汎用関数
 
         Args:
-            data_key: データを識別するためのキー
-            processor_fn: データ処理を行う関数
-            args, kwargs: processor_fnに渡す引数
+            cache_key: キャッシュキー
+            compute_func: 結果を計算する関数
+            *args, **kwargs: compute_funcに渡す引数
 
         Returns:
-            処理結果
+            計算結果
         """
-        # 既に計算済みの場合はキャッシュから返す
-        cached_result = self.get_temp_data(data_key)
+        # キャッシュから結果を取得
+        cached_result = self._analysis_cache.get(cache_key)
         if cached_result is not None:
+            logger.info(f"キャッシュからデータを取得: {cache_key}")
             return cached_result
 
-        # 未計算の場合は計算して結果を保存
-        result = processor_fn(*args, **kwargs)
-        self.register_temp_data(data_key, result)
+        # キャッシュにない場合は計算して保存
+        result = compute_func(*args, **kwargs)
+        self._analysis_cache.put(cache_key, result)
         return result
 
     def evaluate_founding_team(self,
@@ -272,16 +325,12 @@ class TeamAnalyzer(BaseAnalyzer):
         Returns:
             評価結果を含む辞書
         """
-        try:
+        # キャッシュキーの生成
+        cache_key = f"founding_team_{company_stage}_{industry}_{hash(str(founder_profiles))}"
+
+        # 計算関数の定義
+        def compute_team_evaluation():
             logger.info(f"創業チーム評価の実行: {len(founder_profiles)}名の創業者, ステージ: {company_stage}")
-
-            # データキャッシュのキーを生成
-            cache_key = f"founding_team_{company_stage}_{industry}_{hash(str(founder_profiles))}"
-
-            # キャッシュにある場合は既存の結果を返す
-            cached_result = self.get_temp_data(cache_key)
-            if cached_result is not None:
-                return cached_result
 
             # 創業チームの基本情報
             num_founders = len(founder_profiles)
@@ -294,7 +343,8 @@ class TeamAnalyzer(BaseAnalyzer):
             execution_score = 0
 
             # 1. 創業者のバックグラウンド評価
-            prior_exit_count = sum([f.get("prior_exits", 0) for f in founder_profiles])
+            # リスト内包表記を使って効率化
+            prior_exit_count = sum(f.get("prior_exits", 0) for f in founder_profiles)
             avg_domain_experience = np.mean([f.get("domain_experience_years", 0) for f in founder_profiles])
 
             # 学歴評価 (学位の種類とレベルでスコア化)
@@ -323,12 +373,12 @@ class TeamAnalyzer(BaseAnalyzer):
             leadership_coverage_score = min(leadership_coverage_relative * 100, 100)
 
             # 3. ドメイン知識評価
-            domain_benchmark = self.industry_benchmarks.get(industry, self.industry_benchmarks["software"])
+            industry_benchmark = self.industry_benchmarks.get(industry, self.industry_benchmarks["software"])
             domain_expertise_relative = avg_domain_experience / 10  # 10年を満点とする
             domain_expertise_score = min(domain_expertise_relative * 100, 100)
 
             # ドメイン知識のベンチマーク調整
-            domain_expertise_score = domain_expertise_score * 0.7 + (domain_expertise_score / domain_benchmark["domain_expertise"] * 100) * 0.3
+            domain_expertise_score = domain_expertise_score * 0.7 + (domain_expertise_score / industry_benchmark["domain_expertise"] * 100) * 0.3
 
             # 4. 実行力評価
             execution_factors = {
@@ -351,7 +401,6 @@ class TeamAnalyzer(BaseAnalyzer):
             )
 
             # 業界別ベンチマークとの比較
-            industry_benchmark = self.industry_benchmarks.get(industry, self.industry_benchmarks["software"])
             benchmark_comparison = {
                 "founder_score": founder_score / industry_benchmark["founder_score"] * 100,
                 "leadership_coverage": leadership_coverage_score / industry_benchmark["leadership_coverage"] * 100,
@@ -360,9 +409,8 @@ class TeamAnalyzer(BaseAnalyzer):
             }
 
             # スキルカバレッジ分析
-            all_skills = []
-            for founder in founder_profiles:
-                all_skills.extend(founder.get("skills", []))
+            # フラット化して効率的に処理
+            all_skills = [skill for founder in founder_profiles for skill in founder.get("skills", [])]
 
             # 重要スキルカテゴリ
             skill_categories = {
@@ -406,7 +454,7 @@ class TeamAnalyzer(BaseAnalyzer):
                 if score == 0:
                     weaknesses.append(f"{category}スキルの不足")
 
-            # 結果の作成
+            # 結果の返却
             result = {
                 "timestamp": datetime.now().isoformat(),
                 "company_stage": company_stage,
@@ -426,24 +474,17 @@ class TeamAnalyzer(BaseAnalyzer):
                 "recommendations": self._generate_team_recommendations(weaknesses, company_stage)
             }
 
-            # 結果をキャッシュに保存
-            self.register_temp_data(cache_key, result)
-
             logger.info(f"創業チーム評価完了: 総合スコア {round(founder_score, 1)}/100")
             return result
 
-        except Exception as e:
-            logger.error(f"創業チーム評価中にエラーが発生しました: {str(e)}")
-            return {
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
+        # キャッシュから取得または計算
+        return self._get_cached_or_compute(cache_key, compute_team_evaluation)
 
     def analyze_org_growth(self,
-                           employee_data: pd.DataFrame,
-                           timeline: str = "1y",
-                           company_stage: str = "series_a",
-                           industry: str = "software") -> Dict[str, Any]:
+                          employee_data: pd.DataFrame,
+                          timeline: str = "1y",
+                          company_stage: str = "series_a",
+                          industry: str = "software") -> Dict[str, Any]:
         """
         組織成長の健全性評価を行います。
 
@@ -463,256 +504,284 @@ class TeamAnalyzer(BaseAnalyzer):
         Returns:
             組織成長分析結果を含む辞書
         """
-        try:
+        # キャッシュキーの生成（データフレームのハッシュを含める）
+        df_hash = hash(str(employee_data.iloc[0:min(5, len(employee_data))]) + str(len(employee_data)))
+        cache_key = f"org_growth_{timeline}_{company_stage}_{industry}_{df_hash}"
+
+        def compute_org_growth():
             logger.info(f"組織成長分析の実行: 期間 {timeline}, ステージ: {company_stage}")
 
-            # データキャッシュのキーを生成
-            cache_key = f"org_growth_{timeline}_{company_stage}_{industry}_{hash(str(employee_data.shape))}"
-
-            # キャッシュにある場合は既存の結果を返す
-            cached_result = self.get_temp_data(cache_key)
-            if cached_result is not None:
-                return cached_result
-
-            # データの前処理
-            # 参照ではなくコピーを使用して元データを変更しないように
-            employee_data = employee_data.copy()
-            if "date" in employee_data.columns:
-                employee_data["date"] = pd.to_datetime(employee_data["date"])
-                employee_data = employee_data.sort_values("date")
-
-            # 分析期間の設定
-            timeline_days = {
-                "3m": 90,
-                "6m": 180,
-                "1y": 365,
-                "2y": 730,
-                "3y": 1095
-            }.get(timeline, 365)
-
-            # 期間でフィルタリング
-            if "date" in employee_data.columns:
-                end_date = employee_data["date"].max()
-                start_date = end_date - timedelta(days=timeline_days)
-                period_data = employee_data[(employee_data["date"] >= start_date) & (employee_data["date"] <= end_date)]
-            else:
-                period_data = employee_data
-
-            # 1. 基本的な成長指標の計算
             try:
-                initial_headcount = period_data["headcount"].iloc[0]
-                final_headcount = period_data["headcount"].iloc[-1]
+                # データフレームの参照を使用（コピーを避ける）
+                with managed_df(employee_data) as df:
+                    # データの前処理
+                    if "date" in df.columns:
+                        df["date"] = pd.to_datetime(df["date"])
+                        df = df.sort_values("date")
 
-                # 成長率計算
-                abs_growth = final_headcount - initial_headcount
-                growth_rate = (final_headcount / initial_headcount - 1) * 100 if initial_headcount > 0 else 0
+                    # 分析期間の設定
+                    timeline_days = {
+                        "3m": 90,
+                        "6m": 180,
+                        "1y": 365,
+                        "2y": 730,
+                        "3y": 1095
+                    }.get(timeline, 365)
 
-                # 月間平均成長率の計算
-                months = timeline_days / 30
-                monthly_growth_rate = ((1 + growth_rate / 100) ** (1 / months) - 1) * 100 if growth_rate > 0 else 0
-
-                # 離職率の計算
-                total_departures = period_data["departures"].sum() if "departures" in period_data.columns else 0
-                avg_headcount = period_data["headcount"].mean()
-                turnover_rate = (total_departures / avg_headcount) * (365 / timeline_days) * 100 if avg_headcount > 0 else 0
-
-                # 部署別の成長分析
-                if "department" in period_data.columns:
-                    dept_growth = period_data.groupby("department").agg({
-                        "headcount": [lambda x: x.iloc[-1] - x.iloc[0], lambda x: x.iloc[-1] / x.iloc[0] * 100 - 100 if x.iloc[0] > 0 else 0],
-                        "new_hires": "sum" if "new_hires" in period_data.columns else lambda x: 0,
-                        "departures": "sum" if "departures" in period_data.columns else lambda x: 0
-                    })
-                    dept_growth.columns = ["abs_growth", "percent_growth", "new_hires", "departures"]
-                    dept_growth = dept_growth.reset_index()
-
-                    # 部署別の離職率
-                    dept_growth["turnover_rate"] = dept_growth.apply(
-                        lambda x: (x["departures"] / (x["abs_growth"] + x["departures"])) * 100 if (x["abs_growth"] + x["departures"]) > 0 else 0,
-                        axis=1
-                    )
-                else:
-                    dept_growth = pd.DataFrame()
-
-                # 2. 組織構造の適切性評価
-                structure_score = 0
-
-                # レベル比率の分析
-                if "level" in period_data.columns:
-                    # レベル別の人数カウント
-                    level_counts = period_data.groupby("level")["headcount"].last()
-
-                    # 管理職と非管理職の比率
-                    management_levels = ["Director", "VP", "C-Level", "Manager", "ディレクター", "マネージャー", "部長", "課長"]
-                    ic_levels = ["IC", "Individual Contributor", "Associate", "アソシエイト", "一般社員"]
-
-                    mgmt_count = sum(level_counts.get(level, 0) for level in management_levels if level in level_counts.index)
-                    ic_count = sum(level_counts.get(level, 0) for level in ic_levels if level in level_counts.index)
-
-                    # 理想的な比率に基づくスコアリング
-                    if ic_count > 0:
-                        mgmt_ratio = mgmt_count / ic_count
-
-                        # 理想的な比率は1:7程度（業界・ステージによって異なる）
-                        if company_stage in ["seed", "series_a"]:
-                            ideal_ratio = 1/10
-                        elif company_stage == "series_b":
-                            ideal_ratio = 1/8
-                        else:
-                            ideal_ratio = 1/6
-
-                        ratio_score = 100 - min(abs(mgmt_ratio - ideal_ratio) / ideal_ratio * 100, 100)
-                        structure_score += ratio_score * 0.5
-
-                    # 最高レベルの充足度
-                    executive_levels = ["C-Level", "VP", "Director", "執行役員", "部長"]
-                    has_executives = any(level in level_counts.index for level in executive_levels)
-                    structure_score += 50 if has_executives else 0
-                else:
-                    structure_score = 50  # データが不足している場合のデフォルト値
-
-                # 3. 部門バランスの評価
-                dept_balance_score = 0
-                if "department" in period_data.columns and not dept_growth.empty:
-                    # 主要部門の存在確認
-                    key_departments = ["Engineering", "Product", "Sales", "Marketing", "Operations", "Finance",
-                                       "エンジニアリング", "プロダクト", "営業", "マーケティング", "オペレーション", "財務"]
-
-                    existing_depts = set(dept_growth["department"].str.lower())
-                    key_dept_coverage = sum(any(key.lower() in dept.lower() for dept in existing_depts) for key in key_departments)
-
-                    # ステージに応じた期待部門数
-                    expected_depts = {
-                        "seed": 3,
-                        "series_a": 4,
-                        "series_b": 5,
-                        "series_c": 6,
-                        "growth": 6
-                    }.get(company_stage, 4)
-
-                    dept_coverage_score = min(key_dept_coverage / expected_depts * 100, 100)
-
-                    # 部門間の極端な不均衡をチェック
-                    dept_sizes = period_data.groupby("department")["headcount"].last()
-                    if len(dept_sizes) >= 2:
-                        max_dept_size = dept_sizes.max()
-                        min_dept_size = dept_sizes.min()
-                        avg_dept_size = dept_sizes.mean()
-
-                        # 極端な不均衡があるかチェック (最大部門が平均の3倍以上、または最小部門が平均の1/3以下)
-                        balance_score = 100
-                        if max_dept_size > avg_dept_size * 3:
-                            balance_score -= 30
-                        if min_dept_size < avg_dept_size / 3:
-                            balance_score -= 30
-
-                        dept_balance_score = dept_coverage_score * 0.6 + balance_score * 0.4
+                    # 期間でフィルタリング
+                    if "date" in df.columns:
+                        end_date = df["date"].max()
+                        start_date = end_date - timedelta(days=timeline_days)
+                        # inplaceを使用せずに新しい参照を作成
+                        period_data = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
                     else:
-                        dept_balance_score = dept_coverage_score
-                else:
-                    dept_balance_score = 50  # データが不足している場合のデフォルト値
+                        period_data = df
 
-                # 4. ベンチマークとの比較
-                industry_benchmark = self.industry_benchmarks.get(industry, self.industry_benchmarks["software"])
-                stage_expectation = self.stage_expectations.get(company_stage, self.stage_expectations["seed"])
+                    # 1. 基本的な成長指標の計算
+                    initial_headcount = period_data["headcount"].iloc[0]
+                    final_headcount = period_data["headcount"].iloc[-1]
 
-                benchmark_comparison = {
-                    "growth_rate": {
-                        "actual": monthly_growth_rate,
-                        "benchmark": industry_benchmark["hiring_velocity"],
-                        "comparison": (monthly_growth_rate / industry_benchmark["hiring_velocity"]) * 100 if industry_benchmark["hiring_velocity"] > 0 else 0
-                    },
-                    "turnover_rate": {
-                        "actual": turnover_rate,
-                        "benchmark": industry_benchmark["turnover_rate"],
-                        "comparison": (industry_benchmark["turnover_rate"] / turnover_rate) * 100 if turnover_rate > 0 else 100  # 低いほど良い
-                    },
-                    "structure_score": {
-                        "actual": structure_score,
-                        "benchmark": stage_expectation["structure_score"],
-                        "comparison": (structure_score / stage_expectation["structure_score"]) * 100 if stage_expectation["structure_score"] > 0 else 0
+                    # 成長率計算
+                    abs_growth = final_headcount - initial_headcount
+                    growth_rate = (final_headcount / initial_headcount - 1) * 100 if initial_headcount > 0 else 0
+
+                    # 月間平均成長率の計算
+                    months = timeline_days / 30
+                    monthly_growth_rate = ((1 + growth_rate / 100) ** (1 / months) - 1) * 100 if growth_rate > 0 else 0
+
+                    # 離職率の計算
+                    total_departures = period_data["departures"].sum() if "departures" in period_data.columns else 0
+                    avg_headcount = period_data["headcount"].mean()
+                    turnover_rate = (total_departures / avg_headcount) * (365 / timeline_days) * 100 if avg_headcount > 0 else 0
+
+                    # 部署別の成長分析
+                    dept_growth = None
+                    if "department" in period_data.columns:
+                        # データフレームの集約処理の効率化
+                        dept_aggs = {
+                            "headcount": [
+                                lambda x: x.iloc[-1] - x.iloc[0],
+                                lambda x: x.iloc[-1] / x.iloc[0] * 100 - 100 if x.iloc[0] > 0 else 0
+                            ]
+                        }
+
+                        if "new_hires" in period_data.columns:
+                            dept_aggs["new_hires"] = "sum"
+                        if "departures" in period_data.columns:
+                            dept_aggs["departures"] = "sum"
+
+                        dept_growth = period_data.groupby("department").agg(dept_aggs)
+
+                        # カラム名の設定
+                        dept_growth.columns = [
+                            "abs_growth", "percent_growth",
+                            "new_hires" if "new_hires" in period_data.columns else None,
+                            "departures" if "departures" in period_data.columns else None
+                        ]
+                        # Noneを除去
+                        dept_growth.columns = [c for c in dept_growth.columns if c is not None]
+                        dept_growth = dept_growth.reset_index()
+
+                        # 部署別の離職率（効率的な計算）
+                        if "departures" in dept_growth.columns:
+                            dept_growth["turnover_rate"] = 0.0  # デフォルト値を設定
+                            mask = (dept_growth["abs_growth"] + dept_growth["departures"]) > 0
+                            if mask.any():
+                                dept_growth.loc[mask, "turnover_rate"] = (
+                                    dept_growth.loc[mask, "departures"] /
+                                    (dept_growth.loc[mask, "abs_growth"] + dept_growth.loc[mask, "departures"])
+                                ) * 100
+
+                    # 2. 組織構造の適切性評価
+                    structure_score = 0
+
+                    # レベル比率の分析
+                    if "level" in period_data.columns:
+                        # 効率的なグループ集計
+                        level_counts = period_data.groupby("level")["headcount"].last()
+
+                        # 管理職と非管理職の比率
+                        management_levels = ["Director", "VP", "C-Level", "Manager", "ディレクター", "マネージャー", "部長", "課長"]
+                        ic_levels = ["IC", "Individual Contributor", "Associate", "アソシエイト", "一般社員"]
+
+                        # 効率的な集計
+                        mgmt_count = 0
+                        ic_count = 0
+
+                        for level in level_counts.index:
+                            if any(ml in level for ml in management_levels):
+                                mgmt_count += level_counts[level]
+                            elif any(il in level for il in ic_levels):
+                                ic_count += level_counts[level]
+
+                        # 理想的な比率に基づくスコアリング
+                        if ic_count > 0:
+                            mgmt_ratio = mgmt_count / ic_count
+
+                            # 理想的な比率は1:7程度（業界・ステージによって異なる）
+                            if company_stage in ["seed", "series_a"]:
+                                ideal_ratio = 1/10
+                            elif company_stage == "series_b":
+                                ideal_ratio = 1/8
+                            else:
+                                ideal_ratio = 1/6
+
+                            ratio_score = 100 - min(abs(mgmt_ratio - ideal_ratio) / ideal_ratio * 100, 100)
+                            structure_score += ratio_score * 0.5
+
+                        # 最高レベルの充足度
+                        executive_levels = ["C-Level", "VP", "Director", "執行役員", "部長"]
+                        has_executives = any(level in level_counts.index for level in executive_levels)
+                        structure_score += 50 if has_executives else 0
+                    else:
+                        structure_score = 50  # データが不足している場合のデフォルト値
+
+                    # 3. 部門バランスの評価
+                    dept_balance_score = 0
+                    if "department" in period_data.columns and dept_growth is not None and not dept_growth.empty:
+                        # 部門名を小文字に変換して重複カウントを避ける
+                        dept_names_lower = [d.lower() for d in dept_growth["department"]]
+
+                        # 主要部門の存在確認
+                        key_departments = ["Engineering", "Product", "Sales", "Marketing", "Operations", "Finance",
+                                        "エンジニアリング", "プロダクト", "営業", "マーケティング", "オペレーション", "財務"]
+
+                        # 効率的なカウント方法
+                        key_dept_coverage = sum(1 for key in key_departments if any(key.lower() in dept.lower() for dept in dept_names_lower))
+
+                        # ステージに応じた期待部門数
+                        expected_depts = {
+                            "seed": 3,
+                            "series_a": 4,
+                            "series_b": 5,
+                            "series_c": 6,
+                            "growth": 6
+                        }.get(company_stage, 4)
+
+                        dept_coverage_score = min(key_dept_coverage / expected_depts * 100, 100)
+
+                        # 部門間の極端な不均衡をチェック
+                        dept_sizes = period_data.groupby("department")["headcount"].last()
+                        if len(dept_sizes) >= 2:
+                            max_dept_size = dept_sizes.max()
+                            min_dept_size = dept_sizes.min()
+                            avg_dept_size = dept_sizes.mean()
+
+                            # 極端な不均衡があるかチェック (最大部門が平均の3倍以上、または最小部門が平均の1/3以下)
+                            balance_score = 100
+                            if max_dept_size > avg_dept_size * 3:
+                                balance_score -= 30
+                            if min_dept_size < avg_dept_size / 3:
+                                balance_score -= 30
+
+                            dept_balance_score = dept_coverage_score * 0.6 + balance_score * 0.4
+                        else:
+                            dept_balance_score = dept_coverage_score
+                    else:
+                        dept_balance_score = 50  # データが不足している場合のデフォルト値
+
+                    # 4. ベンチマークとの比較
+                    industry_benchmark = self.industry_benchmarks.get(industry, self.industry_benchmarks["software"])
+                    stage_expectation = self.stage_expectations.get(company_stage, self.stage_expectations["seed"])
+
+                    benchmark_comparison = {
+                        "growth_rate": {
+                            "actual": monthly_growth_rate,
+                            "benchmark": industry_benchmark["hiring_velocity"],
+                            "comparison": (monthly_growth_rate / industry_benchmark["hiring_velocity"]) * 100 if industry_benchmark["hiring_velocity"] > 0 else 0
+                        },
+                        "turnover_rate": {
+                            "actual": turnover_rate,
+                            "benchmark": industry_benchmark["turnover_rate"],
+                            "comparison": (industry_benchmark["turnover_rate"] / turnover_rate) * 100 if turnover_rate > 0 else 100  # 低いほど良い
+                        },
+                        "structure_score": {
+                            "actual": structure_score,
+                            "benchmark": stage_expectation["structure_score"],
+                            "comparison": (structure_score / stage_expectation["structure_score"]) * 100 if stage_expectation["structure_score"] > 0 else 0
+                        }
                     }
-                }
 
-                # 5. 総合スコアの計算
-                growth_health_score = (
-                    (benchmark_comparison["growth_rate"]["comparison"] * 0.4) +
-                    (benchmark_comparison["turnover_rate"]["comparison"] * 0.3) +
-                    (benchmark_comparison["structure_score"]["comparison"] * 0.3)
-                )
+                    # 5. 総合スコアの計算
+                    growth_health_score = (
+                        (benchmark_comparison["growth_rate"]["comparison"] * 0.4) +
+                        (benchmark_comparison["turnover_rate"]["comparison"] * 0.3) +
+                        (benchmark_comparison["structure_score"]["comparison"] * 0.3)
+                    )
 
-                # 制限を適用
-                growth_health_score = max(min(growth_health_score, 100), 0)
+                    # 制限を適用
+                    growth_health_score = max(min(growth_health_score, 100), 0)
 
-                # 6. 強みと弱みの特定
-                strengths = []
-                weaknesses = []
+                    # 6. 強みと弱みの特定
+                    strengths = []
+                    weaknesses = []
 
-                # 成長率の評価
-                if benchmark_comparison["growth_rate"]["comparison"] >= 110:
-                    strengths.append("業界平均を上回る採用・成長速度")
-                elif benchmark_comparison["growth_rate"]["comparison"] < 70:
-                    weaknesses.append("業界平均を下回る採用・成長速度")
+                    # 成長率の評価
+                    if benchmark_comparison["growth_rate"]["comparison"] >= 110:
+                        strengths.append("業界平均を上回る採用・成長速度")
+                    elif benchmark_comparison["growth_rate"]["comparison"] < 70:
+                        weaknesses.append("業界平均を下回る採用・成長速度")
 
-                # 離職率の評価（低いほど良い）
-                if benchmark_comparison["turnover_rate"]["comparison"] >= 110:
-                    strengths.append("業界平均を下回る離職率")
-                elif benchmark_comparison["turnover_rate"]["comparison"] < 70:
-                    weaknesses.append("業界平均を上回る離職率")
+                    # 離職率の評価（低いほど良い）
+                    if benchmark_comparison["turnover_rate"]["comparison"] >= 110:
+                        strengths.append("業界平均を下回る離職率")
+                    elif benchmark_comparison["turnover_rate"]["comparison"] < 70:
+                        weaknesses.append("業界平均を上回る離職率")
 
-                # 組織構造の評価
-                if benchmark_comparison["structure_score"]["comparison"] >= 110:
-                    strengths.append("ステージに適した組織構造")
-                elif benchmark_comparison["structure_score"]["comparison"] < 70:
-                    weaknesses.append("ステージに適していない組織構造")
+                    # 組織構造の評価
+                    if benchmark_comparison["structure_score"]["comparison"] >= 110:
+                        strengths.append("ステージに適した組織構造")
+                    elif benchmark_comparison["structure_score"]["comparison"] < 70:
+                        weaknesses.append("ステージに適していない組織構造")
 
-                # 部門バランスの評価
-                if dept_balance_score >= 75:
-                    strengths.append("バランスの取れた部門構成")
-                elif dept_balance_score < 50:
-                    weaknesses.append("部門構成の不均衡")
+                    # 部門バランスの評価
+                    if dept_balance_score >= 75:
+                        strengths.append("バランスの取れた部門構成")
+                    elif dept_balance_score < 50:
+                        weaknesses.append("部門構成の不均衡")
 
-                # 結果の作成
-                result = {
-                    "timestamp": datetime.now().isoformat(),
-                    "company_stage": company_stage,
-                    "industry": industry,
-                    "timeline": timeline,
-                    "headcount": {
-                        "initial": int(initial_headcount),
-                        "final": int(final_headcount),
-                        "absolute_growth": int(abs_growth),
-                        "growth_rate_percent": round(growth_rate, 1),
-                        "monthly_growth_rate_percent": round(monthly_growth_rate, 1)
-                    },
-                    "turnover": {
-                        "total_departures": int(total_departures),
-                        "annual_turnover_rate_percent": round(turnover_rate, 1)
-                    },
-                    "structure": {
-                        "structure_score": round(structure_score, 1),
-                        "department_balance_score": round(dept_balance_score, 1)
-                    },
-                    "benchmark_comparison": {
-                        k: {sk: round(sv, 1) if isinstance(sv, float) else sv
-                            for sk, sv in v.items()}
-                        for k, v in benchmark_comparison.items()
-                    },
-                    "growth_health_score": round(growth_health_score, 1),
-                    "strengths": strengths,
-                    "weaknesses": weaknesses,
-                    "recommendations": self._generate_org_recommendations(weaknesses, company_stage)
-                }
+                    # 結果の返却
+                    result = {
+                        "timestamp": datetime.now().isoformat(),
+                        "company_stage": company_stage,
+                        "industry": industry,
+                        "timeline": timeline,
+                        "headcount": {
+                            "initial": int(initial_headcount),
+                            "final": int(final_headcount),
+                            "absolute_growth": int(abs_growth),
+                            "growth_rate_percent": round(growth_rate, 1),
+                            "monthly_growth_rate_percent": round(monthly_growth_rate, 1)
+                        },
+                        "turnover": {
+                            "total_departures": int(total_departures),
+                            "annual_turnover_rate_percent": round(turnover_rate, 1)
+                        },
+                        "structure": {
+                            "structure_score": round(structure_score, 1),
+                            "department_balance_score": round(dept_balance_score, 1)
+                        },
+                        "benchmark_comparison": {
+                            k: {sk: round(sv, 1) if isinstance(sv, float) else sv
+                                for sk, sv in v.items()}
+                            for k, v in benchmark_comparison.items()
+                        },
+                        "growth_health_score": round(growth_health_score, 1),
+                        "strengths": strengths,
+                        "weaknesses": weaknesses,
+                        "recommendations": self._generate_org_recommendations(weaknesses, company_stage)
+                    }
 
-                # 部門別成長データを追加（データがある場合）
-                if not dept_growth.empty:
-                    result["department_growth"] = dept_growth.to_dict(orient="records")
+                    # 部門別成長データを追加（データがある場合）
+                    if dept_growth is not None and not dept_growth.empty:
+                        # 辞書変換を効率化（列単位で変換）
+                        dept_dict_list = []
+                        for _, row in dept_growth.iterrows():
+                            dept_dict_list.append(dict(row))
+                        result["department_growth"] = dept_dict_list
 
-                # 結果をキャッシュに保存
-                self.register_temp_data(cache_key, result)
-
-                logger.info(f"組織成長分析完了: 成長健全性スコア {round(growth_health_score, 1)}/100")
-                return result
+                    logger.info(f"組織成長分析完了: 成長健全性スコア {round(growth_health_score, 1)}/100")
+                    return result
 
             except Exception as e:
                 logger.error(f"組織成長分析中にエラーが発生しました: {str(e)}")
@@ -721,16 +790,12 @@ class TeamAnalyzer(BaseAnalyzer):
                     "timestamp": datetime.now().isoformat()
                 }
 
-        except Exception as e:
-            logger.error(f"組織成長分析中にエラーが発生しました: {str(e)}")
-            return {
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
+        # キャッシュから取得または計算
+        return self._get_cached_or_compute(cache_key, compute_org_growth)
 
     def measure_culture_strength(self,
-                                 engagement_data: pd.DataFrame,
-                                 survey_results: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+                                engagement_data: pd.DataFrame,
+                                survey_results: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """
         文化的一貫性と強さの定量化を行います。
 
@@ -752,203 +817,218 @@ class TeamAnalyzer(BaseAnalyzer):
         Returns:
             文化分析結果を含む辞書
         """
-        try:
+        # キャッシュキーの生成（データフレームのハッシュを含める）
+        engage_hash = hash(str(engagement_data.iloc[0:min(5, len(engagement_data))]) + str(len(engagement_data)))
+        survey_hash = hash(str(survey_results.iloc[0:min(5, len(survey_results))]) + str(len(survey_results))) if survey_results is not None else 0
+        cache_key = f"culture_strength_{engage_hash}_{survey_hash}"
+
+        def compute_culture_strength():
             logger.info("文化・エンゲージメント分析の実行")
 
-            # データキャッシュのキーを生成
-            cache_key = f"culture_strength_{hash(str(engagement_data.shape))}"
-            if survey_results is not None:
-                cache_key += f"_{hash(str(survey_results.shape))}"
+            try:
+                # データフレームの参照を使用
+                with managed_df(engagement_data) as eng_data:
+                    # 1. 基本的なエンゲージメント統計の計算
+                    # NumPyの高速関数を使用
+                    engagement_scores = eng_data["engagement_score"].values
+                    mean_engagement = np.mean(engagement_scores)
+                    median_engagement = np.median(engagement_scores)
+                    engagement_std = np.std(engagement_scores)
 
-            # キャッシュにある場合は既存の結果を返す
-            cached_result = self.get_temp_data(cache_key)
-            if cached_result is not None:
-                return cached_result
+                    # エンゲージメントスコアの分布（ベクトル化演算）
+                    total_rows = len(eng_data)
+                    low_mask = engagement_scores < 50
+                    medium_mask = (engagement_scores >= 50) & (engagement_scores < 75)
+                    high_mask = engagement_scores >= 75
 
-            # 1. 基本的なエンゲージメント統計の計算
-            mean_engagement = engagement_data["engagement_score"].mean()
-            median_engagement = engagement_data["engagement_score"].median()
-            engagement_std = engagement_data["engagement_score"].std()
+                    low_engagement = np.sum(low_mask) / total_rows * 100
+                    medium_engagement = np.sum(medium_mask) / total_rows * 100
+                    high_engagement = np.sum(high_mask) / total_rows * 100
 
-            # エンゲージメントスコアの分布
-            low_engagement = (engagement_data["engagement_score"] < 50).sum() / len(engagement_data) * 100
-            medium_engagement = ((engagement_data["engagement_score"] >= 50) &
-                                 (engagement_data["engagement_score"] < 75)).sum() / len(engagement_data) * 100
-            high_engagement = (engagement_data["engagement_score"] >= 75).sum() / len(engagement_data) * 100
+                    # 2. 部署間のエンゲージメント一貫性
+                    if "department" in eng_data.columns:
+                        # 集約処理の効率化
+                        dept_engagement = eng_data.groupby("department")["engagement_score"].agg(['mean', 'std']).reset_index()
 
-            # 2. 部署間のエンゲージメント一貫性
-            if "department" in engagement_data.columns:
-                dept_engagement = engagement_data.groupby("department")["engagement_score"].agg(['mean', 'std']).reset_index()
+                        # 部署間の標準偏差（低いほど一貫性が高い）
+                        dept_means = dept_engagement["mean"].values
+                        interdept_std = np.std(dept_means)
 
-                # 部署間の標準偏差（低いほど一貫性が高い）
-                dept_means = dept_engagement["mean"].values
-                interdept_std = np.std(dept_means)
+                        # 一貫性スコア（100が最高）
+                        consistency_score = max(100 - (interdept_std * 2), 0)
 
-                # 一貫性スコア（100が最高）
-                consistency_score = max(100 - (interdept_std * 2), 0)
+                        # 部署別の分析
+                        dept_analysis = [dict(row) for _, row in dept_engagement.iterrows()]
+                    else:
+                        consistency_score = None
+                        dept_analysis = None
+                        interdept_std = None
 
-                # 部署別の分析
-                dept_analysis = dept_engagement.to_dict(orient="records")
-            else:
-                consistency_score = None
-                dept_analysis = None
-                interdept_std = None
+                    # 3. 勤続期間とエンゲージメントの関係
+                    if "tenure_months" in eng_data.columns:
+                        # 勤続期間でグループ化
+                        tenure_bins = [0, 3, 6, 12, 24, 36, float('inf')]
+                        tenure_labels = ['0-3m', '3-6m', '6-12m', '1-2y', '2-3y', '3y+']
 
-            # 3. 勤続期間とエンゲージメントの関係
-            if "tenure_months" in engagement_data.columns:
-                # 勤続期間でグループ化
-                tenure_bins = [0, 3, 6, 12, 24, 36, float('inf')]
-                tenure_labels = ['0-3m', '3-6m', '6-12m', '1-2y', '2-3y', '3y+']
+                        eng_data['tenure_group'] = pd.cut(eng_data['tenure_months'],
+                                                            bins=tenure_bins,
+                                                            labels=tenure_labels)
 
-                engagement_data['tenure_group'] = pd.cut(engagement_data['tenure_months'],
-                                                        bins=tenure_bins,
-                                                        labels=tenure_labels)
+                        tenure_engagement = eng_data.groupby('tenure_group')['engagement_score'].agg(['mean', 'count', 'std']).reset_index()
 
-                tenure_engagement = engagement_data.groupby('tenure_group')['engagement_score'].agg(['mean', 'count', 'std']).reset_index()
+                        # 勤続期間による差異スコア
+                        if len(tenure_engagement) > 1:
+                            max_diff = tenure_engagement['mean'].max() - tenure_engagement['mean'].min()
+                            tenure_impact_score = max(100 - (max_diff * 1.5), 0)
+                        else:
+                            tenure_impact_score = None
 
-                # 勤続期間による差異スコア
-                if len(tenure_engagement) > 1:
-                    max_diff = tenure_engagement['mean'].max() - tenure_engagement['mean'].min()
-                    tenure_impact_score = max(100 - (max_diff * 1.5), 0)
-                else:
-                    tenure_impact_score = None
+                        tenure_analysis = [dict(row) for _, row in tenure_engagement.iterrows()]
+                    else:
+                        tenure_impact_score = None
+                        tenure_analysis = None
 
-                tenure_analysis = tenure_engagement.to_dict(orient="records")
-            else:
-                tenure_impact_score = None
-                tenure_analysis = None
+                    # 4. 文化調査の分析（データがある場合）
+                    culture_keywords = {}
+                    sentiment_scores = {}
+                    culture_themes = {}
 
-            # 4. 文化調査の分析（データがある場合）
-            culture_keywords = {}
-            sentiment_scores = {}
-            culture_themes = {}
+                    if survey_results is not None and not survey_results.empty:
+                        with managed_df(survey_results) as survey_data:
+                            # テキスト回答の感情分析
+                            if "response" in survey_data.columns and survey_data["response"].dtype == object:
+                                # 感情分析（バッチ処理で効率化）
+                                sentiment_values = []
+                                for response in survey_data['response']:
+                                    if isinstance(response, str):
+                                        sentiment_values.append(self.sia.polarity_scores(response)['compound'])
+                                    else:
+                                        sentiment_values.append(0)
 
-            if survey_results is not None and not survey_results.empty:
-                # テキスト回答の感情分析
-                if "response" in survey_results.columns and survey_results["response"].dtype == object:
-                    # 感情分析
-                    survey_results['sentiment'] = survey_results['response'].apply(
-                        lambda x: self.sia.polarity_scores(x)['compound'] if isinstance(x, str) else 0
-                    )
+                                survey_data['sentiment'] = sentiment_values
 
-                    # カテゴリ別の感情スコア
-                    if "category" in survey_results.columns:
-                        sentiment_scores = survey_results.groupby("category")["sentiment"].mean().to_dict()
+                                # カテゴリ別の感情スコア
+                                if "category" in survey_data.columns:
+                                    sentiment_scores = survey_data.groupby("category")["sentiment"].mean().to_dict()
 
-                    # キーワード抽出（簡易版）
-                    all_responses = " ".join(survey_results['response'].dropna().astype(str))
-                    # ここで本来はより洗練されたキーワード抽出を行うべき
-                    culture_keywords = {word: all_responses.lower().count(word.lower()) for word in
-                                       ["teamwork", "innovation", "communication", "respect",
-                                        "transparency", "balance", "growth", "チームワーク",
-                                        "イノベーション", "コミュニケーション", "尊重", "透明性",
-                                        "バランス", "成長"]}
+                                # キーワード抽出（簡易版）
+                                all_responses = " ".join(survey_data['response'].dropna().astype(str))
+                                # 頻度計算を効率化
+                                culture_keywords = {}
+                                # 重要キーワードのリスト
+                                important_keywords = ["teamwork", "innovation", "communication", "respect",
+                                                    "transparency", "balance", "growth", "チームワーク",
+                                                    "イノベーション", "コミュニケーション", "尊重", "透明性",
+                                                    "バランス", "成長"]
 
-                    # 上位5つのキーワードを抽出
-                    culture_keywords = dict(sorted(culture_keywords.items(), key=lambda x: x[1], reverse=True)[:5])
+                                for word in important_keywords:
+                                    culture_keywords[word] = all_responses.lower().count(word.lower())
 
-                # 文化テーマの抽出（カテゴリがある場合）
-                if "category" in survey_results.columns:
-                    category_scores = survey_results.groupby("category").agg({
-                        "response": lambda x: x.mean() if x.dtype in [np.float64, np.int64] else None
-                    }).dropna()
+                                # 上位5つのキーワードを抽出
+                                culture_keywords = dict(sorted(culture_keywords.items(), key=lambda x: x[1], reverse=True)[:5])
 
-                    if not category_scores.empty:
-                        culture_themes = category_scores["response"].to_dict()
+                            # 文化テーマの抽出（カテゴリがある場合）
+                            if "category" in survey_data.columns:
+                                category_scores = survey_data.groupby("category").agg({
+                                    "response": lambda x: x.mean() if x.dtype in [np.float64, np.int64] else None
+                                }).dropna()
 
-            # 5. 文化強度スコアの計算
-            # エンゲージメントの平均値（40%）
-            engagement_component = min(mean_engagement, 100) * 0.4
+                                if not category_scores.empty:
+                                    culture_themes = category_scores["response"].to_dict()
 
-            # 一貫性（部署間の差異が小さいほど良い）（30%）
-            consistency_component = consistency_score * 0.3 if consistency_score is not None else 20
+                    # 5. 文化強度スコアの計算
+                    # エンゲージメントの平均値（40%）
+                    engagement_component = min(mean_engagement, 100) * 0.4
 
-            # 勤続期間の影響（小さいほど良い）（30%）
-            tenure_component = tenure_impact_score * 0.3 if tenure_impact_score is not None else 20
+                    # 一貫性（部署間の差異が小さいほど良い）（30%）
+                    consistency_component = consistency_score * 0.3 if consistency_score is not None else 20
 
-            culture_strength_score = engagement_component + consistency_component + tenure_component
+                    # 勤続期間の影響（小さいほど良い）（30%）
+                    tenure_component = tenure_impact_score * 0.3 if tenure_impact_score is not None else 20
 
-            # 6. 強みと弱みの特定
-            strengths = []
-            weaknesses = []
+                    culture_strength_score = engagement_component + consistency_component + tenure_component
 
-            if mean_engagement >= 75:
-                strengths.append("高いエンゲージメントスコア")
-            elif mean_engagement < 60:
-                weaknesses.append("低いエンゲージメントスコア")
+                    # 6. 強みと弱みの特定
+                    strengths = []
+                    weaknesses = []
 
-            if consistency_score is not None:
-                if consistency_score >= 80:
-                    strengths.append("部署間の一貫したエンゲージメント")
-                elif consistency_score < 60:
-                    weaknesses.append("部署間のエンゲージメント格差")
+                    if mean_engagement >= 75:
+                        strengths.append("高いエンゲージメントスコア")
+                    elif mean_engagement < 60:
+                        weaknesses.append("低いエンゲージメントスコア")
 
-            if tenure_impact_score is not None:
-                if tenure_impact_score >= 80:
-                    strengths.append("勤続期間に関わらず一貫したエンゲージメント")
-                elif tenure_impact_score < 60:
-                    weaknesses.append("勤続期間によるエンゲージメント低下")
+                    if consistency_score is not None:
+                        if consistency_score >= 80:
+                            strengths.append("部署間の一貫したエンゲージメント")
+                        elif consistency_score < 60:
+                            weaknesses.append("部署間のエンゲージメント格差")
 
-            if high_engagement < 30:
-                weaknesses.append("高エンゲージメント層の不足")
+                    if tenure_impact_score is not None:
+                        if tenure_impact_score >= 80:
+                            strengths.append("勤続期間に関わらず一貫したエンゲージメント")
+                        elif tenure_impact_score < 60:
+                            weaknesses.append("勤続期間によるエンゲージメント低下")
 
-            if low_engagement > 25:
-                weaknesses.append("低エンゲージメント層の比率が高い")
+                    if high_engagement < 30:
+                        weaknesses.append("高エンゲージメント層の不足")
 
-            # 7. 結果の作成
-            result = {
-                "timestamp": datetime.now().isoformat(),
-                "engagement_stats": {
-                    "mean": round(mean_engagement, 1),
-                    "median": round(median_engagement, 1),
-                    "std_dev": round(engagement_std, 1),
-                    "distribution": {
-                        "low_percent": round(low_engagement, 1),
-                        "medium_percent": round(medium_engagement, 1),
-                        "high_percent": round(high_engagement, 1)
+                    if low_engagement > 25:
+                        weaknesses.append("低エンゲージメント層の比率が高い")
+
+                    # 7. 結果の返却
+                    result = {
+                        "timestamp": datetime.now().isoformat(),
+                        "engagement_stats": {
+                            "mean": round(mean_engagement, 1),
+                            "median": round(median_engagement, 1),
+                            "std_dev": round(engagement_std, 1),
+                            "distribution": {
+                                "low_percent": round(low_engagement, 1),
+                                "medium_percent": round(medium_engagement, 1),
+                                "high_percent": round(high_engagement, 1)
+                            }
+                        },
+                        "culture_strength_score": round(culture_strength_score, 1),
+                        "strengths": strengths,
+                        "weaknesses": weaknesses,
+                        "recommendations": self._generate_culture_recommendations(weaknesses)
                     }
-                },
-                "culture_strength_score": round(culture_strength_score, 1),
-                "strengths": strengths,
-                "weaknesses": weaknesses,
-                "recommendations": self._generate_culture_recommendations(weaknesses)
-            }
 
-            # 部署別分析（データがある場合）
-            if dept_analysis:
-                result["department_analysis"] = {
-                    "consistency_score": round(consistency_score, 1),
-                    "interdepartment_std_dev": round(interdept_std, 1),
-                    "department_details": dept_analysis
+                    # 部署別分析（データがある場合）
+                    if dept_analysis:
+                        result["department_analysis"] = {
+                            "consistency_score": round(consistency_score, 1),
+                            "interdepartment_std_dev": round(interdept_std, 1),
+                            "department_details": dept_analysis
+                        }
+
+                    # 勤続期間別分析（データがある場合）
+                    if tenure_analysis:
+                        result["tenure_analysis"] = {
+                            "tenure_impact_score": round(tenure_impact_score, 1) if tenure_impact_score else None,
+                            "tenure_details": tenure_analysis
+                        }
+
+                    # 文化調査分析（データがある場合）
+                    if culture_keywords or sentiment_scores or culture_themes:
+                        result["culture_survey_analysis"] = {
+                            "key_themes": culture_keywords,
+                            "category_sentiment": {k: round(v, 2) for k, v in sentiment_scores.items()},
+                            "culture_dimensions": {k: round(v, 1) for k, v in culture_themes.items()}
+                        }
+
+                    logger.info(f"文化・エンゲージメント分析完了: 文化強度スコア {round(culture_strength_score, 1)}/100")
+                    return result
+
+            except Exception as e:
+                logger.error(f"文化・エンゲージメント分析中にエラーが発生しました: {str(e)}")
+                return {
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
                 }
 
-            # 勤続期間別分析（データがある場合）
-            if tenure_analysis:
-                result["tenure_analysis"] = {
-                    "tenure_impact_score": round(tenure_impact_score, 1) if tenure_impact_score else None,
-                    "tenure_details": tenure_analysis
-                }
-
-            # 文化調査分析（データがある場合）
-            if culture_keywords or sentiment_scores or culture_themes:
-                result["culture_survey_analysis"] = {
-                    "key_themes": culture_keywords,
-                    "category_sentiment": {k: round(v, 2) for k, v in sentiment_scores.items()},
-                    "culture_dimensions": {k: round(v, 1) for k, v in culture_themes.items()}
-                }
-
-            # 結果をキャッシュに保存
-            self.register_temp_data(cache_key, result)
-
-            logger.info(f"文化・エンゲージメント分析完了: 文化強度スコア {round(culture_strength_score, 1)}/100")
-            return result
-
-        except Exception as e:
-            logger.error(f"文化・エンゲージメント分析中にエラーが発生しました: {str(e)}")
-            return {
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
+        # キャッシュから取得または計算
+        return self._get_cached_or_compute(cache_key, compute_culture_strength)
 
     def analyze_hiring_effectiveness(self,
                                     hiring_data: pd.DataFrame,
@@ -975,207 +1055,228 @@ class TeamAnalyzer(BaseAnalyzer):
         Returns:
             人材獲得力分析結果を含む辞書
         """
-        try:
+        # キャッシュキーの生成（データフレームのハッシュを含める）
+        hiring_hash = hash(str(hiring_data.iloc[0:min(5, len(hiring_data))]) + str(len(hiring_data)))
+        perf_hash = 0
+        if performance_data is not None and not performance_data.empty:
+            perf_hash = hash(str(performance_data.iloc[0:min(5, len(performance_data))]) + str(len(performance_data)))
+        cache_key = f"hiring_effectiveness_{hiring_hash}_{perf_hash}"
+
+        def compute_hiring_effectiveness():
             logger.info("人材獲得力分析の実行")
 
-            # データキャッシュのキーを生成
-            cache_key = f"hiring_effectiveness_{hash(str(hiring_data.shape))}"
-            if performance_data is not None:
-                cache_key += f"_{hash(str(performance_data.shape))}"
+            try:
+                # 効率的なデータフレーム処理
+                with managed_df(hiring_data) as hire_df:
+                    # 1. 採用効率の基本指標
+                    avg_time_to_fill = hire_df["time_to_fill"].mean() if "time_to_fill" in hire_df.columns else None
+                    median_time_to_fill = hire_df["time_to_fill"].median() if "time_to_fill" in hire_df.columns else None
 
-            # キャッシュにある場合は既存の結果を返す
-            cached_result = self.get_temp_data(cache_key)
-            if cached_result is not None:
-                return cached_result
+                    # 採用ソース分析
+                    source_analysis = None
+                    if "source" in hire_df.columns:
+                        # 効率的な集計
+                        source_distribution = hire_df["source"].value_counts().to_dict()
 
-            # 1. 採用効率の基本指標
-            avg_time_to_fill = hiring_data["time_to_fill"].mean() if "time_to_fill" in hiring_data.columns else None
-            median_time_to_fill = hiring_data["time_to_fill"].median() if "time_to_fill" in hiring_data.columns else None
+                        source_effectiveness = None
+                        if "time_to_fill" in hire_df.columns:
+                            # 効率的なグループ集計
+                            source_effectiveness = hire_df.groupby("source")["time_to_fill"].mean().reset_index()
+                            source_effectiveness = [dict(row) for _, row in source_effectiveness.iterrows()]
 
-            # 採用ソース分析
-            if "source" in hiring_data.columns:
-                source_distribution = hiring_data["source"].value_counts()
-                source_effectiveness = hiring_data.groupby("source").agg({
-                    "time_to_fill": "mean"
-                }).reset_index() if "time_to_fill" in hiring_data.columns else None
+                        source_analysis = {
+                            "distribution": source_distribution,
+                            "effectiveness": source_effectiveness
+                        }
 
-                source_analysis = {
-                    "distribution": source_distribution.to_dict(),
-                    "effectiveness": source_effectiveness.to_dict(orient="records") if source_effectiveness is not None else None
-                }
-            else:
-                source_analysis = None
+                    # 2. 部署・レベル別採用分析
+                    dept_hiring_analysis = None
+                    if "department" in hire_df.columns and "time_to_fill" in hire_df.columns:
+                        # 効率的な集計処理
+                        dept_hiring = hire_df.groupby("department").agg({
+                            "position": "count",
+                            "time_to_fill": ["mean", "median"]
+                        })
+                        dept_hiring.columns = ["position_count", "avg_time_to_fill", "median_time_to_fill"]
+                        dept_hiring = dept_hiring.reset_index()
 
-            # 2. 部署・レベル別採用分析
-            if "department" in hiring_data.columns and "time_to_fill" in hiring_data.columns:
-                dept_hiring = hiring_data.groupby("department").agg({
-                    "position": "count",
-                    "time_to_fill": ["mean", "median"]
-                })
-                dept_hiring.columns = ["position_count", "avg_time_to_fill", "median_time_to_fill"]
-                dept_hiring = dept_hiring.reset_index()
+                        dept_hiring_analysis = [dict(row) for _, row in dept_hiring.iterrows()]
 
-                dept_hiring_analysis = dept_hiring.to_dict(orient="records")
-            else:
-                dept_hiring_analysis = None
+                    level_hiring_analysis = None
+                    if "level" in hire_df.columns and "time_to_fill" in hire_df.columns:
+                        # 効率的な集計処理
+                        level_hiring = hire_df.groupby("level").agg({
+                            "position": "count",
+                            "time_to_fill": ["mean", "median"]
+                        })
+                        level_hiring.columns = ["position_count", "avg_time_to_fill", "median_time_to_fill"]
+                        level_hiring = level_hiring.reset_index()
 
-            if "level" in hiring_data.columns and "time_to_fill" in hiring_data.columns:
-                level_hiring = hiring_data.groupby("level").agg({
-                    "position": "count",
-                    "time_to_fill": ["mean", "median"]
-                })
-                level_hiring.columns = ["position_count", "avg_time_to_fill", "median_time_to_fill"]
-                level_hiring = level_hiring.reset_index()
+                        level_hiring_analysis = [dict(row) for _, row in level_hiring.iterrows()]
 
-                level_hiring_analysis = level_hiring.to_dict(orient="records")
-            else:
-                level_hiring_analysis = None
+                    # 3. 採用の質分析（パフォーマンスデータがある場合）
+                    quality_metrics = None
 
-            # 3. 採用の質分析（パフォーマンスデータがある場合）
-            quality_metrics = None
+                    if performance_data is not None and not performance_data.empty:
+                        with managed_df(performance_data) as perf_df:
+                            # 新規採用のパフォーマンス
+                            avg_performance = perf_df["performance_score"].mean() if "performance_score" in perf_df.columns else None
 
-            if performance_data is not None and not performance_data.empty:
-                # 新規採用のパフォーマンス
-                avg_performance = performance_data["performance_score"].mean() if "performance_score" in performance_data.columns else None
+                            # 在籍率
+                            retention_metrics = None
+                            if "retention_days" in perf_df.columns:
+                                # ベクトル化演算による効率的な計算
+                                retention_days = perf_df["retention_days"].values
+                                total_rows = len(perf_df)
 
-                # 在籍率
-                if "retention_days" in performance_data.columns:
-                    retention_90d = (performance_data["retention_days"] >= 90).sum() / len(performance_data) * 100
-                    retention_180d = (performance_data["retention_days"] >= 180).sum() / len(performance_data) * 100
-                    retention_365d = (performance_data["retention_days"] >= 365).sum() / len(performance_data) * 100
+                                retention_90d = np.sum(retention_days >= 90) / total_rows * 100
+                                retention_180d = np.sum(retention_days >= 180) / total_rows * 100
+                                retention_365d = np.sum(retention_days >= 365) / total_rows * 100
 
-                    retention_metrics = {
-                        "90_day_retention_percent": round(retention_90d, 1),
-                        "180_day_retention_percent": round(retention_180d, 1),
-                        "365_day_retention_percent": round(retention_365d, 1)
+                                retention_metrics = {
+                                    "90_day_retention_percent": round(retention_90d, 1),
+                                    "180_day_retention_percent": round(retention_180d, 1),
+                                    "365_day_retention_percent": round(retention_365d, 1)
+                                }
+
+                            quality_metrics = {
+                                "average_performance": round(avg_performance, 1) if avg_performance is not None else None,
+                                "retention": retention_metrics
+                            }
+
+                    # 4. 採用力スコアの計算
+                    hiring_effectiveness_score = 0
+                    components = []
+
+                    # 採用所要時間（所要時間が短いほど良い - 業界平均60日と仮定）
+                    if avg_time_to_fill is not None:
+                        time_to_fill_benchmark = 60  # 業界平均の仮定値
+                        time_component_score = max(100 - ((avg_time_to_fill - 30) / time_to_fill_benchmark * 100), 0)
+                        hiring_effectiveness_score += time_component_score * 0.4
+                        components.append(("time_to_fill", time_component_score))
+                    else:
+                        hiring_effectiveness_score += 25  # データがない場合のデフォルト
+
+                    # 採用経路多様性（複数の採用ソースがあるほど良い）
+                    if source_analysis is not None:
+                        source_count = len(source_analysis["distribution"])
+                        source_diversity_score = min(source_count / 5 * 100, 100)  # 5種類以上で満点
+                        hiring_effectiveness_score += source_diversity_score * 0.2
+                        components.append(("source_diversity", source_diversity_score))
+                    else:
+                        hiring_effectiveness_score += 10  # データがない場合のデフォルト
+
+                    # 採用の質（パフォーマンスと在籍率）
+                    if quality_metrics is not None:
+                        quality_score = 0
+                        component_count = 0
+
+                        if quality_metrics["average_performance"] is not None:
+                            perf_score = quality_metrics["average_performance"]
+                            quality_score += perf_score
+                            component_count += 1
+
+                        if quality_metrics["retention"] is not None:
+                            retention_365 = quality_metrics["retention"]["365_day_retention_percent"]
+                            retention_score = retention_365  # 1年後の在籍率をそのままスコアとして使用
+                            quality_score += retention_score
+                            component_count += 1
+
+                        if component_count > 0:
+                            avg_quality_score = quality_score / component_count
+                            hiring_effectiveness_score += avg_quality_score * 0.4
+                            components.append(("quality", avg_quality_score))
+                        else:
+                            hiring_effectiveness_score += 20  # データがない場合のデフォルト
+                    else:
+                        hiring_effectiveness_score += 20  # データがない場合のデフォルト
+
+                    # 5. 強みと弱みの特定
+                    strengths = []
+                    weaknesses = []
+
+                    if avg_time_to_fill is not None:
+                        if avg_time_to_fill < 45:
+                            strengths.append("迅速な採用プロセス")
+                        elif avg_time_to_fill > 75:
+                            weaknesses.append("採用プロセスに時間がかかりすぎている")
+
+                    if source_analysis is not None:
+                        source_count = len(source_analysis["distribution"])
+                        if source_count >= 4:
+                            strengths.append("多様な採用チャネルの活用")
+                        elif source_count <= 2:
+                            weaknesses.append("採用チャネルの多様性不足")
+
+                    if quality_metrics is not None and quality_metrics["retention"] is not None:
+                        retention_365 = quality_metrics["retention"]["365_day_retention_percent"]
+                        if retention_365 >= 85:
+                            strengths.append("高い1年後在籍率")
+                        elif retention_365 < 70:
+                            weaknesses.append("低い1年後在籍率")
+
+                    if quality_metrics is not None and quality_metrics["average_performance"] is not None:
+                        avg_perf = quality_metrics["average_performance"]
+                        if avg_perf >= 75:
+                            strengths.append("採用人材の高いパフォーマンス")
+                        elif avg_perf < 60:
+                            weaknesses.append("採用人材のパフォーマンス不足")
+
+                    # 6. 結果の返却
+                    result = {
+                        "timestamp": datetime.now().isoformat(),
+                        "hiring_metrics": {
+                            "avg_time_to_fill_days": round(avg_time_to_fill, 1) if avg_time_to_fill is not None else None,
+                            "median_time_to_fill_days": round(median_time_to_fill, 1) if median_time_to_fill is not None else None
+                        },
+                        "hiring_effectiveness_score": round(hiring_effectiveness_score, 1),
+                        "score_components": {name: round(score, 1) for name, score in components},
+                        "strengths": strengths,
+                        "weaknesses": weaknesses,
+                        "recommendations": self._generate_hiring_recommendations(weaknesses)
                     }
-                else:
-                    retention_metrics = None
 
-                quality_metrics = {
-                    "average_performance": round(avg_performance, 1) if avg_performance is not None else None,
-                    "retention": retention_metrics
+                    # 採用ソース分析（データがある場合）
+                    if source_analysis:
+                        result["source_analysis"] = source_analysis
+
+                    # 部署・レベル別分析（データがある場合）
+                    if dept_hiring_analysis:
+                        result["department_hiring_analysis"] = dept_hiring_analysis
+
+                    if level_hiring_analysis:
+                        result["level_hiring_analysis"] = level_hiring_analysis
+
+                    # 採用の質分析（データがある場合）
+                    if quality_metrics:
+                        result["quality_metrics"] = quality_metrics
+
+                    logger.info(f"人材獲得力分析完了: 採用効果スコア {round(hiring_effectiveness_score, 1)}/100")
+                    return result
+
+            except Exception as e:
+                logger.error(f"人材獲得力分析中にエラーが発生しました: {str(e)}")
+                return {
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
                 }
 
-            # 4. 採用力スコアの計算
-            hiring_effectiveness_score = 0
-            components = []
+        # キャッシュから取得または計算
+        return self._get_cached_or_compute(cache_key, compute_hiring_effectiveness)
 
-            # 採用所要時間（所要時間が短いほど良い - 業界平均60日と仮定）
-            if avg_time_to_fill is not None:
-                time_to_fill_benchmark = 60  # 業界平均の仮定値
-                time_component_score = max(100 - ((avg_time_to_fill - 30) / time_to_fill_benchmark * 100), 0)
-                hiring_effectiveness_score += time_component_score * 0.4
-                components.append(("time_to_fill", time_component_score))
-            else:
-                hiring_effectiveness_score += 25  # データがない場合のデフォルト
-
-            # 採用経路多様性（複数の採用ソースがあるほど良い）
-            if source_analysis is not None:
-                source_count = len(source_analysis["distribution"])
-                source_diversity_score = min(source_count / 5 * 100, 100)  # 5種類以上で満点
-                hiring_effectiveness_score += source_diversity_score * 0.2
-                components.append(("source_diversity", source_diversity_score))
-            else:
-                hiring_effectiveness_score += 10  # データがない場合のデフォルト
-
-            # 採用の質（パフォーマンスと在籍率）
-            if quality_metrics is not None:
-                quality_score = 0
-                component_count = 0
-
-                if quality_metrics["average_performance"] is not None:
-                    perf_score = quality_metrics["average_performance"]
-                    quality_score += perf_score
-                    component_count += 1
-
-                if quality_metrics["retention"] is not None:
-                    retention_365 = quality_metrics["retention"]["365_day_retention_percent"]
-                    retention_score = retention_365  # 1年後の在籍率をそのままスコアとして使用
-                    quality_score += retention_score
-                    component_count += 1
-
-                if component_count > 0:
-                    avg_quality_score = quality_score / component_count
-                    hiring_effectiveness_score += avg_quality_score * 0.4
-                    components.append(("quality", avg_quality_score))
-                else:
-                    hiring_effectiveness_score += 20  # データがない場合のデフォルト
-            else:
-                hiring_effectiveness_score += 20  # データがない場合のデフォルト
-
-            # 5. 強みと弱みの特定
-            strengths = []
-            weaknesses = []
-
-            if avg_time_to_fill is not None:
-                if avg_time_to_fill < 45:
-                    strengths.append("迅速な採用プロセス")
-                elif avg_time_to_fill > 75:
-                    weaknesses.append("採用プロセスに時間がかかりすぎている")
-
-            if source_analysis is not None:
-                source_count = len(source_analysis["distribution"])
-                if source_count >= 4:
-                    strengths.append("多様な採用チャネルの活用")
-                elif source_count <= 2:
-                    weaknesses.append("採用チャネルの多様性不足")
-
-            if quality_metrics is not None and quality_metrics["retention"] is not None:
-                retention_365 = quality_metrics["retention"]["365_day_retention_percent"]
-                if retention_365 >= 85:
-                    strengths.append("高い1年後在籍率")
-                elif retention_365 < 70:
-                    weaknesses.append("低い1年後在籍率")
-
-            if quality_metrics is not None and quality_metrics["average_performance"] is not None:
-                avg_perf = quality_metrics["average_performance"]
-                if avg_perf >= 75:
-                    strengths.append("採用人材の高いパフォーマンス")
-                elif avg_perf < 60:
-                    weaknesses.append("採用人材のパフォーマンス不足")
-
-            # 6. 結果の作成
-            result = {
-                "timestamp": datetime.now().isoformat(),
-                "hiring_metrics": {
-                    "avg_time_to_fill_days": round(avg_time_to_fill, 1) if avg_time_to_fill is not None else None,
-                    "median_time_to_fill_days": round(median_time_to_fill, 1) if median_time_to_fill is not None else None
-                },
-                "hiring_effectiveness_score": round(hiring_effectiveness_score, 1),
-                "score_components": {name: round(score, 1) for name, score in components},
-                "strengths": strengths,
-                "weaknesses": weaknesses,
-                "recommendations": self._generate_hiring_recommendations(weaknesses)
-            }
-
-            # 採用ソース分析（データがある場合）
-            if source_analysis:
-                result["source_analysis"] = source_analysis
-
-            # 部署・レベル別分析（データがある場合）
-            if dept_hiring_analysis:
-                result["department_hiring_analysis"] = dept_hiring_analysis
-
-            if level_hiring_analysis:
-                result["level_hiring_analysis"] = level_hiring_analysis
-
-            # 採用の質分析（データがある場合）
-            if quality_metrics:
-                result["quality_metrics"] = quality_metrics
-
-            # 結果をキャッシュに保存
-            self.register_temp_data(cache_key, result)
-
-            logger.info(f"人材獲得力分析完了: 採用効果スコア {round(hiring_effectiveness_score, 1)}/100")
-            return result
-
-        except Exception as e:
-            logger.error(f"人材獲得力分析中にエラーが発生しました: {str(e)}")
-            return {
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
+    @contextlib.contextmanager
+    def _managed_graph(self):
+        """グラフオブジェクトの管理コンテキスト"""
+        G = nx.Graph()
+        try:
+            yield G
+        finally:
+            # 明示的にグラフリソースを解放
+            G.clear()
+            del G
+            # プロットをクリーンアップ
+            plt.close('all')
+            gc.collect()
 
     def generate_org_network_graph(self,
                                   interaction_data: pd.DataFrame,
@@ -1200,248 +1301,276 @@ class TeamAnalyzer(BaseAnalyzer):
         Returns:
             ネットワーク分析結果を含む辞書
         """
-        try:
+        # キャッシュキーの生成（データフレームのハッシュを含める）
+        interact_hash = hash(str(interaction_data.iloc[0:min(5, len(interaction_data))]) + str(len(interaction_data)))
+        emp_hash = 0
+        if employee_data is not None and not employee_data.empty:
+            emp_hash = hash(str(employee_data.iloc[0:min(5, len(employee_data))]) + str(len(employee_data)))
+        cache_key = f"network_graph_{interact_hash}_{emp_hash}"
+
+        def compute_network_graph():
             logger.info("組織ネットワーク分析の実行")
 
-            # データキャッシュのキーを生成
-            cache_key = f"org_network_{hash(str(interaction_data.shape))}"
-            if employee_data is not None:
-                cache_key += f"_{hash(str(employee_data.shape))}"
+            try:
+                # コンテキストマネージャでグラフリソースを管理
+                with self._managed_graph() as G, managed_df(interaction_data) as interact_df:
+                    emp_df = None
+                    if employee_data is not None and not employee_data.empty:
+                        emp_df = employee_data  # 参照のみ使用
 
-            # キャッシュにある場合は既存の結果を返す
-            cached_result = self.get_temp_data(cache_key)
-            if cached_result is not None:
-                return cached_result
+                    # 従業員データがある場合はノード情報を追加
+                    if emp_df is not None:
+                        for _, row in emp_df.iterrows():
+                            G.add_node(row["employee_id"],
+                                    department=row.get("department", "Unknown"),
+                                    level=row.get("level", "Unknown"),
+                                    tenure_months=row.get("tenure_months", 0))
 
-            # コンテキストマネージャーを使用してネットワークグラフを管理
-            with self._managed_network() as G:
-                # 従業員データがある場合はノード情報を追加
-                if employee_data is not None and not employee_data.empty:
-                    for _, row in employee_data.iterrows():
-                        G.add_node(row["employee_id"],
-                                  department=row.get("department", "Unknown"),
-                                  level=row.get("level", "Unknown"),
-                                  tenure_months=row.get("tenure_months", 0))
+                    # エッジの追加（バッチ処理を使用）
+                    edges_to_add = []
+                    for _, row in interact_df.iterrows():
+                        from_id = row["from_id"]
+                        to_id = row["to_id"]
+                        weight = row.get("weight", 1.0)
 
-                # エッジの追加
-                for _, row in interaction_data.iterrows():
-                    from_id = row["from_id"]
-                    to_id = row["to_id"]
-                    weight = row.get("weight", 1.0)
+                        if from_id != to_id:  # 自己ループを除外
+                            edges_to_add.append((from_id, to_id, weight))
 
-                    if from_id != to_id:  # 自己ループを除外
-                        G.add_edge(from_id, to_id, weight=weight)
+                    # バッチでエッジを追加
+                    G.add_weighted_edges_from([(u, v, w) for u, v, w in edges_to_add])
 
-                # 基本的なネットワーク指標の計算
-                avg_degree = np.mean([d for n, d in G.degree()])
-                density = nx.density(G)
+                    # 1. 基本的なネットワーク指標の計算
+                    if G.number_of_nodes() > 0:
+                        degrees = [d for n, d in G.degree()]
+                        avg_degree = np.mean(degrees) if degrees else 0
+                    else:
+                        avg_degree = 0
 
-                # try-exceptブロックで例外を適切に処理
-                try:
-                    avg_clustering = nx.average_clustering(G)
-                except Exception as e:
-                    self.logger.warning(f"クラスタリング係数計算エラー: {e}")
-                    avg_clustering = 0
+                    density = nx.density(G)
 
-                try:
-                    avg_shortest_path = nx.average_shortest_path_length(G)
-                except Exception as e:
-                    # グラフが連結でない場合
-                    self.logger.warning(f"平均最短パス計算エラー: {e}")
-                    avg_shortest_path = None
-
-                # 1. 基本的なネットワーク指標の計算
-                avg_degree = np.mean([d for n, d in G.degree()])
-                density = nx.density(G)
-
-                # 2. 中心性指標の計算
-                try:
-                    degree_centrality = nx.degree_centrality(G)
-                    betweenness_centrality = nx.betweenness_centrality(G)
-                    closeness_centrality = nx.closeness_centrality(G)
-
-                    # 上位5人の影響力者を特定
-                    influencers = sorted(degree_centrality.items(), key=lambda x: x[1], reverse=True)[:5]
-                    bridges = sorted(betweenness_centrality.items(), key=lambda x: x[1], reverse=True)[:5]
-                except:
-                    degree_centrality = {}
-                    betweenness_centrality = {}
-                    closeness_centrality = {}
-                    influencers = []
-                    bridges = []
-
-                # 3. コミュニティ検出
-                try:
-                    communities = list(nx.algorithms.community.greedy_modularity_communities(G))
-                    num_communities = len(communities)
-                    community_sizes = [len(c) for c in communities]
-                except:
-                    num_communities = 0
-                    community_sizes = []
-
-                # 4. 部門間連携分析（従業員データがある場合）
-                dept_connectivity = None
-
-                if employee_data is not None and "department" in employee_data.columns:
-                    # 部署間の接続を分析
-                    dept_edges = {}
-
-                    for u, v, w in G.edges(data=True):
-                        u_dept = G.nodes[u].get("department", "Unknown") if u in G.nodes and "department" in G.nodes[u] else "Unknown"
-                        v_dept = G.nodes[v].get("department", "Unknown") if v in G.nodes and "department" in G.nodes[v] else "Unknown"
-
-                        if u_dept != v_dept:  # 部署間の接続のみを考慮
-                            dept_pair = tuple(sorted([u_dept, v_dept]))
-
-                            if dept_pair not in dept_edges:
-                                dept_edges[dept_pair] = 0
-
-                            dept_edges[dept_pair] += w.get("weight", 1.0)
-
-                    # 部署間連携の強さをリスト形式に変換
-                    dept_connections = [{"dept_a": a, "dept_b": b, "connection_strength": strength}
-                                       for (a, b), strength in dept_edges.items()]
-
-                    # 各部署のネットワーク内での中心性
-                    dept_graph = nx.Graph()
-                    for a, b in dept_edges.keys():
-                        if a not in dept_graph:
-                            dept_graph.add_node(a)
-                        if b not in dept_graph:
-                            dept_graph.add_node(b)
-                        dept_graph.add_edge(a, b)
+                    # 例外処理を追加
+                    try:
+                        avg_clustering = nx.average_clustering(G)
+                    except:
+                        avg_clustering = 0
 
                     try:
-                        dept_centrality = nx.degree_centrality(dept_graph)
-                        dept_connectivity = {
-                            "connections": dept_connections,
-                            "department_centrality": {k: round(v, 3) for k, v in dept_centrality.items()}
-                        }
+                        # 最大連結成分のみで計算
+                        largest_cc = max(nx.connected_components(G), key=len)
+                        largest_subgraph = G.subgraph(largest_cc)
+                        avg_shortest_path = nx.average_shortest_path_length(largest_subgraph)
                     except:
-                        dept_connectivity = {
-                            "connections": dept_connections,
-                            "department_centrality": {}
-                        }
+                        # グラフが連結でない場合
+                        avg_shortest_path = None
 
-                # 5. 孤立した従業員の特定
-                isolates = list(nx.isolates(G))
-                isolation_ratio = len(isolates) / G.number_of_nodes() if G.number_of_nodes() > 0 else 0
+                    # 2. 中心性指標の計算
+                    try:
+                        # 効率化のため、主要な中心性指標のみ計算
+                        degree_centrality = nx.degree_centrality(G)
 
-                # 6. 組織ネットワーク健全性スコアの計算
-                network_health_score = 0
-                components = []
+                        # 大規模グラフの場合は近似アルゴリズムを使用
+                        if G.number_of_nodes() > 1000:
+                            betweenness_centrality = nx.approximation.betweenness_centrality(G)
+                        else:
+                            betweenness_centrality = nx.betweenness_centrality(G)
 
-                # 密度（高いほど良い）
-                density_score = min(density * 200, 100)  # 密度0.5以上で満点
-                network_health_score += density_score * 0.25
-                components.append(("density", density_score))
+                        closeness_centrality = nx.closeness_centrality(G)
 
-                # クラスタリング係数（高いほど良い）
-                clustering_score = min(avg_clustering * 100, 100)
-                network_health_score += clustering_score * 0.25
-                components.append(("clustering", clustering_score))
+                        # 上位5人の影響力者を特定（効率的なソート）
+                        influencers = sorted(degree_centrality.items(), key=lambda x: x[1], reverse=True)[:5]
+                        bridges = sorted(betweenness_centrality.items(), key=lambda x: x[1], reverse=True)[:5]
+                    except:
+                        degree_centrality = {}
+                        betweenness_centrality = {}
+                        closeness_centrality = {}
+                        influencers = []
+                        bridges = []
 
-                # 平均最短経路（短いほど良い、3~4が理想的）
-                if avg_shortest_path is not None:
-                    path_score = 100 - min(max(avg_shortest_path - 3, 0) * 20, 100)
-                    network_health_score += path_score * 0.25
-                    components.append(("path_length", path_score))
-                else:
-                    network_health_score += 15  # グラフが連結でない場合
+                    # 3. コミュニティ検出
+                    try:
+                        # 大規模グラフの場合はより効率的なアルゴリズムを使用
+                        if G.number_of_nodes() > 1000:
+                            # ラベル伝播法（効率的）
+                            communities = list(nx.algorithms.community.label_propagation_communities(G))
+                        else:
+                            communities = list(nx.algorithms.community.greedy_modularity_communities(G))
 
-                # 孤立率（低いほど良い）
-                isolation_score = 100 - min(isolation_ratio * 100, 100)
-                network_health_score += isolation_score * 0.25
-                components.append(("isolation", isolation_score))
+                        num_communities = len(communities)
+                        community_sizes = [len(c) for c in communities]
+                    except:
+                        num_communities = 0
+                        community_sizes = []
 
-                # 7. 強みと弱みの特定
-                strengths = []
-                weaknesses = []
+                    # 4. 部門間連携分析（従業員データがある場合）
+                    dept_connectivity = None
 
-                if density >= 0.3:
-                    strengths.append("高い組織内連携密度")
-                elif density < 0.1:
-                    weaknesses.append("組織内連携の不足")
+                    if emp_df is not None and "department" in emp_df.columns:
+                        # 部署間の接続を分析
+                        dept_edges = {}
 
-                if avg_clustering >= 0.6:
-                    strengths.append("強いチーム内結束")
-                elif avg_clustering < 0.3:
-                    weaknesses.append("チーム内結束の弱さ")
+                        # 効率的に部署間エッジを集計
+                        for u, v, w in G.edges(data=True):
+                            if u in G.nodes and v in G.nodes:
+                                u_dept = G.nodes[u].get("department", "Unknown")
+                                v_dept = G.nodes[v].get("department", "Unknown")
 
-                if avg_shortest_path is not None:
-                    if avg_shortest_path <= 3.5:
-                        strengths.append("効率的な情報伝達経路")
-                    elif avg_shortest_path > 5:
-                        weaknesses.append("情報伝達経路の長さ")
+                                if u_dept != v_dept:  # 部署間の接続のみを考慮
+                                    dept_pair = tuple(sorted([u_dept, v_dept]))
 
-                if isolation_ratio <= 0.05:
-                    strengths.append("孤立した従業員の少なさ")
-                elif isolation_ratio > 0.15:
-                    weaknesses.append("孤立した従業員の多さ")
+                                    if dept_pair not in dept_edges:
+                                        dept_edges[dept_pair] = 0
 
-                if dept_connectivity is not None and len(dept_connectivity["connections"]) >= 5:
-                    strengths.append("活発な部署間連携")
-                elif dept_connectivity is not None and len(dept_connectivity["connections"]) < 3:
-                    weaknesses.append("部署間連携の不足")
+                                    dept_edges[dept_pair] += w.get("weight", 1.0)
 
-                # 8. 結果の作成
-                result = {
-                    "timestamp": datetime.now().isoformat(),
-                    "network_metrics": {
-                        "nodes": G.number_of_nodes(),
-                        "edges": G.number_of_edges(),
-                        "avg_degree": round(avg_degree, 2),
-                        "density": round(density, 3),
-                        "avg_clustering": round(avg_clustering, 3),
-                        "avg_shortest_path": round(avg_shortest_path, 2) if avg_shortest_path is not None else None
-                    },
-                    "communities": {
-                        "count": num_communities,
-                        "sizes": community_sizes
-                    },
-                    "key_members": {
-                        "influencers": [{"id": id, "score": round(score, 3)} for id, score in influencers],
-                        "bridges": [{"id": id, "score": round(score, 3)} for id, score in bridges]
-                    },
-                    "isolation": {
-                        "isolated_count": len(isolates),
-                        "isolation_ratio": round(isolation_ratio, 3)
-                    },
-                    "network_health_score": round(network_health_score, 1),
-                    "score_components": {name: round(score, 1) for name, score in components},
-                    "strengths": strengths,
-                    "weaknesses": weaknesses,
-                    "recommendations": self._generate_network_recommendations(weaknesses)
+                        # 部署間連携の強さをリスト形式に変換
+                        dept_connections = [{"dept_a": a, "dept_b": b, "connection_strength": strength}
+                                        for (a, b), strength in dept_edges.items()]
+
+                        # 各部署のネットワーク内での中心性
+                        dept_graph = nx.Graph()
+                        for a, b in dept_edges.keys():
+                            if a not in dept_graph:
+                                dept_graph.add_node(a)
+                            if b not in dept_graph:
+                                dept_graph.add_node(b)
+                            dept_graph.add_edge(a, b)
+
+                        try:
+                            dept_centrality = nx.degree_centrality(dept_graph)
+                            dept_connectivity = {
+                                "connections": dept_connections,
+                                "department_centrality": {k: round(v, 3) for k, v in dept_centrality.items()}
+                            }
+                        except:
+                            dept_connectivity = {
+                                "connections": dept_connections,
+                                "department_centrality": {}
+                            }
+
+                    # 5. 孤立した従業員の特定
+                    isolates = list(nx.isolates(G))
+                    isolation_ratio = len(isolates) / G.number_of_nodes() if G.number_of_nodes() > 0 else 0
+
+                    # 6. 組織ネットワーク健全性スコアの計算
+                    network_health_score = 0
+                    components = []
+
+                    # 密度（高いほど良い）
+                    density_score = min(density * 200, 100)  # 密度0.5以上で満点
+                    network_health_score += density_score * 0.25
+                    components.append(("density", density_score))
+
+                    # クラスタリング係数（高いほど良い）
+                    clustering_score = min(avg_clustering * 100, 100)
+                    network_health_score += clustering_score * 0.25
+                    components.append(("clustering", clustering_score))
+
+                    # 平均最短経路（短いほど良い、3~4が理想的）
+                    if avg_shortest_path is not None:
+                        path_score = 100 - min(max(avg_shortest_path - 3, 0) * 20, 100)
+                        network_health_score += path_score * 0.25
+                        components.append(("path_length", path_score))
+                    else:
+                        network_health_score += 15  # グラフが連結でない場合
+
+                    # 孤立率（低いほど良い）
+                    isolation_score = 100 - min(isolation_ratio * 100, 100)
+                    network_health_score += isolation_score * 0.25
+                    components.append(("isolation", isolation_score))
+
+                    # 7. 強みと弱みの特定
+                    strengths = []
+                    weaknesses = []
+
+                    if density >= 0.3:
+                        strengths.append("高い組織内連携密度")
+                    elif density < 0.1:
+                        weaknesses.append("組織内連携の不足")
+
+                    if avg_clustering >= 0.6:
+                        strengths.append("強いチーム内結束")
+                    elif avg_clustering < 0.3:
+                        weaknesses.append("チーム内結束の弱さ")
+
+                    if avg_shortest_path is not None:
+                        if avg_shortest_path <= 3.5:
+                            strengths.append("効率的な情報伝達経路")
+                        elif avg_shortest_path > 5:
+                            weaknesses.append("情報伝達経路の長さ")
+
+                    if isolation_ratio <= 0.05:
+                        strengths.append("孤立した従業員の少なさ")
+                    elif isolation_ratio > 0.15:
+                        weaknesses.append("孤立した従業員の多さ")
+
+                    if dept_connectivity is not None and len(dept_connectivity["connections"]) >= 5:
+                        strengths.append("活発な部署間連携")
+                    elif dept_connectivity is not None and len(dept_connectivity["connections"]) < 3:
+                        weaknesses.append("部署間連携の不足")
+
+                    # 8. 結果の返却
+                    result = {
+                        "timestamp": datetime.now().isoformat(),
+                        "network_metrics": {
+                            "nodes": G.number_of_nodes(),
+                            "edges": G.number_of_edges(),
+                            "avg_degree": round(avg_degree, 2),
+                            "density": round(density, 3),
+                            "avg_clustering": round(avg_clustering, 3),
+                            "avg_shortest_path": round(avg_shortest_path, 2) if avg_shortest_path is not None else None
+                        },
+                        "communities": {
+                            "count": num_communities,
+                            "sizes": community_sizes
+                        },
+                        "key_members": {
+                            "influencers": [{"id": id, "score": round(score, 3)} for id, score in influencers],
+                            "bridges": [{"id": id, "score": round(score, 3)} for id, score in bridges]
+                        },
+                        "isolation": {
+                            "isolated_count": len(isolates),
+                            "isolation_ratio": round(isolation_ratio, 3)
+                        },
+                        "network_health_score": round(network_health_score, 1),
+                        "score_components": {name: round(score, 1) for name, score in components},
+                        "strengths": strengths,
+                        "weaknesses": weaknesses,
+                        "recommendations": self._generate_network_recommendations(weaknesses)
+                    }
+
+                    # 部署間連携分析（データがある場合）
+                    if dept_connectivity:
+                        result["department_connectivity"] = dept_connectivity
+
+                    logger.info(f"組織ネットワーク分析完了: ネットワーク健全性スコア {round(network_health_score, 1)}/100")
+                    return result
+
+            except Exception as e:
+                logger.error(f"組織ネットワーク分析中にエラーが発生しました: {str(e)}")
+                return {
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
                 }
 
-                # 部署間連携分析（データがある場合）
-                if dept_connectivity:
-                    result["department_connectivity"] = dept_connectivity
+        # キャッシュから取得または計算
+        return self._get_cached_or_compute(cache_key, compute_network_graph)
 
-                # 結果をキャッシュに保存
-                self.register_temp_data(cache_key, result)
-
-                logger.info(f"組織ネットワーク分析完了: ネットワーク健全性スコア {round(network_health_score, 1)}/100")
-                return result
-
-        except Exception as e:
-            logger.error(f"組織ネットワーク分析中にエラーが発生しました: {str(e)}")
-            return {
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }
-
-    def _generate_team_recommendations(self, weaknesses: List[str], company_stage: str) -> List[str]:
+    # 推奨生成関数をLRUキャッシュでメモ化
+    @lru_cache(maxsize=32)
+    def _generate_team_recommendations(self, weaknesses_tuple: Tuple[str, ...], company_stage: str) -> List[str]:
         """
         チーム評価の弱みに基づいて推奨アクションを生成します。
 
         Args:
-            weaknesses: 特定された弱みのリスト
+            weaknesses_tuple: 特定された弱みのタプル（リストからの変換が必要）
             company_stage: 会社のステージ
 
         Returns:
             推奨アクションのリスト
         """
+        # タプルをリストに変換（LRUキャッシュはハッシュ可能な型を引数に要求）
+        weaknesses = list(weaknesses_tuple)
+
         recommendations = []
 
         for weakness in weaknesses:
@@ -1474,17 +1603,23 @@ class TeamAnalyzer(BaseAnalyzer):
 
         return recommendations[:3]  # 最大3つの推奨事項に制限
 
+    # 他の_generate_recommendations関数も同様に最適化（リストをタプルに変換してキャッシュ対応）
     def _generate_org_recommendations(self, weaknesses: List[str], company_stage: str) -> List[str]:
+        return self._generate_org_recommendations_cached(tuple(weaknesses), company_stage)
+
+    @lru_cache(maxsize=32)
+    def _generate_org_recommendations_cached(self, weaknesses_tuple: Tuple[str, ...], company_stage: str) -> List[str]:
         """
         組織評価の弱みに基づいて推奨アクションを生成します。
 
         Args:
-            weaknesses: 特定された弱みのリスト
+            weaknesses_tuple: 特定された弱みのタプル
             company_stage: 会社のステージ
 
         Returns:
             推奨アクションのリスト
         """
+        weaknesses = list(weaknesses_tuple)
         recommendations = []
 
         for weakness in weaknesses:
@@ -1518,15 +1653,20 @@ class TeamAnalyzer(BaseAnalyzer):
         return recommendations[:3]  # 最大3つの推奨事項に制限
 
     def _generate_culture_recommendations(self, weaknesses: List[str]) -> List[str]:
+        return self._generate_culture_recommendations_cached(tuple(weaknesses))
+
+    @lru_cache(maxsize=32)
+    def _generate_culture_recommendations_cached(self, weaknesses_tuple: Tuple[str, ...]) -> List[str]:
         """
         文化評価の弱みに基づいて推奨アクションを生成します。
 
         Args:
-            weaknesses: 特定された弱みのリスト
+            weaknesses_tuple: 特定された弱みのタプル
 
         Returns:
             推奨アクションのリスト
         """
+        weaknesses = list(weaknesses_tuple)
         recommendations = []
 
         for weakness in weaknesses:
@@ -1560,15 +1700,20 @@ class TeamAnalyzer(BaseAnalyzer):
         return recommendations[:3]  # 最大3つの推奨事項に制限
 
     def _generate_hiring_recommendations(self, weaknesses: List[str]) -> List[str]:
+        return self._generate_hiring_recommendations_cached(tuple(weaknesses))
+
+    @lru_cache(maxsize=32)
+    def _generate_hiring_recommendations_cached(self, weaknesses_tuple: Tuple[str, ...]) -> List[str]:
         """
         採用力評価の弱みに基づいて推奨アクションを生成します。
 
         Args:
-            weaknesses: 特定された弱みのリスト
+            weaknesses_tuple: 特定された弱みのタプル
 
         Returns:
             推奨アクションのリスト
         """
+        weaknesses = list(weaknesses_tuple)
         recommendations = []
 
         for weakness in weaknesses:
@@ -1598,15 +1743,20 @@ class TeamAnalyzer(BaseAnalyzer):
         return recommendations[:3]  # 最大3つの推奨事項に制限
 
     def _generate_network_recommendations(self, weaknesses: List[str]) -> List[str]:
+        return self._generate_network_recommendations_cached(tuple(weaknesses))
+
+    @lru_cache(maxsize=32)
+    def _generate_network_recommendations_cached(self, weaknesses_tuple: Tuple[str, ...]) -> List[str]:
         """
         ネットワーク評価の弱みに基づいて推奨アクションを生成します。
 
         Args:
-            weaknesses: 特定された弱みのリスト
+            weaknesses_tuple: 特定された弱みのタプル
 
         Returns:
             推奨アクションのリスト
         """
+        weaknesses = list(weaknesses_tuple)
         recommendations = []
 
         for weakness in weaknesses:
@@ -1638,157 +1788,3 @@ class TeamAnalyzer(BaseAnalyzer):
             ]
 
         return recommendations[:3]  # 最大3つの推奨事項に制限
-
-    def save_analysis_to_firestore(self,
-                                  company_id: str,
-                                  analysis_type: str,
-                                  analysis_result: Dict[str, Any]) -> str:
-        """
-        分析結果をFirestoreに保存します。
-
-        Args:
-            company_id: 企業ID
-            analysis_type: 分析タイプ
-                ('team_evaluation', 'org_growth', 'culture_analysis', 'hiring_analysis', 'network_analysis')
-            analysis_result: 分析結果
-
-        Returns:
-            保存したドキュメントのID
-        """
-        try:
-            # 分析タイプごとのコレクション参照を作成
-            collection_ref = self.db.collection(f"companies/{company_id}/team_analyses")
-
-            # タイムスタンプを追加
-            analysis_result["saved_at"] = firestore.SERVER_TIMESTAMP
-            analysis_result["analysis_type"] = analysis_type
-
-            # Firestoreに保存
-            doc_ref = collection_ref.add(analysis_result)[1]
-            logger.info(f"分析結果を保存しました: {analysis_type}, ドキュメントID: {doc_ref.id}")
-
-            return doc_ref.id
-
-        except Exception as e:
-            logger.error(f"分析結果の保存中にエラーが発生しました: {str(e)}")
-            return None
-
-    def get_team_analyses_history(self,
-                                 company_id: str,
-                                 analysis_type: Optional[str] = None,
-                                 limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        企業の過去のチーム分析履歴を取得します。
-
-        Args:
-            company_id: 企業ID
-            analysis_type: 分析タイプでフィルタリング（オプション）
-            limit: 取得する最大レコード数
-
-        Returns:
-            分析履歴のリスト
-        """
-        try:
-            # キャッシュのキーを生成
-            cache_key = f"team_history_{company_id}_{analysis_type}_{limit}"
-
-            # キャッシュにある場合は既存の結果を返す
-            cached_result = self.get_temp_data(cache_key)
-            if cached_result is not None:
-                return cached_result
-
-            # コレクション参照を作成
-            collection_ref = self.db.collection(f"companies/{company_id}/team_analyses")
-
-            # クエリを構築
-            query = collection_ref.order_by("saved_at", direction=firestore.Query.DESCENDING).limit(limit)
-
-            if analysis_type:
-                query = query.where("analysis_type", "==", analysis_type)
-
-            # クエリを実行
-            docs = query.stream()
-
-            # 結果をリストに変換
-            results = []
-            for doc in docs:
-                data = doc.to_dict()
-                data["id"] = doc.id
-                results.append(data)
-
-            # 結果をキャッシュに保存
-            self.register_temp_data(cache_key, results)
-
-            logger.info(f"分析履歴を取得しました: {len(results)}件")
-            return results
-
-        except Exception as e:
-            logger.error(f"分析履歴の取得中にエラーが発生しました: {str(e)}")
-            return []
-
-
-# モジュールの単体テスト用コード
-if __name__ == "__main__":
-    # テスト用のサンプルデータ
-    sample_founder_profiles = [
-        {
-            "name": "田中太郎",
-            "role": "CEO",
-            "education": ["東京大学 工学部", "Stanford MBA"],
-            "prior_experience": ["Google", "McKinsey"],
-            "domain_experience_years": 8,
-            "prior_exits": 1,
-            "skills": ["leadership", "strategy", "product"]
-        },
-        {
-            "name": "鈴木一郎",
-            "role": "CTO",
-            "education": ["京都大学 情報学部", "カーネギーメロン大学 コンピュータサイエンス修士"],
-            "prior_experience": ["DeNA", "自社創業（買収）"],
-            "domain_experience_years": 12,
-            "prior_exits": 1,
-            "skills": ["engineering", "architecture", "AI/ML"]
-        }
-    ]
-
-    sample_employee_data = pd.DataFrame({
-        "date": pd.date_range(start="2023-01-01", periods=12, freq="M"),
-        "headcount": [10, 12, 15, 18, 20, 22, 25, 28, 30, 32, 35, 38],
-        "new_hires": [2, 3, 4, 3, 3, 4, 5, 4, 4, 5, 4, 5],
-        "departures": [0, 0, 1, 0, 1, 1, 2, 1, 2, 2, 1, 2],
-        "department": ["Engineering"] * 12
-    })
-
-    # TeamAnalyzerのインスタンス化
-    analyzer = TeamAnalyzer()
-
-    # サンプルの創業チーム分析
-    team_results = analyzer.evaluate_founding_team(
-        founder_profiles=sample_founder_profiles,
-        company_stage="series_a",
-        industry="software"
-    )
-
-    print("=== 創業チーム評価結果 ===")
-    print(f"総合スコア: {team_results['scores']['founder_score']}/100")
-    print(f"強み: {', '.join(team_results['strengths'])}")
-    print(f"弱み: {', '.join(team_results['weaknesses'])}")
-    print(f"推奨アクション: {', '.join(team_results['recommendations'])}")
-    print("\n")
-
-    # サンプルの組織成長分析
-    org_results = analyzer.analyze_org_growth(
-        employee_data=sample_employee_data,
-        timeline="1y",
-        company_stage="series_a",
-        industry="software"
-    )
-
-    print("=== 組織成長分析結果 ===")
-    print(f"成長健全性スコア: {org_results['growth_health_score']}/100")
-    print(f"強み: {', '.join(org_results['strengths'])}")
-    print(f"弱み: {', '.join(org_results['weaknesses'])}")
-    print(f"推奨アクション: {', '.join(org_results['recommendations'])}")
-
-    # 使用後はリソースを解放
-    analyzer.release_resources()

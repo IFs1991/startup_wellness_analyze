@@ -9,12 +9,15 @@ COPY package.json pnpm-lock.yaml* ./
 # 必要なビルドツールを最小限に抑える
 RUN apk add --no-cache --virtual .build-deps g++ && \
     npm install -g pnpm && \
-    pnpm install --frozen-lockfile && \
+    pnpm install --no-frozen-lockfile && \
     pnpm store prune && \
     apk del .build-deps
 
 # ビルドステージ - アプリケーションのビルド
 FROM node:18-alpine AS builder
+
+# pnpmをグローバルインストール
+RUN npm install -g pnpm
 
 # ビルド時の環境変数設定
 ARG NODE_ENV=production
@@ -64,6 +67,10 @@ COPY --from=builder /app/.next/static ./.next/static
 # エントリーポイントスクリプト
 COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# ヘルスチェックスクリプト
+COPY healthcheck.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/healthcheck.sh
 
 # コンテナ内のポート3000を公開
 EXPOSE 3000

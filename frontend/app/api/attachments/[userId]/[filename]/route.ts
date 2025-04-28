@@ -3,19 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import { promises as fsPromises } from 'fs';
 
-interface RouteParams {
-  params: {
-    userId: string;
-    filename: string;
-  };
-}
-
 // 一時的なアップロードディレクトリ
 const UPLOAD_DIR = path.join(process.cwd(), 'tmp/uploads');
 
 export async function GET(
   request: NextRequest,
-  { params }: RouteParams
+  { params }: { params: { userId: string; filename: string } }
 ) {
   try {
     const { userId, filename } = params;
