@@ -24,7 +24,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen flex-col bg-background-main text-text-primary">
-      <Header>
+      <Header className="sticky top-0 z-50 bg-background-main shadow">
         <div className="flex items-center gap-4">
           <Logo />
           <h1 className="text-xl font-bold">スタートアップウェルネスアナライザー</h1>

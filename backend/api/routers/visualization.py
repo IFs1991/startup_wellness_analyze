@@ -1,5 +1,5 @@
 """
-可視化APIのroutersバージョン
+可視化API
 
 このモジュールは次のエンドポイントを提供します：
 - POST /api/visualizations/chart - 単一チャートの生成
@@ -465,3 +465,156 @@ async def download_chart(
     except Exception as e:
         logger.exception(f"チャートダウンロード中にエラーが発生しました: {str(e)}")
         raise ChartGenerationError(message=f"チャートダウンロード中にエラーが発生しました: {str(e)}")
+
+class AnalyzerVisualizationRequest(BaseModel):
+    """分析クラスの可視化リクエストモデル"""
+    analyzer_type: str = Field(..., description="分析クラスの種類 (financial, vc_roi, health_investment, knowledge_transfer)")
+    analysis_results: Dict[str, Any] = Field(..., description="分析結果データ")
+    visualization_type: str = Field("bar", description="可視化タイプ (bar, line, pie, scatter, heatmap, network など)")
+    options: Dict[str, Any] = Field(default_factory=dict, description="可視化設定オプション")
+
+class AnalyzerVisualizationResponse(BaseModel):
+    chart_id: str = Field(..., description="チャートID")
+    url: str = Field(..., description="チャートURL")
+    format: str = Field(..., description="フォーマット")
+    thumbnail_url: Optional[str] = Field(None, description="サムネイルURL")
+    metadata: Dict[str, Any] = Field(..., description="メタデータ")
+    analysis_summary: Dict[str, Any] = Field(..., description="分析サマリー")
+
+
+def _prepare_chart_data_from_analyzer(analyzer_type: str, analysis_results: Dict[str, Any], visualization_type: str, options: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    各分析クラスの結果からチャートデータを準備する
+    """
+    options = options or {}
+    if analyzer_type == "financial":
+        # 財務分析用のチャートデータ変換（例: 売上推移や利益率など）
+        labels = analysis_results.get("labels") or []
+        datasets = analysis_results.get("datasets") or []
+        chart_config = {
+            "chart_type": visualization_type,
+            "title": options.get("title", "財務分析チャート"),
+            "x_axis_label": options.get("x_axis_label", "期間"),
+            "y_axis_label": options.get("y_axis_label", "値"),
+            "width": options.get("width", 800),
+            "height": options.get("height", 500),
+            "show_legend": True,
+            "color_scheme": options.get("color_scheme", "default")
+        }
+        chart_data = {
+            "labels": labels,
+            "datasets": datasets
+        }
+        return {"config": chart_config, "data": chart_data}
+    elif analyzer_type == "vc_roi":
+        # VC ROI計算結果のチャートデータ変換
+        labels = analysis_results.get("labels") or []
+        datasets = analysis_results.get("datasets") or []
+        chart_config = {
+            "chart_type": visualization_type,
+            "title": options.get("title", "VC ROI分析チャート"),
+            "x_axis_label": options.get("x_axis_label", "指標"),
+            "y_axis_label": options.get("y_axis_label", "ROI (%)"),
+            "width": options.get("width", 800),
+            "height": options.get("height", 500),
+            "show_legend": True,
+            "color_scheme": options.get("color_scheme", "greens")
+        }
+        chart_data = {
+            "labels": labels,
+            "datasets": datasets
+        }
+        return {"config": chart_config, "data": chart_data}
+    elif analyzer_type == "health_investment":
+        # 健康投資効果指数のチャートデータ変換
+        labels = analysis_results.get("labels") or []
+        datasets = analysis_results.get("datasets") or []
+        chart_config = {
+            "chart_type": visualization_type,
+            "title": options.get("title", "健康投資効果指数チャート"),
+            "x_axis_label": options.get("x_axis_label", "期間"),
+            "y_axis_label": options.get("y_axis_label", "指数値"),
+            "width": options.get("width", 800),
+            "height": options.get("height", 500),
+            "show_legend": True,
+            "color_scheme": options.get("color_scheme", "blues")
+        }
+        chart_data = {
+            "labels": labels,
+            "datasets": datasets
+        }
+        return {"config": chart_config, "data": chart_data}
+    elif analyzer_type == "knowledge_transfer":
+        # 知識移転指数のチャートデータ変換
+        labels = analysis_results.get("labels") or []
+        datasets = analysis_results.get("datasets") or []
+        chart_config = {
+            "chart_type": visualization_type,
+            "title": options.get("title", "知識移転指数チャート"),
+            "x_axis_label": options.get("x_axis_label", "期間"),
+            "y_axis_label": options.get("y_axis_label", "KTI"),
+            "width": options.get("width", 800),
+            "height": options.get("height", 500),
+            "show_legend": True,
+            "color_scheme": options.get("color_scheme", "purples")
+        }
+        chart_data = {
+            "labels": labels,
+            "datasets": datasets
+        }
+        return {"config": chart_config, "data": chart_data}
+    else:
+        raise InvalidChartDataError(
+            message=f"サポートされていないanalyzer_type: {analyzer_type}",
+            details={"supported_types": ["financial", "vc_roi", "health_investment", "knowledge_transfer"]}
+        )
+
+
+@router.post("/analyze-and-visualize", response_model=AnalyzerVisualizationResponse, status_code=status.HTTP_200_OK)
+async def analyze_and_visualize(
+    request: AnalyzerVisualizationRequest,
+    current_user: User = Depends(get_current_user),
+    visualization_service = Depends(get_visualization_service),
+    settings: Settings = Depends(get_settings)
+):
+    """
+    分析クラスの結果を可視化します。
+    FinancialAnalyzer, VCROICalculator, HealthInvestmentEffectIndexCalculator, KnowledgeTransferIndexCalculatorの分析結果を受け取り、チャートを生成します。
+    """
+    try:
+        logger.info(f"分析可視化リクエスト受信: analyzer_type={request.analyzer_type}, type={request.visualization_type}")
+        if not request.analysis_results:
+            raise InvalidChartDataError(
+                message="無効な分析結果データです",
+                details={"reason": "分析結果が空です"}
+            )
+        chart_data = _prepare_chart_data_from_analyzer(
+            analyzer_type=request.analyzer_type,
+            analysis_results=request.analysis_results,
+            visualization_type=request.visualization_type,
+            options=request.options
+        )
+        result = await visualization_service.generate_chart(
+            config=chart_data["config"],
+            data=chart_data["data"],
+            format=request.options.get("format", "png"),
+            template_id=request.options.get("template_id"),
+            user_id=str(current_user.id)
+        )
+        result["analysis_summary"] = {"summary": "分析サマリーは各analyzerで拡張可能"}
+        return AnalyzerVisualizationResponse(
+            chart_id=result["chart_id"],
+            url=result["url"],
+            format=result["format"],
+            thumbnail_url=result.get("thumbnail_url"),
+            metadata=result["metadata"],
+            analysis_summary=result["analysis_summary"]
+        )
+    except InvalidChartDataError as e:
+        logger.error(f"分析データ検証エラー: {str(e)}")
+        raise
+    except Exception as e:
+        logger.exception(f"分析可視化中にエラー: {str(e)}")
+        raise ChartGenerationError(
+            message=f"分析可視化の実行中にエラーが発生しました: {str(e)}"
+        )

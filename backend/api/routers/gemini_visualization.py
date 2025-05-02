@@ -270,3 +270,89 @@ async def get_chart_status(
     except Exception as e:
         logger.error(f"Chart status check failed: {e}")
         raise HTTPException(status_code=500, detail=f"チャートステータス確認中にエラーが発生しました: {str(e)}")
+
+# --- 既存コードの後ろに追記 ---
+
+# --- 分析結果→可視化データ変換ヘルパー ---
+def convert_text_mining_result_to_chart_data(result: dict) -> dict:
+    """
+    TextMinerの分析結果をGemini可視化用データ形式に変換
+    """
+    # 例: 感情分析スコアのヒストグラムや時系列
+    if "sentiment_scores" in result:
+        return {
+            "labels": [str(i) for i in range(len(result["sentiment_scores"]))],
+            "values": result["sentiment_scores"]
+        }
+    # その他のケースも適宜拡張
+    return {"labels": [], "values": []}
+
+def convert_causal_inference_result_to_chart_data(result: dict) -> dict:
+    """
+    CausalInferenceAnalyzerの結果をGemini可視化用データ形式に変換
+    """
+    # 例: 効果の時系列や信頼区間
+    if "effect_series" in result:
+        effect_series = result["effect_series"]
+        if hasattr(effect_series, "to_dict"):
+            effect_series = effect_series.to_dict()
+        return {
+            "labels": list(effect_series.keys()),
+            "values": list(effect_series.values())
+        }
+    return {"labels": [], "values": []}
+
+def convert_portfolio_network_result_to_chart_data(result: dict) -> dict:
+    """
+    PortfolioNetworkAnalyzerの結果をGemini可視化用データ形式に変換
+    """
+    # 例: ノード間のエッジ数や中心性指標など
+    if "centrality" in result:
+        return {
+            "labels": list(result["centrality"].keys()),
+            "values": list(result["centrality"].values())
+        }
+    return {"labels": [], "values": []}
+
+# --- 新しい可視化タイプ対応エンドポイント ---
+from fastapi import Body
+
+@router.post("/analyze-visualize", response_model=ChartResponse)
+async def analyze_and_visualize(
+    analysis_type: str = Body(..., description="分析タイプ: text_mining, causal_inference, portfolio_network"),
+    analysis_result: dict = Body(..., description="分析結果データ"),
+    chart_type: str = Body("bar", description="グラフの種類"),
+    title: str = Body("分析可視化", description="グラフタイトル"),
+    description: str = Body("", description="グラフ説明"),
+    width: int = Body(800),
+    height: int = Body(500),
+    theme: str = Body("professional"),
+    use_cache: bool = Body(True),
+    chart_generator: GeminiChartGenerator = Depends(get_chart_generator)
+):
+    """
+    分析結果をGeminiで可視化する統合エンドポイント
+    """
+    # 分析タイプごとにデータ変換
+    if analysis_type == "text_mining":
+        chart_data = convert_text_mining_result_to_chart_data(analysis_result)
+    elif analysis_type == "causal_inference":
+        chart_data = convert_causal_inference_result_to_chart_data(analysis_result)
+    elif analysis_type == "portfolio_network":
+        chart_data = convert_portfolio_network_result_to_chart_data(analysis_result)
+    else:
+        raise HTTPException(status_code=400, detail=f"未対応の分析タイプ: {analysis_type}")
+
+    result = await chart_generator.generate_chart(
+        data=chart_data,
+        chart_type=chart_type,
+        title=title,
+        description=description,
+        width=width,
+        height=height,
+        theme=theme,
+        use_cache=use_cache
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "可視化に失敗しました"))
+    return result

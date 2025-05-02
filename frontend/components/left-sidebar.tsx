@@ -10,6 +10,7 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   TrendingUp,
   Network,
   Activity,
@@ -32,6 +33,9 @@ import {
 import Link from "next/link"
 import { cn } from "@/lib/utils"
 import { memo } from "react"
+import { AddCompanyDialog } from "@/components/companies/add-company-dialog"
+
+import React from "react"
 
 interface LeftSidebarProps {
   collapsed: boolean
@@ -185,6 +189,14 @@ const bottomNavItems = [
 ]
 
 export const LeftSidebar = memo(function LeftSidebar({ collapsed, onToggleCollapse }: LeftSidebarProps) {
+  const [addDialogOpen, setAddDialogOpen] = React.useState(false)
+  // 詳細分析セクションの折り畳み状態
+  const [analysisOpen, setAnalysisOpen] = React.useState(true)
+  const handleAddCompany = (company: any) => {
+    // TODO: 企業登録処理（API連携や状態管理など）
+    // ここで企業詳細ページへの遷移も実装可能
+    // 例: router.push(`/companies/${company.id}`)
+  }
   return (
     <div
       className={cn(
@@ -200,7 +212,6 @@ export const LeftSidebar = memo(function LeftSidebar({ collapsed, onToggleCollap
       >
         {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
       </Button>
-
       <ScrollArea className="flex-1 px-3 py-4">
         <nav className="space-y-6">
           {navItems.map((item) => (
@@ -212,14 +223,48 @@ export const LeftSidebar = memo(function LeftSidebar({ collapsed, onToggleCollap
                 >
                   {item.icon}
                   {!collapsed && <span>{item.label}</span>}
+                  {/* 企業管理セクションに「企業を追加」ボタンを追加 */}
+                  {item.id === "companies" && !collapsed && (
+                    <Button
+                      size="sm"
+                      className="ml-auto"
+                      onClick={e => { e.preventDefault(); setAddDialogOpen(true); }}
+                    >
+                      企業を追加
+                    </Button>
+                  )}
                 </Link>
               ) : (
                 <>
-                  <div className="flex items-center gap-3 px-3 py-2 text-text-secondary">
+                  <div
+                    className="flex items-center gap-3 px-3 py-2 text-text-secondary cursor-pointer select-none hover:bg-background-lighter"
+                    onClick={() => {
+                      if (item.id === "analysis") setAnalysisOpen((prev) => !prev)
+                    }}
+                  >
                     {item.icon}
                     {!collapsed && <span className="font-medium">{item.label}</span>}
+                    {/* 折り畳みアイコン */}
+                    {!collapsed && item.id === "analysis" && (
+                      analysisOpen ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />
+                    )}
                   </div>
-                  {!collapsed && item.children && (
+                  {!collapsed && item.children && item.id === "analysis" && analysisOpen && (
+                    <div className="ml-4 space-y-1">
+                      {item.children.map((child) => (
+                        <Link
+                          key={child.id}
+                          href={child.href}
+                          className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-background-lighter hover:text-text-primary"
+                        >
+                          {child.icon}
+                          <span>{child.label}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                  {/* 他のセクションは従来通り */}
+                  {!collapsed && item.children && item.id !== "analysis" && (
                     <div className="ml-4 space-y-1">
                       {item.children.map((child) => (
                         <Link
@@ -239,7 +284,7 @@ export const LeftSidebar = memo(function LeftSidebar({ collapsed, onToggleCollap
           ))}
         </nav>
       </ScrollArea>
-
+      <AddCompanyDialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} onSubmit={handleAddCompany} />
       <div className="border-t border-background-lighter p-3">
         <nav>
           {bottomNavItems.map((item) => (

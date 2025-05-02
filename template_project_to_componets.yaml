@@ -1,0 +1,66 @@
+project_root: c:\Users\seekf\Desktop\startup_wellness_analyze
+
+phases:
+  - phase: 1
+    name: 分析とテンプレート設計
+    description: 既存分析コンポーネントの共通点を抽出し、柔軟なprops設計・型定義を含むテンプレート構造を設計する。
+    tasks:
+      - task: 分析コンポーネントの精読
+        description: frontend/components/analysis/ 内の全分析ファイルを確認し、共通UI・ロジック・propsを洗い出す。
+        files_involved:
+          - frontend/components/analysis/*.tsx
+      - task: テンプレートスキーマ・props設計
+        description: 柔軟なprops設計（タイトル・説明・タブ・カード内容・カスタムUI等）を検討し、型定義も同時に設計。
+        output: テンプレート設計書・TypeScript型定義案
+
+  - phase: 2
+    name: テンプレート・型定義の実装
+    description: 再利用可能なテンプレートコンポーネントと共通型・インターフェースを実装する。
+    tasks:
+      - task: テンプレートディレクトリ作成
+        description: テンプレート用ディレクトリを新規作成
+        target_folder: frontend/components/analysis/templates/
+      - task: 型定義・インターフェース作成
+        description: frontend/types/analysis-template.d.ts などに共通型・インターフェースを定義
+        new_files:
+          - frontend/types/analysis-template.d.ts
+      - task: テンプレートコンポーネント実装
+        description: 柔軟なprops・型を持つBaseAnalysisTemplateを作成
+        new_files:
+          - frontend/components/analysis/templates/base-analysis-template.tsx
+
+  - phase: 3
+    name: 既存コンポーネントの段階的テンプレート化
+    description: 1つずつ既存分析コンポーネントをテンプレート化し、動作確認しながら進める。
+    tasks:
+      - task: 1つ目の分析コンポーネントをテンプレート化
+        description: 例：AssociationAnalysisをテンプレート化し、動作確認
+        files_to_modify:
+          - frontend/components/analysis/association-analysis.tsx
+      - task: 動作確認・レビュー
+        description: テンプレート化後、画面表示・機能を確認
+      - task: 2つ目以降も同様に順次テンプレート化
+        description: 各分析コンポーネントごとにテンプレート化→動作確認→次へ
+        files_to_modify:
+          - frontend/components/analysis/*.tsx
+
+  - phase: 4
+    name: 統合・テスト・ドキュメント
+    description: 全体統合・テスト・テンプレート利用方法のドキュメント化
+    tasks:
+      - task: AnalysisContent等の統合調整
+        description: テンプレート化に伴い必要な統合・import修正
+        files_to_modify:
+          - frontend/components/analysis-content.tsx
+      - task: テスト
+        description: 全分析ページの動作・UI・型安全性を確認
+      - task: テンプレート利用方法のドキュメント作成
+        description: READMEや型定義コメントでテンプレートの使い方・props仕様を明記
+        output:
+          - frontend/components/analysis/templates/README.md
+          - frontend/types/analysis-template.d.ts（JSDocコメント等）
+
+notes:
+  - テンプレートのprops設計は、将来的な分析手法追加やUI変更にも柔軟に対応できるようにする
+  - 型定義・インターフェースはテンプレートとセットで管理し、開発効率・保守性を高める
+  - 段階的移行で安全にリファクタを進める

@@ -111,6 +111,47 @@ class ScoreHistory:
 
 
 @dataclass
+class WellnessDimension:
+    """ウェルネスディメンション（カテゴリの詳細情報）"""
+    id: str
+    name: str
+    description: str
+    category: ScoreCategory
+    importance: int = 3  # 1-5 (5が最高)
+    benchmarks: Dict[str, float] = field(default_factory=dict)
+    best_practices: List[str] = field(default_factory=list)
+
+
+@dataclass
+class WellnessMetric:
+    """ウェルネスメトリック（詳細な測定指標）"""
+    id: str
+    name: str
+    value: float
+    category: ScoreCategory
+    company_id: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    dimension_id: Optional[str] = None
+    source: str = "manual"  # manual, api, calculated
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    trend_data: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class WellnessRecommendation:
+    """ウェルネス改善推奨"""
+    id: str
+    title: str
+    description: str
+    category: ScoreCategory
+    company_id: str
+    created_at: datetime = field(default_factory=datetime.now)
+    priority: int = 3  # 1-5 (5が最高)
+    actions: List[Dict[str, Any]] = field(default_factory=list)
+    status: str = "open"  # open, in_progress, completed, dismissed
+
+
+@dataclass
 class RecommendationAction:
     """改善推奨アクション"""
     id: str

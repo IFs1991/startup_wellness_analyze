@@ -21,6 +21,8 @@ from . import market     # 市場分析ルーターを追加
 from . import team       # チーム分析ルーターを追加
 from . import companies  # 企業情報ルーターを追加
 from . import api_monitoring  # API使用状況モニタリングルーターを追加
+from .association_visualization import router as association_visualization_router
+from .descriptive_stats_visualization import router as descriptive_stats_visualization_router
 
 # エクスポートするルーター一覧
 all_routers = [
@@ -36,7 +38,9 @@ all_routers = [
     market.router,     # 市場分析ルーターを追加
     team.router,       # チーム分析ルーターを追加
     companies.router,   # 企業情報ルーターを追加
-    api_monitoring.router  # API使用状況モニタリングルーターを追加
+    api_monitoring.router,  # API使用状況モニタリングルーターを追加
+    association_visualization_router,
+    descriptive_stats_visualization_router
 ]
 
 __all__ = [
