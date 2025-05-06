@@ -1,0 +1,181 @@
+# 可視化コンポーネント共通化計画
+name: "可視化コンポーネント共通化プロジェクト"
+description: "複数の分析タイプにまたがる可視化機能を共通化し、コード重複を削減するプロジェクト"
+version: "1.0"
+
+# 実装状況
+implementation_status:
+  phase1: "完了"  # 基盤構築フェーズ
+  phase2: "完了"  # コア機能リファクタリングフェーズ
+  phase3: "完了" # 二次機能リファクタリングフェーズ
+  phase4: "完了" # 最終統合・最適化フェーズ
+
+# 実装済み機能
+implemented_features:
+  - "共通データモデル（BaseVisualizationRequest, BaseVisualizationResponse）"
+  - "共通エラー処理機構"
+  - "可視化プロセッサのファクトリパターン実装"
+  - "アソシエーション分析のリファクタリング"
+  - "相関分析のリファクタリング"
+  - "記述統計用可視化プロセッサの実装"
+  - "予測モデル用可視化プロセッサの実装"
+  - "生存分析用可視化プロセッサの実装"
+  - "時系列分析用可視化プロセッサの実装"
+  - "時系列分析モジュールの統合"
+  - "統一可視化エンドポイント（/api/visualizations/visualize）の追加"
+  - "ユニットテストと統合テストの拡充"
+  - "ダミー実装モジュールの共通化完了（financial_visualization.py, team_analyzer_visualization.py, health_investment_effect_index_visualization.py, knowledge_transfer_index_visualization.py, market_analyzer_visualization.py, sensitivity_analyzer_visualization.py, vcroi_visualization.py）"
+  - "パフォーマンス最適化（キャッシュ機能、メモリ最適化、非同期処理改善）"
+  - "包括的なドキュメント作成（README.md）"
+  - "最終統合テストの実装"
+
+# 新規作成ファイル
+new_files:
+  - "backend/api/visualization/factory.py"
+  - "backend/api/visualization/processors.py"
+  - "backend/api/visualization/errors.py"
+  - "backend/api/visualization/models.py"
+  - "backend/api/visualization/README.md"
+  - "backend/api/utils/caching.py"
+  - "backend/api/startup.py"
+  - "backend/tests/api/test_visualization_integration.py"
+
+# 修正ファイル
+modified_files:
+  - "backend/api/routers/visualization.py"
+  - "backend/api/routers/financial_visualization.py"
+  - "backend/api/routers/team_analyzer_visualization.py"
+  - "backend/api/routers/health_investment_effect_index_visualization.py"
+  - "backend/api/routers/knowledge_transfer_index_visualization.py"
+  - "backend/api/routers/market_analyzer_visualization.py"
+  - "backend/api/routers/sensitivity_analyzer_visualization.py"
+  - "backend/api/routers/vcroi_visualization.py"
+
+# フェーズ1: 基盤構築フェーズ
+phase1:
+  tasks:
+    - name: "共通データモデル定義"
+      status: "完了"
+      description: "可視化リクエストとレスポンスの共通モデル定義"
+      files:
+        - "backend/api/visualization/models.py"
+    - name: "統一エラー処理機構"
+      status: "完了"
+      description: "可視化処理に関する例外クラスとエラーハンドリング機構"
+      files:
+        - "backend/api/visualization/errors.py"
+    - name: "ファクトリーパターン実装"
+      status: "完了"
+      description: "分析タイプに応じた可視化プロセッサの動的生成"
+      files:
+        - "backend/api/visualization/factory.py"
+        - "backend/api/visualization/processors.py"
+
+# フェーズ2: コア機能リファクタリングフェーズ
+phase2:
+  tasks:
+    - name: "アソシエーション分析リファクタリング"
+      status: "完了"
+      description: "アソシエーション分析用の可視化プロセッサ実装"
+      files:
+        - "backend/api/visualization/association_processor.py"
+    - name: "相関分析リファクタリング"
+      status: "完了"
+      description: "相関分析用の可視化プロセッサ実装"
+      files:
+        - "backend/api/visualization/correlation_processor.py"
+
+# フェーズ3: 二次機能リファクタリングフェーズ
+phase3:
+  tasks:
+    - name: "記述統計プロセッサ実装"
+      status: "完了"
+      description: "記述統計用の可視化プロセッサ実装"
+      files:
+        - "backend/api/visualization/descriptive_stats_processor.py"
+    - name: "予測モデルプロセッサ実装"
+      status: "完了"
+      description: "予測モデル用の可視化プロセッサ実装"
+      files:
+        - "backend/api/visualization/predictive_model_processor.py"
+    - name: "生存分析プロセッサ実装"
+      status: "完了"
+      description: "生存分析用の可視化プロセッサ実装"
+      files:
+        - "backend/api/visualization/survival_analysis_processor.py"
+    - name: "時系列分析プロセッサ実装"
+      status: "完了"
+      description: "時系列分析用の可視化プロセッサ実装"
+      files:
+        - "backend/api/visualization/timeseries_processor.py"
+    - name: "時系列分析モジュール統合"
+      status: "完了"
+      description: "既存の時系列分析モジュールを新しいプロセッサに統合"
+      files:
+        - "backend/api/routers/timeseries_analysis_visualization.py"
+    - name: "統一可視化エンドポイント追加"
+      status: "完了"
+      description: "全ての可視化リクエストを処理できる統一エンドポイントの実装"
+      files:
+        - "backend/api/routers/visualization.py"
+    - name: "テスト拡充"
+      status: "完了"
+      description: "ユニットテストと統合テストの追加"
+      files:
+        - "backend/tests/api/test_visualization_processors.py"
+        - "backend/tests/api/test_visualization_endpoints.py"
+
+# フェーズ4: 最終統合・最適化フェーズ
+phase4:
+  tasks:
+    - name: "ダミー実装モジュールの共通化"
+      status: "完了"
+      description: "個別に実装されたダミー実装モジュールを統一可視化エンドポイントに統合"
+      files:
+        - "backend/api/routers/financial_visualization.py"
+        - "backend/api/routers/team_analyzer_visualization.py"
+        - "backend/api/routers/health_investment_effect_index_visualization.py"
+        - "backend/api/routers/knowledge_transfer_index_visualization.py"
+        - "backend/api/routers/market_analyzer_visualization.py"
+        - "backend/api/routers/sensitivity_analyzer_visualization.py"
+        - "backend/api/routers/vcroi_visualization.py"
+    - name: "パフォーマンス最適化"
+      status: "完了"
+      description: "キャッシュ機能、メモリ使用量削減、非同期処理最適化の実装"
+      files:
+        - "backend/api/utils/caching.py"
+        - "backend/api/routers/visualization.py"
+        - "backend/api/visualization/factory.py"
+        - "backend/api/startup.py"
+    - name: "ドキュメント更新"
+      status: "完了"
+      description: "README作成、使用法と拡張方法のドキュメント整備"
+      files:
+        - "backend/api/visualization/README.md"
+    - name: "最終統合テスト"
+      status: "完了"
+      description: "エンドツーエンドテストとベンチマークの実施"
+      files:
+        - "backend/tests/api/test_visualization_integration.py"
+    - name: "レビューとサインオフ"
+      status: "完了"
+      description: "コードレビュー実施と最終承認"
+
+# リスク評価
+risk_assessment:
+  risks:
+    - name: "既存API互換性"
+      probability: "中"
+      impact: "高"
+      description: "既存APIとの互換性が失われる可能性"
+      mitigation: "APIインターフェースの維持と互換性テストの徹底"
+    - name: "パフォーマンス低下"
+      probability: "低"
+      impact: "中"
+      description: "統一インターフェースによるオーバーヘッド増加"
+      mitigation: "パフォーマンス最適化とキャッシュの導入"
+    - name: "エラー処理の複雑化"
+      probability: "低"
+      impact: "中"
+      description: "異なる分析タイプのエラー処理統一による複雑化"
+      mitigation: "共通エラー処理フレームワークの適用"

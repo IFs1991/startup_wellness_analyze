@@ -69,91 +69,98 @@ export const AnalysisContent = memo(function AnalysisContent() {
       </div>
 
       <Tabs defaultValue="dashboard">
-        <TabsList className="mb-4">
-          <TabsTrigger value="dashboard" className="flex items-center gap-1">
-            <LayoutDashboard className="h-4 w-4" />
-            <span>ダッシュボード</span>
-          </TabsTrigger>
-          <TabsTrigger value="time-series" className="flex items-center gap-1">
-            <TrendingUp className="h-4 w-4" />
-            <span>時系列分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="clustering" className="flex items-center gap-1">
-            <ScatterChart className="h-4 w-4" />
-            <span>クラスタリング</span>
-          </TabsTrigger>
-          <TabsTrigger value="correlation" className="flex items-center gap-1">
-            <Network className="h-4 w-4" />
-            <span>相関分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="survival" className="flex items-center gap-1">
-            <Activity className="h-4 w-4" />
-            <span>生存分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="text-mining" className="flex items-center gap-1">
-            <MessageSquare className="h-4 w-4" />
-            <span>テキストマイニング</span>
-          </TabsTrigger>
-          <TabsTrigger value="bayesian" className="flex items-center gap-1">
-            <Percent className="h-4 w-4" />
-            <span>ベイジアン分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="association" className="flex items-center gap-1">
-            <GitCompare className="h-4 w-4" />
-            <span>アソシエーション分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="descriptive-stats" className="flex items-center gap-1">
-            <PieChart className="h-4 w-4" />
-            <span>記述統計</span>
-          </TabsTrigger>
-          <TabsTrigger value="causal-inference" className="flex items-center gap-1">
-            <BrainCircuit className="h-4 w-4" />
-            <span>因果推論</span>
-          </TabsTrigger>
-          <TabsTrigger value="pca" className="flex items-center gap-1">
-            <LineChart className="h-4 w-4" />
-            <span>主成分分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="financial" className="flex items-center gap-1">
-            <DollarSign className="h-4 w-4" />
-            <span>財務分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="market" className="flex items-center gap-1">
-            <BarChart4 className="h-4 w-4" />
-            <span>市場・競合分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="team" className="flex items-center gap-1">
-            <Users className="h-4 w-4" />
-            <span>チーム・組織分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="montecarlo" className="flex items-center gap-1">
-            <Calculator className="h-4 w-4" />
-            <span>モンテカルロシミュレーション</span>
-          </TabsTrigger>
-          <TabsTrigger value="sensitivity" className="flex items-center gap-1">
-            <Workflow className="h-4 w-4" />
-            <span>感度分析</span>
-          </TabsTrigger>
-          <TabsTrigger value="portfolio" className="flex items-center gap-1">
-            <Share2 className="h-4 w-4" />
-            <span>ポートフォリオネットワーク</span>
-          </TabsTrigger>
-          <TabsTrigger value="vc-roi" className="flex items-center gap-1">
-            <Medal className="h-4 w-4" />
-            <span>VC向けROI計算</span>
-          </TabsTrigger>
-          <TabsTrigger value="health-index" className="flex items-center gap-1">
-            <Heart className="h-4 w-4" />
-            <span>健康投資効果指数</span>
-          </TabsTrigger>
-        </TabsList>
+        <div className="mb-4">
+          {/* 第1行: メインカテゴリ */}
+          <TabsList className="mb-2 flex flex-wrap w-full justify-start gap-1">
+            <TabsTrigger value="dashboard" className="flex items-center gap-1 px-3">
+              <LayoutDashboard className="h-4 w-4" />
+              <span>ダッシュボード</span>
+            </TabsTrigger>
+            <TabsTrigger value="time-series" className="flex items-center gap-1 px-3">
+              <TrendingUp className="h-4 w-4" />
+              <span>時系列分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="clustering" className="flex items-center gap-1 px-3">
+              <ScatterChart className="h-4 w-4" />
+              <span>クラスタリング</span>
+            </TabsTrigger>
+            <TabsTrigger value="correlation" className="flex items-center gap-1 px-3">
+              <Network className="h-4 w-4" />
+              <span>相関分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="survival" className="flex items-center gap-1 px-3">
+              <Activity className="h-4 w-4" />
+              <span>生存分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="text-mining" className="flex items-center gap-1 px-3">
+              <MessageSquare className="h-4 w-4" />
+              <span>テキストマイニング</span>
+            </TabsTrigger>
+            <TabsTrigger value="bayesian" className="flex items-center gap-1 px-3">
+              <Percent className="h-4 w-4" />
+              <span>ベイジアン分析</span>
+            </TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="dashboard" className="mt-0">
+          {/* 第2行: その他の分析カテゴリ */}
+          <TabsList className="flex flex-wrap w-full justify-start gap-1">
+            <TabsTrigger value="association" className="flex items-center gap-1 px-3">
+              <GitCompare className="h-4 w-4" />
+              <span>アソシエーション分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="descriptive-stats" className="flex items-center gap-1 px-3">
+              <PieChart className="h-4 w-4" />
+              <span>記述統計</span>
+            </TabsTrigger>
+            <TabsTrigger value="causal-inference" className="flex items-center gap-1 px-3">
+              <BrainCircuit className="h-4 w-4" />
+              <span>因果推論</span>
+            </TabsTrigger>
+            <TabsTrigger value="pca" className="flex items-center gap-1 px-3">
+              <LineChart className="h-4 w-4" />
+              <span>主成分分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="financial" className="flex items-center gap-1 px-3">
+              <DollarSign className="h-4 w-4" />
+              <span>財務分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="market" className="flex items-center gap-1 px-3">
+              <BarChart4 className="h-4 w-4" />
+              <span>市場・競合分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="team" className="flex items-center gap-1 px-3">
+              <Users className="h-4 w-4" />
+              <span>チーム・組織分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="montecarlo" className="flex items-center gap-1 px-3">
+              <Calculator className="h-4 w-4" />
+              <span>モンテカルロシミュレーション</span>
+            </TabsTrigger>
+            <TabsTrigger value="sensitivity" className="flex items-center gap-1 px-3">
+              <Workflow className="h-4 w-4" />
+              <span>感度分析</span>
+            </TabsTrigger>
+            <TabsTrigger value="portfolio" className="flex items-center gap-1 px-3">
+              <Share2 className="h-4 w-4" />
+              <span>ポートフォリオネットワーク</span>
+            </TabsTrigger>
+            <TabsTrigger value="vc-roi" className="flex items-center gap-1 px-3">
+              <Medal className="h-4 w-4" />
+              <span>VC向けROI計算</span>
+            </TabsTrigger>
+            <TabsTrigger value="health-index" className="flex items-center gap-1 px-3">
+              <Heart className="h-4 w-4" />
+              <span>健康投資効果指数</span>
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="dashboard" className="mt-8">
           <Suspense fallback={<TabContentLoading />}>
             <DashboardContent />
           </Suspense>
         </TabsContent>
-        <TabsContent value="time-series" className="mt-0">
+        <TabsContent value="time-series" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>時系列分析</CardTitle>
@@ -166,7 +173,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="clustering" className="mt-0">
+        <TabsContent value="clustering" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>クラスタリング</CardTitle>
@@ -179,7 +186,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="correlation" className="mt-0">
+        <TabsContent value="correlation" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>相関分析</CardTitle>
@@ -192,7 +199,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="survival" className="mt-0">
+        <TabsContent value="survival" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>生存分析</CardTitle>
@@ -205,7 +212,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="text-mining" className="mt-0">
+        <TabsContent value="text-mining" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>テキストマイニング</CardTitle>
@@ -218,7 +225,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="bayesian" className="mt-0">
+        <TabsContent value="bayesian" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>ベイジアン分析</CardTitle>
@@ -231,7 +238,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="association" className="mt-0">
+        <TabsContent value="association" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>アソシエーション分析</CardTitle>
@@ -244,7 +251,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="descriptive-stats" className="mt-0">
+        <TabsContent value="descriptive-stats" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>記述統計</CardTitle>
@@ -257,7 +264,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="causal-inference" className="mt-0">
+        <TabsContent value="causal-inference" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>因果推論</CardTitle>
@@ -270,7 +277,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="pca" className="mt-0">
+        <TabsContent value="pca" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>主成分分析</CardTitle>
@@ -283,7 +290,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="financial" className="mt-0">
+        <TabsContent value="financial" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>財務分析</CardTitle>
@@ -296,7 +303,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="market" className="mt-0">
+        <TabsContent value="market" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>市場・競合分析</CardTitle>
@@ -309,7 +316,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="team" className="mt-0">
+        <TabsContent value="team" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>チーム・組織分析</CardTitle>
@@ -322,7 +329,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="montecarlo" className="mt-0">
+        <TabsContent value="montecarlo" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>モンテカルロシミュレーション</CardTitle>
@@ -335,7 +342,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="sensitivity" className="mt-0">
+        <TabsContent value="sensitivity" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>感度分析</CardTitle>
@@ -348,7 +355,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="portfolio" className="mt-0">
+        <TabsContent value="portfolio" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>ポートフォリオネットワーク分析</CardTitle>
@@ -361,7 +368,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="vc-roi" className="mt-0">
+        <TabsContent value="vc-roi" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>VC向けROI計算</CardTitle>
@@ -374,7 +381,7 @@ export const AnalysisContent = memo(function AnalysisContent() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="health-index" className="mt-0">
+        <TabsContent value="health-index" className="mt-8">
           <Card>
             <CardHeader>
               <CardTitle>健康投資効果指数計算</CardTitle>

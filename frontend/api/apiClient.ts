@@ -19,12 +19,22 @@ const validateEnvironmentVariables = () => {
 // 環境変数からAPIのベースURLを取得し、バリデーション
 const API_URL = validateEnvironmentVariables();
 
+// 再試行の設定
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // ミリ秒
+
+/**
+ * 指定時間待機する関数
+ */
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * API通信のためのクライアントクラス
  */
 class ApiClient {
   private api: AxiosInstance;
   private static instance: ApiClient;
+  private isServerAvailable: boolean = true;
 
   private constructor() {
     this.api = axios.create({
@@ -46,6 +56,13 @@ class ApiClient {
             config.headers['Authorization'] = `Bearer ${token}`;
           }
         }
+
+        // サーバーが利用不可の場合は早期にリクエストを中断
+        if (!this.isServerAvailable) {
+          console.warn('APIサーバーに接続できません。リクエストをキャンセルします。');
+          return Promise.reject(new Error('APIサーバーに接続できません。'));
+        }
+
         return config;
       },
       (error) => {
@@ -56,8 +73,18 @@ class ApiClient {
 
     // レスポンスインターセプター
     this.api.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        // サーバーが応答したので利用可能としてマーク
+        this.isServerAvailable = true;
+        return response;
+      },
       (error: AxiosError) => {
+        // ネットワークエラーの場合
+        if (error.code === 'ERR_NETWORK') {
+          this.isServerAvailable = false;
+          console.error('APIサーバーに接続できません。バックエンドサーバーが起動しているか確認してください。');
+        }
+
         // エラーハンドリング
         if (error.response?.status === 401 && typeof window !== 'undefined') {
           // 認証エラー処理
@@ -81,14 +108,47 @@ class ApiClient {
   }
 
   /**
+   * サーバー接続状態を確認するメソッド
+   */
+  public async checkServerConnection(): Promise<boolean> {
+    try {
+      await this.api.get('/health', { timeout: 5000 });
+      this.isServerAvailable = true;
+      return true;
+    } catch (error) {
+      this.isServerAvailable = false;
+      console.error('APIサーバーに接続できません:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 再試行ロジックを実装したリクエスト関数
+   */
+  private async requestWithRetry<T>(
+    requestFn: () => Promise<AxiosResponse<T>>,
+    retries: number = MAX_RETRIES
+  ): Promise<AxiosResponse<T>> {
+    try {
+      return await requestFn();
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.code === 'ERR_NETWORK' && retries > 0) {
+        console.warn(`ネットワークエラー、${retries}回再試行します...`);
+        await wait(RETRY_DELAY);
+        return this.requestWithRetry(requestFn, retries - 1);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * GETリクエストを送信
    */
   public async get<T>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
     try {
-      const response: AxiosResponse<T> = await this.api.get(url, {
-        params,
-        ...config
-      });
+      const response = await this.requestWithRetry<T>(() =>
+        this.api.get(url, { params, ...config })
+      );
       return response.data;
     } catch (error) {
       console.error(`GET ${url} エラー:`, error);
@@ -97,14 +157,27 @@ class ApiClient {
   }
 
   /**
+   * APIのベースURLを取得
+   */
+  public getBaseUrl(): string {
+    return API_URL;
+  }
+
+  /**
    * POSTリクエストを送信
    */
   public async post<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
     try {
-      const response: AxiosResponse<T> = await this.api.post(url, data, config);
+      const response = await this.requestWithRetry<T>(() =>
+        this.api.post(url, data, config)
+      );
       return response.data;
     } catch (error) {
-      console.error(`POST ${url} エラー:`, error);
+      if (axios.isAxiosError(error) && error.code === 'ERR_NETWORK') {
+        console.error(`POST ${url} ネットワークエラー: バックエンドサーバーが起動しているか確認してください`);
+      } else {
+        console.error(`POST ${url} エラー:`, error);
+      }
       throw error;
     }
   }
@@ -114,7 +187,9 @@ class ApiClient {
    */
   public async put<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
     try {
-      const response: AxiosResponse<T> = await this.api.put(url, data, config);
+      const response = await this.requestWithRetry<T>(() =>
+        this.api.put(url, data, config)
+      );
       return response.data;
     } catch (error) {
       console.error(`PUT ${url} エラー:`, error);
@@ -127,7 +202,9 @@ class ApiClient {
    */
   public async delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
     try {
-      const response: AxiosResponse<T> = await this.api.delete(url, config);
+      const response = await this.requestWithRetry<T>(() =>
+        this.api.delete(url, config)
+      );
       return response.data;
     } catch (error) {
       console.error(`DELETE ${url} エラー:`, error);
@@ -140,7 +217,9 @@ class ApiClient {
    */
   public async patch<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {
     try {
-      const response: AxiosResponse<T> = await this.api.patch(url, data, config);
+      const response = await this.requestWithRetry<T>(() =>
+        this.api.patch(url, data, config)
+      );
       return response.data;
     } catch (error) {
       console.error(`PATCH ${url} エラー:`, error);
@@ -163,11 +242,13 @@ class ApiClient {
     }
 
     try {
-      const response: AxiosResponse<T> = await this.api.post(url, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const response = await this.requestWithRetry<T>(() =>
+        this.api.post(url, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        })
+      );
       return response.data;
     } catch (error) {
       console.error(`ファイルアップロード ${url} エラー:`, error);

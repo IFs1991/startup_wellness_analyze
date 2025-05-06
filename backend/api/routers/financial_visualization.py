@@ -4,13 +4,15 @@
 このモジュールは次のエンドポイントを提供します：
 - POST /api/financial/visualize - 財務分析結果の可視化
 - POST /api/financial/analyze-and-visualize - データ分析と可視化を一度に実行
+
+注：このモジュールは共通可視化システムを使用するようリファクタリングされました。
 """
 
 import logging
 from typing import Dict, List, Optional, Any, Union
 import pandas as pd
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, Field
 import json
 
@@ -21,6 +23,13 @@ from api.middleware import APIError, ValidationFailedError
 from api.core.config import get_settings, Settings
 from analysis.FinancialAnalyzer import FinancialAnalyzer
 from service.bigquery.client import BigQueryService
+
+# 共通可視化システムのインポート
+from api.routers.visualization import (
+    UnifiedVisualizationRequest,
+    UnifiedVisualizationResponse,
+    visualize_analysis as unified_visualize
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,23 +102,43 @@ def _prepare_chart_data_from_financial(
 @router.post("/visualize", response_model=FinancialVisualizationResponse, status_code=status.HTTP_200_OK)
 async def visualize_financial_analysis(
     request: FinancialVisualizationRequest,
+    raw_request: Request,
     current_user: User = Depends(get_current_user),
     visualization_service = Depends(get_visualization_service),
     settings: Settings = Depends(get_settings)
 ):
+    """
+    財務分析結果の可視化
+
+    リクエストを統一可視化エンドポイントに変換してリダイレクトします。
+    """
     try:
         logger.info(f"財務分析の可視化リクエスト受信: タイプ={request.visualization_type}")
-        chart_data = _prepare_chart_data_from_financial(request.analysis_results, request.visualization_type, request.options)
-        # 可視化サービスでチャート生成（ダミー実装）
-        chart_id = "dummy_chart_id"
-        url = f"https://dummy.url/{chart_id}"
+
+        # 統一可視化リクエストに変換
+        unified_request = UnifiedVisualizationRequest(
+            analysis_type="financial",
+            analysis_results=request.analysis_results,
+            visualization_type=request.visualization_type,
+            options=request.options
+        )
+
+        # 統一可視化エンドポイントにリダイレクト
+        result = await unified_visualize(
+            request=unified_request,
+            current_user=current_user,
+            visualization_service=visualization_service,
+            settings=settings
+        )
+
+        # 結果を変換して返す
         return FinancialVisualizationResponse(
-            chart_id=chart_id,
-            url=url,
-            format="png",
-            thumbnail_url=None,
-            metadata={},
-            analysis_summary={}
+            chart_id=result.chart_id,
+            url=result.url,
+            format=result.format,
+            thumbnail_url=result.thumbnail_url,
+            metadata=result.metadata,
+            analysis_summary=result.analysis_summary
         )
     except Exception as e:
         logger.error(f"財務分析可視化エラー: {str(e)}")

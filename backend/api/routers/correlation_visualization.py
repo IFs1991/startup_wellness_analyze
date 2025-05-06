@@ -17,10 +17,25 @@ import json
 from api.auth import get_current_user
 from api.models import User
 from api.dependencies import get_visualization_service
-from api.middleware import APIError, ValidationFailedError
+from api.middleware import ValidationFailedError
 from api.core.config import get_settings, Settings
 from analysis.correlation_analysis import CorrelationAnalyzer
 from service.bigquery.client import BigQueryService
+
+# 共通可視化コンポーネントのインポート
+from api.visualization.models import (
+    BaseVisualizationRequest,
+    BaseVisualizationResponse,
+    CorrelationVisualizationRequest
+)
+from api.visualization.errors import (
+    handle_visualization_error,
+    InvalidAnalysisResultError
+)
+from api.routers.visualization_helpers import (
+    prepare_chart_data_by_analysis_type,
+    create_visualization_response
+)
 
 logger = logging.getLogger(__name__)
 
@@ -280,78 +295,74 @@ def _prepare_matrix_data(analysis_results: Dict[str, Any], options: Dict[str, An
     return {"config": chart_config, "data": chart_data}
 
 def _format_correlation_summary(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
-    """相関分析結果のサマリーを生成する"""
-    metadata = analysis_results.get("metadata", {})
+    """
+    相関分析結果のサマリーを生成する
+
+    Args:
+        analysis_results: 相関分析結果
+
+    Returns:
+        フォーマット済みサマリー
+    """
     correlation_matrix = analysis_results.get("correlation_matrix", {})
+    metadata = analysis_results.get("metadata", {})
 
-    # 相関係数の統計
-    correlation_stats = {
+    # 相関係数が文字列の場合はJSONとしてパース
+    if isinstance(correlation_matrix, str):
+        try:
+            correlation_matrix = json.loads(correlation_matrix)
+        except:
+            correlation_matrix = {}
+
+    # 変数リスト
+    variables = list(correlation_matrix.keys()) if correlation_matrix else metadata.get("variables", [])
+
+    # 強い相関関係の抽出
+    strong_correlations = []
+    for var1 in variables:
+        for var2 in variables:
+            if var1 != var2:
+                corr_value = correlation_matrix.get(var1, {}).get(var2, 0)
+                if abs(corr_value) >= 0.5:  # 強い相関の閾値
+                    strong_correlations.append({
+                        "var1": var1,
+                        "var2": var2,
+                        "correlation": corr_value,
+                        "is_positive": corr_value > 0
+                    })
+
+    # 強い相関関係を相関係数の絶対値で降順ソート
+    strong_correlations.sort(key=lambda x: abs(x["correlation"]), reverse=True)
+
+    return {
         "method": metadata.get("method", "pearson"),
-        "threshold": metadata.get("threshold", 0.3),
-        "variables_count": len(metadata.get("variables", [])),
+        "variable_count": len(variables),
+        "variables": variables,
+        "strong_correlations": strong_correlations[:5],  # 上位5件のみ
+        "description": f"{len(variables)}変数間の相関分析の結果、{len(strong_correlations)}個の強い相関関係が見つかりました。"
     }
 
-    # 顕著な相関の抽出
-    significant_correlations = []
-
-    if isinstance(correlation_matrix, dict):
-        processed_pairs = set()
-
-        for var1, correlations in correlation_matrix.items():
-            for var2, value in correlations.items():
-                if var1 != var2 and abs(value) >= metadata.get("threshold", 0.3):
-                    pair = tuple(sorted([var1, var2]))
-                    if pair not in processed_pairs:
-                        significant_correlations.append({
-                            "variable1": var1,
-                            "variable2": var2,
-                            "correlation": value,
-                            "strength": "強" if abs(value) >= 0.7 else "中" if abs(value) >= 0.5 else "弱"
-                        })
-                        processed_pairs.add(pair)
-
-    # サマリー情報
-    summary = {
-        "analysis_type": "correlation",
-        "correlation_stats": correlation_stats,
-        "significant_correlations": significant_correlations,
-        "analysis_timestamp": metadata.get("timestamp", "")
-    }
-
-    return summary
-
-# エンドポイント実装
-@router.post("/visualize", response_model=CorrelationVisualizationResponse, status_code=status.HTTP_200_OK)
+@router.post("/visualize", response_model=BaseVisualizationResponse, status_code=status.HTTP_200_OK)
 async def visualize_correlation(
     request: CorrelationVisualizationRequest,
     current_user: User = Depends(get_current_user),
     visualization_service = Depends(get_visualization_service),
     settings: Settings = Depends(get_settings)
 ):
-    """
-    相関分析の結果を可視化します。
-
-    既存の分析結果から指定された可視化タイプに基づいてチャートを生成します。
-    """
+    """相関分析結果を可視化する"""
     try:
-        logger.info(f"相関分析の可視化リクエスト受信: タイプ={request.visualization_type}")
+        logger.info(f"相関分析可視化リクエスト: type={request.visualization_type}")
 
-        # 入力データの検証
-        if not request.analysis_results:
-            raise InvalidCorrelationDataError(
-                message="無効な分析結果データです",
-                details={"reason": "分析結果が空です"}
-            )
-
-        # チャートデータの準備
-        chart_data = _prepare_chart_data_from_correlation(
+        # 共通関数を使用してチャートデータを準備
+        chart_data = prepare_chart_data_by_analysis_type(
+            analysis_type="correlation",
             analysis_results=request.analysis_results,
             visualization_type=request.visualization_type,
             options=request.options
         )
 
         # チャート生成
-        result = await visualization_service.generate_chart(
+        chart_result = await visualization_service.generate_chart(
             config=chart_data["config"],
             data=chart_data["data"],
             format=request.options.get("format", "png"),
@@ -359,111 +370,70 @@ async def visualize_correlation(
             user_id=str(current_user.id)
         )
 
-        # 分析サマリーを追加
-        result["analysis_summary"] = _format_correlation_summary(request.analysis_results)
+        # 分析サマリーを作成
+        analysis_summary = _format_correlation_summary(request.analysis_results)
 
-        return CorrelationVisualizationResponse(
-            chart_id=result["chart_id"],
-            url=result["url"],
-            format=result["format"],
-            thumbnail_url=result.get("thumbnail_url"),
-            metadata=result["metadata"],
-            analysis_summary=result["analysis_summary"]
-        )
+        # 統一されたレスポンスを作成して返す
+        return create_visualization_response(chart_result, analysis_summary)
 
-    except InvalidCorrelationDataError as e:
-        logger.error(f"相関データ検証エラー: {str(e)}")
-        raise
     except Exception as e:
         logger.exception(f"相関分析可視化中にエラー: {str(e)}")
-        raise CorrelationAnalysisError(
-            message=f"相関分析の可視化中にエラーが発生しました: {str(e)}"
-        )
+        raise handle_visualization_error(e)
 
-@router.post("/analyze-and-visualize", response_model=CorrelationVisualizationResponse, status_code=status.HTTP_200_OK)
+@router.post("/analyze-and-visualize", response_model=BaseVisualizationResponse, status_code=status.HTTP_200_OK)
 async def analyze_and_visualize_correlation(
     request: CorrelationAnalysisRequest,
     current_user: User = Depends(get_current_user),
     visualization_service = Depends(get_visualization_service),
     settings: Settings = Depends(get_settings)
 ):
-    """
-    相関分析と可視化を一度のリクエストで実行します。
-
-    データのクエリから相関分析を実行し、結果を可視化して返します。
-    """
+    """相関分析と可視化を一度に実行する"""
     try:
-        logger.info("相関分析と可視化のリクエスト受信")
+        logger.info("相関分析および可視化リクエスト")
 
-        # パラメータの検証
-        if not request.params.query:
-            raise InvalidCorrelationDataError(
-                message="クエリが指定されていません",
-                details={"reason": "分析用のSQLクエリは必須です"}
-            )
+        # BigQueryサービスの取得
+        bq_service = BigQueryService(settings.GOOGLE_CLOUD_PROJECT)
 
-        if not request.params.variables or len(request.params.variables) < 2:
-            raise InvalidCorrelationDataError(
-                message="変数が不十分です",
-                details={"reason": "相関分析には少なくとも2つの変数が必要です"}
-            )
-
-        # BigQueryサービスとアナライザーの初期化
-        bq_service = BigQueryService()
+        # 相関分析実行
         analyzer = CorrelationAnalyzer(bq_service)
+        analysis_params = {
+            "method": request.params.method,
+            "threshold": request.params.threshold,
+            "variables": request.params.variables
+        }
 
-        try:
-            # 相関分析の実行
-            analysis_results = await analyzer.analyze(
-                query=request.params.query,
-                variables=request.params.variables,
-                method=request.params.method,
-                threshold=request.params.threshold,
-                save_results=bool(request.dataset_id and request.table_id),
-                dataset_id=request.dataset_id,
-                table_id=request.table_id
-            )
+        analysis_results = await analyzer.analyze(request.params.query, **analysis_params)
 
-            # 可視化タイプの決定
-            visualization_type = request.visualization_options.get("visualization_type", "heatmap")
+        if not analysis_results or "correlation_matrix" not in analysis_results:
+            raise InvalidAnalysisResultError("相関分析結果が無効です。入力データを確認してください。")
 
-            # チャートデータの準備
-            chart_data = _prepare_chart_data_from_correlation(
-                analysis_results=analysis_results,
-                visualization_type=visualization_type,
-                options=request.visualization_options
-            )
+        # 可視化タイプとオプションの設定
+        visualization_type = request.visualization_options.get("visualization_type", "heatmap")
+        visualization_options = request.visualization_options.copy()
 
-            # チャート生成
-            result = await visualization_service.generate_chart(
-                config=chart_data["config"],
-                data=chart_data["data"],
-                format=request.visualization_options.get("format", "png"),
-                template_id=request.visualization_options.get("template_id"),
-                user_id=str(current_user.id)
-            )
-
-            # 分析サマリーを追加
-            result["analysis_summary"] = _format_correlation_summary(analysis_results)
-
-            return CorrelationVisualizationResponse(
-                chart_id=result["chart_id"],
-                url=result["url"],
-                format=result["format"],
-                thumbnail_url=result.get("thumbnail_url"),
-                metadata=result["metadata"],
-                analysis_summary=result["analysis_summary"]
-            )
-
-        finally:
-            # リソース解放
-            analyzer.release_resources()
-
-    except InvalidCorrelationDataError as e:
-        logger.error(f"相関データ検証エラー: {str(e)}")
-        raise
-    except Exception as e:
-        logger.exception(f"相関分析と可視化中にエラー: {str(e)}")
-        raise CorrelationAnalysisError(
-            message=f"相関分析と可視化の実行中にエラーが発生しました: {str(e)}"
+        # 共通関数を使用してチャートデータを準備
+        chart_data = prepare_chart_data_by_analysis_type(
+            analysis_type="correlation",
+            analysis_results=analysis_results,
+            visualization_type=visualization_type,
+            options=visualization_options
         )
+
+        # チャート生成
+        chart_result = await visualization_service.generate_chart(
+            config=chart_data["config"],
+            data=chart_data["data"],
+            format=visualization_options.get("format", "png"),
+            template_id=visualization_options.get("template_id"),
+            user_id=str(current_user.id)
+        )
+
+        # 分析サマリーを作成
+        analysis_summary = _format_correlation_summary(analysis_results)
+
+        # 統一されたレスポンスを作成して返す
+        return create_visualization_response(chart_result, analysis_summary)
+
+    except Exception as e:
+        logger.exception(f"相関分析および可視化中にエラー: {str(e)}")
+        raise handle_visualization_error(e)

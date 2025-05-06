@@ -4,13 +4,15 @@
 このモジュールは次のエンドポイントを提供します：
 - POST /api/hiei/visualize - 健康投資効果指数分析結果の可視化
 - POST /api/hiei/analyze-and-visualize - データ分析と可視化を一度に実行
+
+注：このモジュールは共通可視化システムを使用するようリファクタリングされました。
 """
 
 import logging
 from typing import Dict, List, Optional, Any, Union
 import pandas as pd
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, Field
 import json
 
@@ -21,6 +23,13 @@ from api.middleware import APIError, ValidationFailedError
 from api.core.config import get_settings, Settings
 from analysis.HealthInvestmentEffectIndexCalculator import HealthInvestmentEffectIndexCalculator
 from service.bigquery.client import BigQueryService
+
+# 共通可視化システムのインポート
+from api.routers.visualization import (
+    UnifiedVisualizationRequest,
+    UnifiedVisualizationResponse,
+    visualize_analysis as unified_visualize
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,45 +77,46 @@ class InvalidHIEIDataError(ValidationFailedError):
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message=message, details=details)
 
-# ヘルパー関数例
-def _prepare_chart_data_from_hiei(
-    analysis_results: Dict[str, Any],
-    visualization_type: str,
-    options: Dict[str, Any] = None
-) -> Dict[str, Any]:
-    options = options or {}
-    if not analysis_results:
-        raise InvalidHIEIDataError(
-            message="可視化するデータが見つかりません",
-            details={"reason": "健康投資効果指数分析結果が空です"}
-        )
-    if visualization_type == "bar":
-        return {"config": {"chart_type": "bar"}, "data": analysis_results}
-    else:
-        raise InvalidHIEIDataError(
-            message=f"サポートされていない可視化タイプ: {visualization_type}",
-            details={"supported_types": ["bar"]}
-        )
-
 @router.post("/visualize", response_model=HIEIVisualizationResponse, status_code=status.HTTP_200_OK)
 async def visualize_hiei_analysis(
     request: HIEIVisualizationRequest,
+    raw_request: Request,
     current_user: User = Depends(get_current_user),
     visualization_service = Depends(get_visualization_service),
     settings: Settings = Depends(get_settings)
 ):
+    """
+    健康投資効果指数分析結果の可視化
+
+    リクエストを統一可視化エンドポイントに変換してリダイレクトします。
+    """
     try:
         logger.info(f"健康投資効果指数分析の可視化リクエスト受信: タイプ={request.visualization_type}")
-        chart_data = _prepare_chart_data_from_hiei(request.analysis_results, request.visualization_type, request.options)
-        chart_id = "dummy_chart_id"
-        url = f"https://dummy.url/{chart_id}"
+
+        # 統一可視化リクエストに変換
+        unified_request = UnifiedVisualizationRequest(
+            analysis_type="health_investment",
+            analysis_results=request.analysis_results,
+            visualization_type=request.visualization_type,
+            options=request.options
+        )
+
+        # 統一可視化エンドポイントにリダイレクト
+        result = await unified_visualize(
+            request=unified_request,
+            current_user=current_user,
+            visualization_service=visualization_service,
+            settings=settings
+        )
+
+        # 結果を変換して返す
         return HIEIVisualizationResponse(
-            chart_id=chart_id,
-            url=url,
-            format="png",
-            thumbnail_url=None,
-            metadata={},
-            analysis_summary={}
+            chart_id=result.chart_id,
+            url=result.url,
+            format=result.format,
+            thumbnail_url=result.thumbnail_url,
+            metadata=result.metadata,
+            analysis_summary=result.analysis_summary
         )
     except Exception as e:
         logger.error(f"健康投資効果指数可視化エラー: {str(e)}")

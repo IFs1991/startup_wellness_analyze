@@ -1,3 +1,5 @@
+"use client";
+
 import React, { createContext, useState, useCallback } from 'react';
 
 export interface Toast {

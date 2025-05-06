@@ -19,6 +19,21 @@ from api.middleware import APIError, ValidationFailedError
 from api.core.config import get_settings, Settings
 from analysis.AssociationAnalyzer import AssociationAnalyzer
 
+# 共通可視化コンポーネントのインポート
+from api.visualization.models import (
+    BaseVisualizationRequest,
+    BaseVisualizationResponse,
+    AssociationVisualizationRequest
+)
+from api.visualization.errors import (
+    handle_visualization_error,
+    InvalidAnalysisResultError
+)
+from api.routers.visualization_helpers import (
+    prepare_chart_data_by_analysis_type,
+    create_visualization_response
+)
+
 logger = logging.getLogger(__name__)
 
 # APIルーター定義
@@ -260,15 +275,22 @@ def _prepare_scatter_chart_data(rules: List[Dict[str, Any]], options: Dict[str, 
     return {"config": chart_config, "data": chart_data}
 
 def _format_analysis_summary(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
-    """分析結果のサマリーを生成する"""
-    stats = analysis_results.get('stats', {})
+    """
+    アソシエーション分析結果のサマリーをフォーマットする
+
+    Args:
+        analysis_results: アソシエーション分析結果
+
+    Returns:
+        フォーマット済みサマリー
+    """
+    total_rules = len(analysis_results.get("rules", []))
+    top_rules = _get_top_rules(analysis_results.get("rules", []))
+
     return {
-        "itemset_count": stats.get('itemset_count', 0),
-        "rule_count": stats.get('rule_count', 0),
-        "min_support": stats.get('min_support', 0),
-        "min_confidence": stats.get('min_confidence', 0),
-        "min_lift": stats.get('min_lift', 0),
-        "top_rules": _get_top_rules(analysis_results.get('rules', []), 5)
+        "total_rules": total_rules,
+        "top_rules": top_rules,
+        "description": f"アソシエーション分析により{total_rules}のルールが発見されました。"
     }
 
 def _get_top_rules(rules: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str, Any]]:
@@ -295,37 +317,27 @@ def _get_top_rules(rules: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str
     return formatted_rules
 
 # エンドポイント実装
-@router.post("/visualize", response_model=AssociationVisualizationResponse, status_code=status.HTTP_200_OK)
+@router.post("/visualize", response_model=BaseVisualizationResponse, status_code=status.HTTP_200_OK)
 async def visualize_association_analysis(
     request: AssociationVisualizationRequest,
     current_user: User = Depends(get_current_user),
     visualization_service = Depends(get_visualization_service),
     settings: Settings = Depends(get_settings)
 ):
-    """
-    アソシエーション分析の結果を可視化します。
-
-    既存の分析結果から指定された可視化タイプに基づいてチャートを生成します。
-    """
+    """アソシエーション分析結果を可視化する"""
     try:
-        logger.info(f"アソシエーション分析の可視化リクエスト受信: タイプ={request.visualization_type}")
+        logger.info(f"アソシエーション分析可視化リクエスト: type={request.visualization_type}")
 
-        # 入力データの検証
-        if not request.analysis_results or not request.analysis_results.get('rules'):
-            raise InvalidAssociationDataError(
-                message="無効な分析結果データです",
-                details={"reason": "分析結果が空か、ルールデータが含まれていません"}
-            )
-
-        # チャートデータの準備
-        chart_data = _prepare_chart_data_from_rules(
+        # 共通関数を使用してチャートデータを準備
+        chart_data = prepare_chart_data_by_analysis_type(
+            analysis_type="association",
             analysis_results=request.analysis_results,
             visualization_type=request.visualization_type,
             options=request.options
         )
 
         # チャート生成
-        result = await visualization_service.generate_chart(
+        chart_result = await visualization_service.generate_chart(
             config=chart_data["config"],
             data=chart_data["data"],
             format=request.options.get("format", "png"),
@@ -333,106 +345,67 @@ async def visualize_association_analysis(
             user_id=str(current_user.id)
         )
 
-        # 分析サマリーを追加
-        result["analysis_summary"] = _format_analysis_summary(request.analysis_results)
+        # 分析サマリーを作成
+        analysis_summary = _format_analysis_summary(request.analysis_results)
 
-        return AssociationVisualizationResponse(
-            chart_id=result["chart_id"],
-            url=result["url"],
-            format=result["format"],
-            thumbnail_url=result.get("thumbnail_url"),
-            metadata=result["metadata"],
-            analysis_summary=result["analysis_summary"]
-        )
+        # 統一されたレスポンスを作成して返す
+        return create_visualization_response(chart_result, analysis_summary)
 
-    except InvalidAssociationDataError as e:
-        logger.error(f"アソシエーションデータ検証エラー: {str(e)}")
-        raise
     except Exception as e:
-        logger.exception(f"アソシエーション分析可視化中に予期せぬエラー: {str(e)}")
-        raise AssociationAnalysisError(
-            message=f"アソシエーション分析の可視化中にエラーが発生しました: {str(e)}"
-        )
+        logger.exception(f"アソシエーション分析可視化中にエラー: {str(e)}")
+        raise handle_visualization_error(e)
 
-@router.post("/analyze-and-visualize", response_model=AssociationVisualizationResponse, status_code=status.HTTP_200_OK)
+@router.post("/analyze-and-visualize", response_model=BaseVisualizationResponse, status_code=status.HTTP_200_OK)
 async def analyze_and_visualize(
     request: AssociationAnalysisRequest,
     current_user: User = Depends(get_current_user),
     visualization_service = Depends(get_visualization_service),
     settings: Settings = Depends(get_settings)
 ):
-    """
-    データのアソシエーション分析を実行し、結果を可視化します。
-
-    分析とその可視化を一度のリクエストで実行します。
-    """
+    """アソシエーション分析と可視化を一度に実行する"""
     try:
-        logger.info("アソシエーション分析と可視化のリクエスト受信")
+        logger.info("アソシエーション分析および可視化リクエスト")
 
-        # データの検証
-        if not request.data:
-            raise InvalidAssociationDataError(
-                message="分析データが空です",
-                details={"reason": "分析するデータが提供されていません"}
-            )
-
-        # PandasのDataFrameに変換
-        try:
-            df = pd.DataFrame(request.data)
-            # バイナリデータへの変換（アソシエーション分析用）
-            for col in df.columns:
-                if df[col].dtype != 'bool':
-                    df[col] = df[col].astype(bool)
-                df[col] = df[col].astype(int)
-        except Exception as e:
-            raise InvalidAssociationDataError(
-                message=f"データフレーム変換エラー: {str(e)}",
-                details={"reason": "提供されたデータが正しい形式ではありません"}
-            )
-
-        # アソシエーション分析の実行
+        # アソシエーション分析実行
         analyzer = AssociationAnalyzer()
-        analysis_results = analyzer.analyze(
-            data=df,
-            min_support=request.params.min_support,
-            min_confidence=request.params.min_confidence,
-            min_lift=request.params.min_lift
-        )
+        analysis_params = {
+            "min_support": request.params.min_support,
+            "min_confidence": request.params.min_confidence,
+            "min_lift": request.params.min_lift
+        }
 
-        # 分析結果を用いて可視化
+        analysis_results = analyzer.analyze(request.data, analysis_params)
+
+        if not analysis_results or "rules" not in analysis_results or not analysis_results["rules"]:
+            raise InvalidAnalysisResultError("ルールが見つかりませんでした。パラメータを調整してください。")
+
+        # 可視化タイプとオプションの設定
         visualization_type = request.visualization_options.get("visualization_type", "network")
-        chart_data = _prepare_chart_data_from_rules(
+        visualization_options = request.visualization_options.copy()
+
+        # 共通関数を使用してチャートデータを準備
+        chart_data = prepare_chart_data_by_analysis_type(
+            analysis_type="association",
             analysis_results=analysis_results,
             visualization_type=visualization_type,
-            options=request.visualization_options
+            options=visualization_options
         )
 
         # チャート生成
-        result = await visualization_service.generate_chart(
+        chart_result = await visualization_service.generate_chart(
             config=chart_data["config"],
             data=chart_data["data"],
-            format=request.visualization_options.get("format", "png"),
-            template_id=request.visualization_options.get("template_id"),
+            format=visualization_options.get("format", "png"),
+            template_id=visualization_options.get("template_id"),
             user_id=str(current_user.id)
         )
 
-        # 分析サマリーを追加
-        result["analysis_summary"] = _format_analysis_summary(analysis_results)
+        # 分析サマリーを作成
+        analysis_summary = _format_analysis_summary(analysis_results)
 
-        return AssociationVisualizationResponse(
-            chart_id=result["chart_id"],
-            url=result["url"],
-            format=result["format"],
-            thumbnail_url=result.get("thumbnail_url"),
-            metadata=result["metadata"],
-            analysis_summary=result["analysis_summary"]
-        )
+        # 統一されたレスポンスを作成して返す
+        return create_visualization_response(chart_result, analysis_summary)
 
-    except InvalidAssociationDataError as e:
-        logger.error(f"アソシエーションデータ検証エラー: {str(e)}")
-        raise
     except Exception as e:
-        logger.exception(f"アソシエーション分析と可視化中に予期せぬエラー: {str(e)}")
-        raise AssociationAnalysisError(
-            message=f"アソシエーション分析と可視化の実行中にエラーが発生しました: {str(e)}"
-        )
+        logger.exception(f"アソシエーション分析および可視化中にエラー: {str(e)}")
+        raise handle_visualization_error(e)

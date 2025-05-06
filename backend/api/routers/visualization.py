@@ -7,6 +7,7 @@
 - POST /api/visualizations/dashboard - ダッシュボードの生成
 - POST /api/visualizations/chart/background - バックグラウンドでのチャート生成
 - GET /api/visualizations/status/{job_id} - チャート生成ジョブのステータス確認
+- POST /api/visualizations/visualize - 統一された可視化プロセッサを使用したチャート生成（新機能）
 """
 
 import asyncio
@@ -17,7 +18,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -31,6 +32,10 @@ from api.middleware import (
     ValidationFailedError
 )
 from api.core.config import get_settings, Settings
+from api.visualization.factory import VisualizationProcessorFactory
+from api.visualization.errors import handle_visualization_error
+# キャッシュユーティリティをインポート
+from api.utils.caching import async_cache, _generate_cache_key, get_from_cache, add_to_cache
 
 logger = logging.getLogger(__name__)
 
@@ -618,3 +623,166 @@ async def analyze_and_visualize(
         raise ChartGenerationError(
             message=f"分析可視化の実行中にエラーが発生しました: {str(e)}"
         )
+
+# 新しい統一可視化用のモデル定義
+class UnifiedVisualizationRequest(BaseModel):
+    """統一された可視化リクエストモデル"""
+    analysis_type: str = Field(..., description="分析タイプ (association, correlation, descriptive_stats, predictive_model, survival_analysis, timeseries, cluster, pca など)")
+    analysis_results: Dict[str, Any] = Field(..., description="分析結果データ")
+    visualization_type: str = Field(..., description="可視化タイプ (分析タイプに依存)")
+    options: Dict[str, Any] = Field(default_factory=dict, description="可視化設定オプション")
+
+class UnifiedVisualizationResponse(BaseModel):
+    """統一された可視化レスポンスモデル"""
+    chart_id: str = Field(..., description="チャートID")
+    url: str = Field(..., description="チャートURL")
+    format: str = Field(..., description="フォーマット")
+    thumbnail_url: Optional[str] = Field(None, description="サムネイルURL")
+    metadata: Dict[str, Any] = Field(..., description="メタデータ")
+    analysis_summary: Dict[str, Any] = Field(..., description="分析サマリー")
+
+# 統一された可視化エンドポイント（キャッシュ機能を追加）
+@router.post("/visualize", response_model=UnifiedVisualizationResponse, status_code=status.HTTP_200_OK)
+async def visualize_analysis(
+    request: UnifiedVisualizationRequest,
+    raw_request: Request = None,
+    current_user: User = Depends(get_current_user),
+    visualization_service = Depends(get_visualization_service),
+    settings: Settings = Depends(get_settings)
+):
+    """
+    分析結果を可視化します（統一されたプロセッサを使用）
+
+    分析タイプ、可視化タイプ、オプションに基づいて適切な可視化プロセッサを選択し、
+    チャートを生成します。各分析タイプは固有の可視化方法をサポートしています。
+    """
+    try:
+        logger.info(f"可視化リクエスト受信: 分析タイプ={request.analysis_type}, 可視化タイプ={request.visualization_type}")
+
+        # キャッシュキーを生成
+        cache_key = _generate_cache_key(
+            request.analysis_type,
+            request.analysis_results,
+            request.visualization_type,
+            request.options
+        )
+
+        # キャッシュから結果を取得
+        cached_result = get_from_cache(cache_key)
+        if cached_result is not None:
+            logger.info(f"キャッシュから結果を取得: {cache_key}")
+            return UnifiedVisualizationResponse(**cached_result)
+
+        # プロセッサの取得
+        processor = VisualizationProcessorFactory.get_processor(request.analysis_type)
+        if not processor:
+            return HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"未対応の分析タイプです: {request.analysis_type}"
+            )
+
+        # チャートデータの準備（メモリ効率を考慮）
+        chart_data = await _prepare_chart_data_optimized(
+            processor,
+            request.analysis_results,
+            request.visualization_type,
+            request.options
+        )
+
+        # 分析サマリーの生成
+        analysis_summary = processor.format_summary(request.analysis_results)
+
+        # フォーマット設定
+        format = request.options.get("format", "png")
+        template_id = request.options.get("template_id")
+
+        # チャート生成サービスの呼び出し
+        result = await visualization_service.generate_chart(
+            config=chart_data["config"],
+            data=chart_data["data"],
+            format=format,
+            template_id=template_id,
+            user_id=str(current_user.id)
+        )
+
+        # サマリー情報の追加
+        result["analysis_summary"] = analysis_summary
+
+        # レスポンスの生成
+        response = UnifiedVisualizationResponse(
+            chart_id=result["chart_id"],
+            url=result["url"],
+            format=result["format"],
+            thumbnail_url=result.get("thumbnail_url"),
+            metadata=result["metadata"],
+            analysis_summary=result["analysis_summary"]
+        )
+
+        # 結果をキャッシュに保存（有効期限：1時間）
+        add_to_cache(cache_key, response.dict(), 3600)
+
+        return response
+
+    except Exception as e:
+        logger.exception(f"可視化処理中にエラーが発生しました: {str(e)}")
+        raise handle_visualization_error(e)
+
+# メモリ効率のために最適化されたチャートデータ準備関数
+async def _prepare_chart_data_optimized(
+    processor,
+    analysis_results: Dict[str, Any],
+    visualization_type: str,
+    options: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    チャートデータをメモリ効率よく準備します。
+    大きなデータセットの場合、非同期で処理することで他のリクエスト処理を妨げないようにします。
+
+    Args:
+        processor: 可視化プロセッサ
+        analysis_results: 分析結果
+        visualization_type: 可視化タイプ
+        options: オプション
+
+    Returns:
+        準備されたチャートデータ
+    """
+    # 大規模なデータセットの場合
+    is_large_dataset = _is_large_dataset(analysis_results)
+
+    if is_large_dataset:
+        # 大規模データセットの場合、非同期で処理（I/Oバウンドな処理を想定）
+        # 実際のデータ処理をコルーチンとして実行
+        return await asyncio.to_thread(
+            processor.prepare_chart_data,
+            analysis_results,
+            visualization_type,
+            options
+        )
+    else:
+        # 小規模データセットの場合は通常通り処理
+        return processor.prepare_chart_data(
+            analysis_results,
+            visualization_type,
+            options
+        )
+
+def _is_large_dataset(analysis_results: Dict[str, Any]) -> bool:
+    """
+    データセットが大きいかどうかを判定します。
+
+    Args:
+        analysis_results: 分析結果
+
+    Returns:
+        大きいデータセットの場合はTrue
+    """
+    # データサイズの判定基準
+    if "data" in analysis_results:
+        if isinstance(analysis_results["data"], list) and len(analysis_results["data"]) > 1000:
+            return True
+        if isinstance(analysis_results["data"], dict) and str(analysis_results["data"]).__sizeof__() > 100000:
+            return True
+
+    # 結果全体のサイズで判定
+    return str(analysis_results).__sizeof__() > 500000
