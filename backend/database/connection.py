@@ -4,6 +4,7 @@
 複数のデータベースバックエンドを統一的に扱うための機能を提供します。
 """
 import os
+import glob
 from enum import Enum
 from typing import Any, Dict, Optional, Union, Generator, List, Type, TypeVar, Callable
 from contextlib import contextmanager
@@ -12,7 +13,7 @@ import logging
 from firebase_admin import credentials, firestore, initialize_app
 import firebase_admin
 # SQLAlchemy
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from neo4j import GraphDatabase, Driver, Session as Neo4jSession
@@ -245,8 +246,16 @@ def init_db():
         from . import models_sql
         engine = Database._sql_engine
         if engine:
-            Base.metadata.create_all(bind=engine)
-            logger.info("SQLデータベースのスキーマが初期化されました")
+            # 1. マイグレーションの実行
+            run_migrations()
+
+            # 2. スキーマの適用（マイグレーションシステムが設定されるまでの暫定措置）
+            apply_schemas(engine)
+
+            # 3. シードデータの読み込み
+            load_seed_data(engine)
+
+            logger.info("SQLデータベースが正常に初期化されました")
     except ImportError:
         logger.warning("models_sqlモジュールが見つかりません。SQLテーブル初期化をスキップします。")
     except Exception as e:
@@ -264,6 +273,133 @@ def init_db():
         logger.error(f"Neo4jデータベース初期化エラー: {str(e)}")
 
     logger.info("データベース初期化完了")
+
+def run_migrations():
+    """
+    マイグレーションを実行します。
+    Alembicなどのマイグレーションツールを使用します。
+    """
+    try:
+        import alembic.config
+        from alembic import command
+
+        # Alembicの設定ファイルのパスを取得
+        alembic_ini_path = os.path.join(os.path.dirname(__file__), 'migrations', 'alembic.ini')
+
+        if os.path.exists(alembic_ini_path):
+            # Alembic設定の読み込み
+            alembic_cfg = alembic.config.Config(alembic_ini_path)
+
+            # マイグレーションの実行
+            command.upgrade(alembic_cfg, "head")
+            logger.info("マイグレーションが正常に実行されました")
+        else:
+            logger.warning("alembic.iniが見つかりません。マイグレーションをスキップします。")
+    except ImportError:
+        logger.warning("Alembicがインストールされていません。マイグレーションをスキップします。")
+    except Exception as e:
+        logger.error(f"マイグレーション実行エラー: {str(e)}")
+        raise
+
+def apply_schemas(engine):
+    """
+    スキーマファイルを適用します。
+    マイグレーションシステムが完全に設定されるまでの暫定措置です。
+
+    Args:
+        engine: SQLAlchemyエンジン
+    """
+    try:
+        # スキーマファイルのディレクトリ
+        schema_dir = os.path.join(os.path.dirname(__file__), 'schemas')
+
+        if not os.path.exists(schema_dir):
+            logger.warning(f"スキーマディレクトリが見つかりません: {schema_dir}")
+            return
+
+        # スキーマファイルを取得
+        schema_files = glob.glob(os.path.join(schema_dir, '*.sql'))
+
+        if not schema_files:
+            logger.info("適用するスキーマファイルが見つかりません")
+            return
+
+        # SQLファイルを実行
+        with engine.connect() as connection:
+            for schema_file in sorted(schema_files):
+                logger.info(f"スキーマファイルを適用: {os.path.basename(schema_file)}")
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    sql_statements = f.read()
+                    # 複数のステートメントを個別に実行
+                    for statement in sql_statements.split(';'):
+                        if statement.strip():
+                            connection.execute(text(statement))
+                    connection.commit()
+
+        logger.info(f"{len(schema_files)}個のスキーマファイルが正常に適用されました")
+    except Exception as e:
+        logger.error(f"スキーマ適用エラー: {str(e)}")
+        raise
+
+def load_seed_data(engine):
+    """
+    シードデータをロードします。
+
+    Args:
+        engine: SQLAlchemyエンジン
+    """
+    try:
+        # シードデータのディレクトリ
+        seed_dir = os.path.join(os.path.dirname(__file__), 'seed')
+
+        if not os.path.exists(seed_dir):
+            logger.warning(f"シードデータディレクトリが見つかりません: {seed_dir}")
+            return
+
+        # マスターデータの読み込み
+        load_seed_data_category(engine, os.path.join(seed_dir, 'master'), "マスター")
+
+        # 重みデータの読み込み
+        load_seed_data_category(engine, os.path.join(seed_dir, 'weights'), "重み")
+
+        logger.info("シードデータの読み込みが完了しました")
+    except Exception as e:
+        logger.error(f"シードデータ読み込みエラー: {str(e)}")
+        raise
+
+def load_seed_data_category(engine, category_dir, category_name):
+    """
+    カテゴリごとのシードデータを読み込みます。
+
+    Args:
+        engine: SQLAlchemyエンジン
+        category_dir: カテゴリディレクトリのパス
+        category_name: カテゴリの名前（ログ用）
+    """
+    if not os.path.exists(category_dir):
+        logger.info(f"{category_name}データディレクトリが見つかりません: {category_dir}")
+        return
+
+    # シードファイルを取得
+    seed_files = glob.glob(os.path.join(category_dir, '*.sql'))
+
+    if not seed_files:
+        logger.info(f"読み込む{category_name}データファイルが見つかりません")
+        return
+
+    # SQLファイルを実行
+    with engine.connect() as connection:
+        for seed_file in sorted(seed_files):
+            logger.info(f"{category_name}データを読み込み: {os.path.basename(seed_file)}")
+            with open(seed_file, 'r', encoding='utf-8') as f:
+                sql_statements = f.read()
+                # 複数のステートメントを個別に実行
+                for statement in sql_statements.split(';'):
+                    if statement.strip():
+                        connection.execute(text(statement))
+                connection.commit()
+
+    logger.info(f"{len(seed_files)}個の{category_name}データファイルが正常に読み込まれました")
 
 # Neo4jサービスクラス
 class Neo4jService:
