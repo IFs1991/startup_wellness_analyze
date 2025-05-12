@@ -11,6 +11,33 @@
 - Gemini APIを活用した高品質な可視化とレポート生成
 - データに基づいた改善提案
 - 連合学習を使用したプライバシー保護分析
+- Google Formsからの健康データ自動収集
+- PDF/CSVからの業績データ抽出・統合
+
+## VAS・業績データ統合管理システム
+
+本プロジェクトでは、Google Forms経由で収集したVAS（Value Assessment Score）データと、PDF/CSVから抽出した業績データを統合管理するためのシステムを実装しています。
+
+### VASデータ収集機能
+
+- **Google Forms連携**: Google Forms APIとSheets APIを使用して定期的にデータを同期
+- **データ変換**: 収集したデータを最適なフォーマットに変換して保存
+- **同期スケジューリング**: 定期的な自動同期処理
+- **エラーハンドリング**: 同期エラーの検出と再試行メカニズムの実装
+
+### 業績データ処理機能
+
+- **ファイルアップロード**: PDF/CSVファイルのアップロードと保存
+- **データ抽出**: ドキュメントからの構造化データの抽出
+- **データマッピング**: 抽出データを業績指標にマッピング
+- **検証処理**: データの整合性と妥当性の検証
+
+### 統合分析機能
+
+- **相関分析**: VASデータと業績データの相関関係の分析
+- **トレンド分析**: 時系列データに基づく傾向分析
+- **レポート生成**: 分析結果に基づく自動レポート生成
+- **ダッシュボード**: 主要指標のリアルタイム可視化
 
 ## 技術スタック
 
@@ -22,6 +49,62 @@
 - **可視化**: Gemini API
 - **レポート生成**: Gemini API, Puppeteer
 - **コンテナ化**: Docker, docker-compose
+- **外部API連携**: Google Forms API, Google Sheets API
+
+## データベース設計
+
+本システムでは、以下のエンティティを中心としたデータベース設計を実装しています。
+
+### VASデータ関連テーブル
+
+- **vas_health_performance**: VASによる健康・パフォーマンスデータ
+  - 物理的健康、精神的健康、パフォーマンス、満足度のスコアを管理
+  - ユーザーと企業の関連付け
+
+- **google_forms_configurations**: Google Forms連携設定
+  - フォームタイプ、フォームID、シートID
+  - フィールドマッピング設定（JSONBで保存）
+
+- **google_forms_sync_logs**: 同期ログ
+  - 同期時間、処理レコード数、ステータス情報
+
+### 業績データ関連テーブル
+
+- **monthly_business_performance**: 月次業績データ
+  - 売上、経費、利益率、従業員数、新規顧客獲得数などの業績指標
+
+- **uploaded_documents**: アップロードされたドキュメント情報
+  - ファイル情報、処理ステータス
+
+- **document_extraction_results**: ドキュメント抽出結果
+  - 抽出データ、信頼度スコア、レビュー情報
+
+### 参照テーブル
+
+- **position_levels**: 役職レベルマスター
+- **industries**: 業種マスター
+- **industry_weights**: 業種別重み係数
+- **company_size_categories**: 企業規模分類
+
+## コンポーネント構造
+
+システムは以下のコンポーネントで構成されています：
+
+### コネクタ
+
+- **GoogleFormsConnector**: Google FormsとSheets APIへのアクセスを提供
+  - キャッシュ機能と再試行メカニズムを実装
+  - 非同期処理対応
+
+### リポジトリ
+
+- **VASRepository**: VASデータのCRUD操作と同期設定管理
+- **BusinessPerformanceRepository**: 業績データとドキュメント管理
+
+### サービス
+
+- **FormsSyncService**: Google Formsデータの同期処理
+- **DocumentProcessingService**: PDF/CSVからのデータ抽出・処理
 
 ## セットアップ
 
@@ -31,6 +114,7 @@
 - Node.js 18+
 - Docker & docker-compose
 - PostgreSQL (ローカル開発の場合)
+- Google Cloud Platform アカウント (Forms APIとSheets API利用のため)
 
 ### 環境構築
 
@@ -58,7 +142,13 @@
    npm install
    ```
 
-5. ローカル開発サーバーの起動:
+5. データベースのセットアップ:
+   ```bash
+   cd backend
+   python -m database.migration upgrade head
+   ```
+
+6. ローカル開発サーバーの起動:
    ```bash
    # バックエンド
    cd backend
@@ -68,9 +158,22 @@
    npm run dev
    ```
 
-6. Dockerを使用した起動:
+7. Dockerを使用した起動:
    ```bash
    docker-compose up --build
+   ```
+
+## Google Forms APIの設定
+
+1. Google Cloud Platformでプロジェクトを作成
+2. Forms APIとSheets APIを有効化
+3. サービスアカウントを作成して鍵をダウンロード
+4. 鍵ファイルを`backend/credentials`ディレクトリに配置
+5. `.env`ファイルに以下の設定を追加:
+   ```
+   GOOGLE_APPLICATION_CREDENTIALS=./credentials/your-key-file.json
+   VAS_HEALTH_FORM_ID=your-form-id
+   VAS_HEALTH_SHEET_ID=your-sheet-id
    ```
 
 ## Gemini API設定
@@ -99,19 +202,25 @@
 
 ```
 startup-wellness-analyze/
-├── backend/             # バックエンドコード
-│   ├── api/             # API定義
-│   ├── core/            # コアロジック
-│   ├── database/        # データベース関連
-│   ├── federated_learning/ # 連合学習モジュール
-│   ├── models/          # データモデル
-│   ├── schemas/         # Pydanticスキーマ
-│   ├── utils/           # ユーティリティ
-│   └── main.py          # エントリーポイント
-├── frontend/            # フロントエンドコード
-├── docs/                # ドキュメント
-├── tests/               # テスト
-└── docker-compose.yml   # Docker構成
+├── backend/                     # バックエンドコード
+│   ├── api/                     # API定義
+│   ├── core/                    # コアロジック
+│   ├── database/                # データベース関連
+│   │   ├── connectors/          # 外部システム連携
+│   │   ├── migrations/          # マイグレーションファイル
+│   │   ├── repositories/        # データアクセスレイヤー
+│   │   ├── services/            # ビジネスロジック
+│   │   ├── schemas/             # スキーマ定義
+│   │   └── seed/                # 初期データ
+│   ├── federated_learning/      # 連合学習モジュール
+│   ├── models/                  # データモデル
+│   ├── schemas/                 # Pydanticスキーマ
+│   ├── utils/                   # ユーティリティ
+│   └── main.py                  # エントリーポイント
+├── frontend/                    # フロントエンドコード
+├── docs/                        # ドキュメント
+├── tests/                       # テスト
+└── docker-compose.yml           # Docker構成
 ```
 
 ## 開発ガイドライン

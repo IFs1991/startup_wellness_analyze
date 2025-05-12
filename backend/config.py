@@ -10,6 +10,8 @@ from typing import Dict, List, Optional
 from google.cloud import secretmanager
 from google.auth import default
 from dotenv import load_dotenv
+from enum import Enum
+from dataclasses import dataclass
 
 # プロジェクトルートへのパスを取得
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +26,22 @@ if os.getenv("ENVIRONMENT") != "production":
     else:
         # ENVファイルが見つからない場合はログ出力
         print(f"Warning: .env file not found at {ENV_PATH}")
+
+class FormType(Enum):
+    """フォームタイプの列挙型"""
+    VAS_HEALTH = "vas_health"
+    BUSINESS_PERFORMANCE = "business_performance"
+    EMPLOYEE_SATISFACTION = "employee_satisfaction"
+    LEADERSHIP_ASSESSMENT = "leadership_assessment"
+
+@dataclass
+class GoogleFormsConfig:
+    """Google Forms設定クラス"""
+    form_id: str
+    sheet_id: Optional[str] = None
+    field_mappings: Optional[Dict[str, str]] = None
+    active: bool = True
+    sync_frequency: int = 3600  # デフォルト1時間（秒）
 
 class Config:
     # GCP Project 設定
@@ -62,6 +80,37 @@ class Config:
         "INITIAL_CONSULTATION": os.getenv("INITIAL_CONSULTATION_FORM_ID", None),
         "LATEST_CONSULTATION": os.getenv("LATEST_CONSULTATION_FORM_ID", None),
         "TREATMENT_EFFECT": os.getenv("TREATMENT_EFFECT_FORM_ID", None)
+    }
+
+    # VASと業績データのForms設定
+    VAS_HEALTH_FORMS: Dict[str, GoogleFormsConfig] = {
+        "DEFAULT": GoogleFormsConfig(
+            form_id=os.getenv("VAS_HEALTH_FORM_ID", ""),
+            sheet_id=os.getenv("VAS_HEALTH_SHEET_ID", ""),
+            field_mappings={
+                "user_id": "employeeId",
+                "physical_health": "physicalHealth",
+                "mental_health": "mentalHealth",
+                "work_performance": "workPerformance",
+                "work_satisfaction": "workSatisfaction",
+                "additional_comments": "comments"
+            }
+        )
+    }
+
+    BUSINESS_PERFORMANCE_FORMS: Dict[str, GoogleFormsConfig] = {
+        "MONTHLY": GoogleFormsConfig(
+            form_id=os.getenv("BUSINESS_PERFORMANCE_FORM_ID", ""),
+            sheet_id=os.getenv("BUSINESS_PERFORMANCE_SHEET_ID", ""),
+            field_mappings={
+                "report_month": "reportMonth",
+                "revenue": "monthlyRevenue",
+                "expenses": "monthlyExpenses",
+                "profit_margin": "profitMargin",
+                "headcount": "currentHeadcount",
+                "new_clients": "newClientsAcquired"
+            }
+        )
     }
 
     # Google Cloud Storage設定
@@ -118,6 +167,11 @@ class Config:
         "TREATMENT": "treatment_effect"
     }
 
+    # データ同期設定
+    SYNC_LOG_ENABLED = True
+    DEFAULT_SYNC_RETRY_COUNT = 3
+    DEFAULT_SYNC_TIMEOUT = 60  # 秒
+
 # 環境別の設定クラスを定義
 class DevelopmentConfig(Config):
     DEBUG = True
@@ -140,3 +194,21 @@ config = {
 
 # 現在の環境の設定を取得
 current_config = config[os.getenv("ENVIRONMENT", "development")]()
+
+# ヘルパー関数
+def get_google_forms_config(form_type: FormType, config_key: str = "DEFAULT") -> Optional[GoogleFormsConfig]:
+    """
+    Google Formsの設定を取得する
+
+    Args:
+        form_type: フォームタイプ
+        config_key: 設定キー
+
+    Returns:
+        Optional[GoogleFormsConfig]: Formsの設定
+    """
+    if form_type == FormType.VAS_HEALTH:
+        return current_config.VAS_HEALTH_FORMS.get(config_key)
+    elif form_type == FormType.BUSINESS_PERFORMANCE:
+        return current_config.BUSINESS_PERFORMANCE_FORMS.get(config_key)
+    return None
