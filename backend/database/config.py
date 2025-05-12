@@ -7,7 +7,7 @@ Startup Wellness Analyze プロジェクト
 
 import os
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 
 # データベースタイプの列挙型
@@ -25,6 +25,24 @@ class DataCategory(Enum):
     RECOMMENDATIONS = "recommendations"
     SETTINGS = "settings"
     ANALYTICS = "analytics"
+    VAS_DATA = "vas_data"  # 追加: VASデータ
+    BUSINESS_PERFORMANCE = "business_performance"  # 追加: 業績データ
+
+# フォームタイプの列挙型
+class FormType(Enum):
+    INITIAL = "initial_consultation"
+    LATEST = "latest_consultation"
+    TREATMENT = "treatment_effect"
+    VAS_HEALTH = "vas_health_performance"  # VAS健康・パフォーマンスフォーム
+
+@dataclass
+class GoogleFormsConfig:
+    """Google Formsの設定クラス"""
+    form_id: str
+    sheet_id: str
+    active: bool = True
+    sync_frequency: int = 3600  # デフォルト1時間ごと（秒単位）
+    field_mappings: Dict[str, str] = field(default_factory=dict)
 
 # データベースタイプとデータカテゴリのマッピング
 DATABASE_CATEGORY_MAPPING = {
@@ -35,6 +53,8 @@ DATABASE_CATEGORY_MAPPING = {
     DataCategory.RECOMMENDATIONS: DatabaseType.NEO4J,
     DataCategory.SETTINGS: DatabaseType.FIRESTORE,
     DataCategory.ANALYTICS: DatabaseType.POSTGRESQL,
+    DataCategory.VAS_DATA: DatabaseType.POSTGRESQL,  # 追加: VASデータはPostgreSQLで管理
+    DataCategory.BUSINESS_PERFORMANCE: DatabaseType.POSTGRESQL,  # 追加: 業績データはPostgreSQLで管理
 }
 
 @dataclass
@@ -48,11 +68,10 @@ class DatabaseConfig:
     connection_timeout: int = 30
     pool_size: int = 5
     ssl_enabled: bool = True
-    additional_params: Dict[str, Any] = None
+    additional_params: Dict[str, Any] = field(default_factory=dict)
 
-# 環境設定から値を取得するヘルパー関数
 def get_env_or_default(key: str, default: Any) -> Any:
-    """環境変数から値を取得し、ない場合はデフォルト値を返す"""
+    """環境変数の値を取得し、存在しない場合はデフォルト値を返す"""
     return os.environ.get(key, default)
 
 # 各データベースの設定
@@ -91,6 +110,26 @@ NEO4J_CONFIG = DatabaseConfig(
     }
 )
 
+# Google Forms設定
+GOOGLE_FORMS_CONFIGS = {
+    FormType.INITIAL.value: GoogleFormsConfig(
+        form_id=get_env_or_default("INITIAL_CONSULTATION_FORM_ID", ""),
+        sheet_id=get_env_or_default("INITIAL_CONSULTATION_SHEET_ID", "")
+    ),
+    FormType.LATEST.value: GoogleFormsConfig(
+        form_id=get_env_or_default("LATEST_CONSULTATION_FORM_ID", ""),
+        sheet_id=get_env_or_default("LATEST_CONSULTATION_SHEET_ID", "")
+    ),
+    FormType.TREATMENT.value: GoogleFormsConfig(
+        form_id=get_env_or_default("TREATMENT_EFFECT_FORM_ID", ""),
+        sheet_id=get_env_or_default("TREATMENT_EFFECT_SHEET_ID", "")
+    ),
+    FormType.VAS_HEALTH.value: GoogleFormsConfig(
+        form_id=get_env_or_default("VAS_HEALTH_PERFORMANCE_FORM_ID", ""),
+        sheet_id=get_env_or_default("VAS_HEALTH_PERFORMANCE_SHEET_ID", "")
+    )
+}
+
 # データベースタイプに基づいて設定を取得する関数
 def get_db_config(db_type: DatabaseType) -> DatabaseConfig:
     """データベースタイプに基づいて設定を取得する"""
@@ -101,10 +140,10 @@ def get_db_config(db_type: DatabaseType) -> DatabaseConfig:
     }
     return configs.get(db_type)
 
-# データカテゴリに基づいて適切なデータベースタイプを取得する関数
+# データカテゴリからデータベースタイプを取得する関数
 def get_db_type_for_category(category: DataCategory) -> DatabaseType:
-    """データカテゴリに基づいて適切なデータベースタイプを取得する"""
-    return DATABASE_CATEGORY_MAPPING.get(category, DatabaseType.POSTGRESQL)
+    """データカテゴリに対応するデータベースタイプを取得する"""
+    return DATABASE_CATEGORY_MAPPING.get(category)
 
 # 全てのデータベース設定情報を取得する関数
 def get_all_db_configs() -> Dict[DatabaseType, DatabaseConfig]:
@@ -114,3 +153,12 @@ def get_all_db_configs() -> Dict[DatabaseType, DatabaseConfig]:
         DatabaseType.POSTGRESQL: POSTGRESQL_CONFIG,
         DatabaseType.NEO4J: NEO4J_CONFIG,
     }
+
+# フォームタイプに基づいてGoogle Forms設定を取得する関数
+def get_google_forms_config(form_type: str) -> Optional[GoogleFormsConfig]:
+    """フォームタイプに基づいてGoogle Forms設定を取得する"""
+    return GOOGLE_FORMS_CONFIGS.get(form_type)
+
+# グローバル設定
+SYNC_LOG_ENABLED = get_env_or_default("SYNC_LOG_ENABLED", "true").lower() == "true"
+DEFAULT_SYNC_INTERVAL = int(get_env_or_default("DEFAULT_SYNC_INTERVAL", 3600))  # デフォルト1時間

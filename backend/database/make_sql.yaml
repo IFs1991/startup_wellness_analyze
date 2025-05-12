@@ -1,0 +1,675 @@
+project:
+  name: "VAS・業績データ統合管理システム"
+  description: "Google Forms経由のVASデータおよびPDF/CSVからの業績報告データを効率的に収集・処理・分析するためのPostgreSQLベースのデータ管理システムの実装"
+  period:
+    start_date: "2025-06-01"
+    end_date: "2025-08-31"
+    duration: "3ヶ月"
+  owner: "データベースチーム"
+
+objectives:
+  - id: "OBJ-01"
+    title: "データベース構造の最適化とディレクトリ構造の体系化"
+    description: "体系的なディレクトリ構造とデータベーススキーマの確立"
+  - id: "OBJ-02"
+    title: "Google FormsからのVASデータ自動収集システムの構築"
+    description: "APIを活用した自動データ同期機能の実装とPostgreSQLへの統合"
+  - id: "OBJ-03"
+    title: "PDF/CSVからの業績データ抽出・変換・保存プロセスの実装"
+    description: "異なるフォーマットからの効率的なデータ抽出プロセスの確立"
+  - id: "OBJ-04"
+    title: "静的パラメータデータと動的データの効率的な管理体制の確立"
+    description: "データ種別に応じた最適な管理方法の導入"
+  - id: "OBJ-05"
+    title: "データ分析基盤の整備"
+    description: "VASデータと業績データの相関分析が可能な分析基盤の構築"
+
+implementation_phases:
+  phase1:
+    name: "データベース基盤整備"
+    start_date: "2025-06-01"
+    end_date: "2025-06-15"
+    duration: "2週間"
+    milestone: "データベース基盤構造の確立"
+    tasks:
+      - id: "TASK-1.1"
+        name: "データベース関連ディレクトリ構造の整備"
+        description: "必要なディレクトリ階層を作成する"
+        steps:
+          - "backend/database/migrations ディレクトリの作成"
+          - "backend/database/migrations/versions ディレクトリの作成"
+          - "backend/database/schemas ディレクトリの作成"
+          - "backend/database/seed ディレクトリの作成"
+          - "backend/database/seed/master ディレクトリの作成"
+          - "backend/database/seed/weights ディレクトリの作成"
+        assignee: "DBエンジニア"
+        duration: "2日"
+        dependencies: []
+
+      - id: "TASK-1.2"
+        name: "スキーマ定義ファイルの整理と配置"
+        description: "テーブル定義SQLファイルを適切なディレクトリに移動"
+        steps:
+          - "VASデータ関連テーブルの定義ファイル作成"
+          - "業績データ関連テーブルの定義ファイル作成"
+          - "参照テーブルの定義ファイル作成"
+        assignee: "DBエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-1.1"]
+
+      - id: "TASK-1.3"
+        name: "重み係数データの整理と配置"
+        description: "分析用パラメータを適切なディレクトリに配置"
+        steps:
+          - "業種ごとの重み係数データファイルの整理"
+          - "役職レベル別の調整係数データの整理"
+          - "ファイルヘッダーの追加（作成日、目的など）"
+        assignee: "データアナリスト"
+        duration: "2日"
+        dependencies: ["TASK-1.1"]
+
+      - id: "TASK-1.4"
+        name: "マイグレーション機能実装"
+        description: "スキーマ変更履歴を管理するためのマイグレーション機能の実装"
+        steps:
+          - "Alembicの設定"
+          - "初期マイグレーションファイルの作成"
+          - "マイグレーション実行スクリプトの作成"
+        assignee: "バックエンドエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-1.2"]
+
+      - id: "TASK-1.5"
+        name: "データベース初期化処理の拡張"
+        description: "アプリケーション起動時のデータベース初期化処理の改善"
+        steps:
+          - "init_db関数の拡張"
+          - "シードデータ読み込み機能の実装"
+          - "環境別の初期化プロセスの設定"
+        assignee: "バックエンドエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-1.3", "TASK-1.4"]
+
+  phase2:
+    name: "VASデータ収集システム"
+    start_date: "2025-06-16"
+    end_date: "2025-07-10"
+    duration: "3週間半"
+    milestone: "VASデータ自動収集システムの完成"
+    tasks:
+      - id: "TASK-2.1"
+        name: "既存のGoogle Formsコネクタ分析と統合"
+        description: "重複した実装の分析と統合"
+        steps:
+          - "data_input.pyとgoogle_forms_connector.pyの両実装分析"
+          - "機能の比較と統合アプローチの決定"
+          - "統合されたコネクタクラスの設計"
+        assignee: "システムアーキテクト"
+        duration: "2日"
+        dependencies: ["TASK-1.5"]
+
+      - id: "TASK-2.2"
+        name: "Google FormsのAPI連携仕様策定"
+        description: "Google FormsとSheetsのAPIを使用したデータ収集の仕様を定義"
+        steps:
+          - "API認証方法の確立"
+          - "データ取得方法の設計"
+          - "データマッピング仕様の策定"
+        assignee: "システムアーキテクト"
+        duration: "3日"
+        dependencies: ["TASK-2.1"]
+
+      - id: "TASK-2.3"
+        name: "VASデータテーブル設計と実装"
+        description: "VASデータを保存するテーブル構造の設計と実装"
+        steps:
+          - "vas_health_performanceテーブルの詳細設計"
+          - "Google Forms設定テーブルの設計"
+          - "同期ログテーブルの設計"
+        assignee: "DBエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-2.2"]
+
+      - id: "TASK-2.4"
+        name: "Google FormsからPostgreSQLへの変換ロジック実装"
+        description: "Google Formsレスポンスデータを適切なエンティティに変換"
+        steps:
+          - "データマッピング設定の実装"
+          - "変換ルールの定義"
+          - "変換エラー処理の実装"
+        assignee: "データエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-2.3"]
+
+      - id: "TASK-2.5"
+        name: "Google Forms連携クラスの実装"
+        description: "リポジトリパターンと統合されたAPI連携実装"
+        steps:
+          - "GoogleFormsConnectorクラスの実装"
+          - "PostgreSQLリポジトリとの統合"
+          - "設定管理との統合"
+        assignee: "バックエンドエンジニア"
+        duration: "5日"
+        dependencies: ["TASK-2.4"]
+
+      - id: "TASK-2.6"
+        name: "データ同期スケジューラーの実装"
+        description: "定期的なデータ同期処理のスケジューラー実装"
+        steps:
+          - "Celeryタスクの設定"
+          - "スケジュール定義の実装"
+          - "同期プロセスのモニタリング機能実装"
+        assignee: "バックエンドエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-2.5"]
+
+      - id: "TASK-2.7"
+        name: "VASデータ検証・正規化ロジックの実装"
+        description: "収集したVASデータの検証と正規化処理の実装"
+        steps:
+          - "データ型検証の実装"
+          - "異常値検出ロジックの実装"
+          - "データ正規化処理の実装"
+        assignee: "データエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-2.5"]
+
+      - id: "TASK-2.8"
+        name: "エラー処理・リトライメカニズムの実装"
+        description: "データ同期プロセスのエラー処理とリトライの実装"
+        steps:
+          - "エラーハンドリングの実装"
+          - "リトライロジックの実装"
+          - "失敗通知システムの実装"
+        assignee: "バックエンドエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-2.6", "TASK-2.7"]
+
+      - id: "TASK-2.9"
+        name: "VASデータ収集システムのテスト"
+        description: "実装したVASデータ収集システムのテスト"
+        steps:
+          - "単体テストの実施"
+          - "統合テストの実施"
+          - "エラーケーステストの実施"
+        assignee: "QAエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-2.8"]
+
+  phase3:
+    name: "業績報告書データ処理システム"
+    start_date: "2025-07-11"
+    end_date: "2025-07-31"
+    duration: "3週間"
+    milestone: "業績報告書データ処理システムの完成"
+    tasks:
+      - id: "TASK-3.1"
+        name: "ファイルアップロード機能の実装"
+        description: "PDF/CSVファイルのアップロード機能の実装"
+        steps:
+          - "APIエンドポイントの実装"
+          - "ファイル保存処理の実装"
+          - "メタデータ登録機能の実装"
+        assignee: "バックエンドエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-2.9"]
+
+      - id: "TASK-3.2"
+        name: "業績データテーブル設計と実装"
+        description: "業績データを保存するテーブル構造の設計と実装"
+        steps:
+          - "monthly_business_performanceテーブルの設計"
+          - "uploaded_documentsテーブルの設計"
+          - "document_extraction_resultsテーブルの設計"
+        assignee: "DBエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-3.1"]
+
+      - id: "TASK-3.3"
+        name: "PDFデータ抽出エンジンの実装"
+        description: "PDFファイルからのデータ抽出エンジンの実装"
+        steps:
+          - "PDFパース処理の実装"
+          - "テキスト抽出ロジックの実装"
+          - "構造化データへの変換処理の実装"
+        assignee: "データエンジニア"
+        duration: "6日"
+        dependencies: ["TASK-3.1"]
+
+      - id: "TASK-3.4"
+        name: "CSVデータ処理エンジンの実装"
+        description: "CSVファイルからのデータ処理エンジンの実装"
+        steps:
+          - "CSVパース処理の実装"
+          - "ヘッダー検出・マッピング処理の実装"
+          - "データ型変換処理の実装"
+        assignee: "データエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-3.1"]
+
+      - id: "TASK-3.5"
+        name: "抽出データの検証・変換ロジックの実装"
+        description: "抽出されたデータの検証と変換処理の実装"
+        steps:
+          - "ビジネスルール検証の実装"
+          - "データ正規化処理の実装"
+          - "エッジケース処理の実装"
+        assignee: "データエンジニア"
+        duration: "5日"
+        dependencies: ["TASK-3.3", "TASK-3.4"]
+
+      - id: "TASK-3.6"
+        name: "処理ステータス管理とエラーハンドリング"
+        description: "ドキュメント処理の状態管理とエラー処理の実装"
+        steps:
+          - "ステータス管理ロジックの実装"
+          - "エラーハンドリングの実装"
+          - "再処理メカニズムの実装"
+        assignee: "バックエンドエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-3.5"]
+
+      - id: "TASK-3.7"
+        name: "業績データリポジトリクラスの実装"
+        description: "業績データアクセスのためのリポジトリクラスの実装"
+        steps:
+          - "リポジトリインターフェースの実装"
+          - "SQL実装の開発"
+          - "固有クエリの実装"
+        assignee: "バックエンドエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-3.2", "TASK-3.5"]
+
+      - id: "TASK-3.8"
+        name: "業績データ処理システムのテスト"
+        description: "実装した業績データ処理システムのテスト"
+        steps:
+          - "単体テストの実施"
+          - "統合テストの実施"
+          - "エラーケーステストの実施"
+        assignee: "QAエンジニア"
+        duration: "5日"
+        dependencies: ["TASK-3.6", "TASK-3.7"]
+
+  phase4:
+    name: "データ統合・分析基盤"
+    start_date: "2025-08-01"
+    end_date: "2025-08-20"
+    duration: "3週間"
+    milestone: "データ統合・分析基盤の完成"
+    tasks:
+      - id: "TASK-4.1"
+        name: "VASデータと業績データの関連付けロジック実装"
+        description: "異なるデータソースからの情報を関連付けるロジックの実装"
+        steps:
+          - "時間軸でのデータマッピング実装"
+          - "企業・ユーザーレベルでの関連付け実装"
+          - "関連データの整合性チェック実装"
+        assignee: "データエンジニア"
+        duration: "5日"
+        dependencies: ["TASK-3.8"]
+
+      - id: "TASK-4.2"
+        name: "データウェアハウス設計"
+        description: "分析用のデータウェアハウス構造の設計"
+        steps:
+          - "分析テーブルの設計"
+          - "集計テーブルの設計"
+          - "インデックス戦略の策定"
+        assignee: "DBエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-4.1"]
+
+      - id: "TASK-4.3"
+        name: "集計・分析用ビューの実装"
+        description: "分析を容易にするためのデータベースビューの実装"
+        steps:
+          - "集計ビューの実装"
+          - "相関分析ビューの実装"
+          - "トレンド分析ビューの実装"
+        assignee: "DBエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-4.2"]
+
+      - id: "TASK-4.4"
+        name: "レポート生成クラスの実装"
+        description: "分析結果を基にしたレポート生成機能の実装"
+        steps:
+          - "レポートテンプレートの設計"
+          - "データ可視化コンポーネントの実装"
+          - "PDF/Excel出力機能の実装"
+        assignee: "データアナリスト"
+        duration: "6日"
+        dependencies: ["TASK-4.3"]
+
+      - id: "TASK-4.5"
+        name: "データの整合性チェックと修正インターフェース"
+        description: "データの整合性問題を検出し修正するためのインターフェース実装"
+        steps:
+          - "整合性チェックロジックの実装"
+          - "問題検出アルゴリズムの実装"
+          - "データ修正インターフェースの実装"
+        assignee: "バックエンドエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-4.1"]
+
+      - id: "TASK-4.6"
+        name: "統合データ分析システムのテスト"
+        description: "実装した統合データ分析システムのテスト"
+        steps:
+          - "機能テストの実施"
+          - "性能テストの実施"
+          - "ユーザビリティテストの実施"
+        assignee: "QAエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-4.4", "TASK-4.5"]
+
+  phase5:
+    name: "最終テストと展開"
+    start_date: "2025-08-21"
+    end_date: "2025-08-31"
+    duration: "1週間半"
+    milestone: "システム展開完了"
+    tasks:
+      - id: "TASK-5.1"
+        name: "システム統合テスト"
+        description: "システム全体の統合テスト"
+        steps:
+          - "エンドツーエンドテストの実施"
+          - "シナリオテストの実施"
+          - "回帰テストの実施"
+        assignee: "QAエンジニア"
+        duration: "4日"
+        dependencies: ["TASK-4.6"]
+
+      - id: "TASK-5.2"
+        name: "パフォーマンステスト"
+        description: "システムのパフォーマンス評価"
+        steps:
+          - "負荷テストの実施"
+          - "スケーラビリティテストの実施"
+          - "パフォーマンスボトルネックの特定と最適化"
+        assignee: "DBエンジニア"
+        duration: "3日"
+        dependencies: ["TASK-5.1"]
+
+      - id: "TASK-5.3"
+        name: "ドキュメント作成"
+        description: "システムの詳細ドキュメントの作成"
+        steps:
+          - "アーキテクチャドキュメントの作成"
+          - "APIドキュメントの作成"
+          - "運用マニュアルの作成"
+        assignee: "テクニカルライター"
+        duration: "5日"
+        dependencies: ["TASK-4.6"]
+
+      - id: "TASK-5.4"
+        name: "ユーザートレーニング資料作成"
+        description: "ユーザー向けトレーニング資料の作成"
+        steps:
+          - "システム概要資料の作成"
+          - "操作手順書の作成"
+          - "トラブルシューティングガイドの作成"
+        assignee: "トレーニングスペシャリスト"
+        duration: "3日"
+        dependencies: ["TASK-5.3"]
+
+      - id: "TASK-5.5"
+        name: "展開計画の策定"
+        description: "本番環境へのリリース計画の策定"
+        steps:
+          - "展開手順の策定"
+          - "リスク評価と対策の策定"
+          - "ロールバック計画の策定"
+        assignee: "プロジェクトマネージャー"
+        duration: "2日"
+        dependencies: ["TASK-5.2"]
+
+      - id: "TASK-5.6"
+        name: "本番環境への展開"
+        description: "開発したシステムの本番環境への展開"
+        steps:
+          - "データベースのセットアップ"
+          - "アプリケーションのデプロイ"
+          - "システム稼働確認"
+        assignee: "インフラエンジニア"
+        duration: "1日"
+        dependencies: ["TASK-5.1", "TASK-5.5"]
+
+technical_stack:
+  database:
+    - name: "PostgreSQL"
+      version: "14.x"
+      purpose: "メインデータベース"
+    - name: "Alembic"
+      version: "1.8.x"
+      purpose: "マイグレーション管理"
+    - name: "SQLAlchemy"
+      version: "1.4.x"
+      purpose: "ORM（オブジェクト関係マッピング）"
+
+  backend:
+    - name: "Python"
+      version: "3.10+"
+      purpose: "バックエンド開発言語"
+    - name: "FastAPI"
+      version: "0.92.x"
+      purpose: "APIフレームワーク"
+    - name: "Celery"
+      version: "5.2.x"
+      purpose: "非同期タスク処理"
+    - name: "pandas"
+      version: "2.0.x"
+      purpose: "データ処理"
+    - name: "PyPDF2/pdfplumber"
+      version: "latest"
+      purpose: "PDF処理"
+
+  external_services:
+    - name: "Google Sheets API"
+      version: "v4"
+      purpose: "フォームデータアクセス"
+    - name: "Google Forms API"
+      version: "v1"
+      purpose: "フォーム構造アクセス"
+    - name: "Cloud Storage"
+      version: "latest"
+      purpose: "ファイル保存"
+
+data_models:
+  core_tables:
+    - name: "vas_health_performance"
+      description: "VASによる健康・パフォーマンスデータ"
+      key_fields:
+        - "record_id (PK)"
+        - "user_id (FK)"
+        - "company_id (FK)"
+        - "record_date"
+        - "physical_health"
+        - "mental_health"
+        - "work_performance"
+        - "work_satisfaction"
+
+    - name: "google_forms_configurations"
+      description: "Google Forms連携設定"
+      key_fields:
+        - "config_id (PK)"
+        - "company_id (FK)"
+        - "form_type"
+        - "form_id"
+        - "sheet_id"
+        - "field_mappings (JSONB)"
+
+    - name: "google_forms_sync_logs"
+      description: "Google Formsデータ同期ログ"
+      key_fields:
+        - "log_id (PK)"
+        - "config_id (FK)"
+        - "sync_start_time"
+        - "sync_end_time"
+        - "records_processed"
+        - "records_created"
+        - "status"
+
+    - name: "monthly_business_performance"
+      description: "月次業績データ"
+      key_fields:
+        - "report_id (PK)"
+        - "company_id (FK)"
+        - "report_month"
+        - "revenue"
+        - "expenses"
+        - "profit_margin"
+        - "headcount"
+        - "new_clients"
+
+    - name: "uploaded_documents"
+      description: "アップロードされたドキュメント情報"
+      key_fields:
+        - "document_id (PK)"
+        - "company_id (FK)"
+        - "file_name"
+        - "file_type"
+        - "upload_path"
+        - "processing_status"
+
+    - name: "position_levels"
+      description: "役職レベルマスター"
+      key_fields:
+        - "level_id (PK)"
+        - "level_name"
+        - "position_title"
+        - "base_weight"
+        - "theoretical_basis"
+
+    - name: "industries"
+      description: "業種マスター"
+      key_fields:
+        - "industry_id (PK)"
+        - "industry_name"
+        - "industry_description"
+
+risk_assessment:
+  risks:
+    - id: "RISK-01"
+      description: "Google Forms APIの仕様変更"
+      impact: "高"
+      probability: "低"
+      mitigation: "APIバージョン固定、変更通知の監視"
+
+    - id: "RISK-02"
+      description: "PDF抽出の精度問題"
+      impact: "高"
+      probability: "中"
+      mitigation: "複数抽出エンジンの併用、マニュアル修正機能の実装"
+
+    - id: "RISK-03"
+      description: "データ量増加によるパフォーマンス低下"
+      impact: "中"
+      probability: "中"
+      mitigation: "インデックス最適化、パーティショニング導入"
+
+    - id: "RISK-04"
+      description: "異なるフォーマットのCSVファイル処理"
+      impact: "中"
+      probability: "高"
+      mitigation: "柔軟なマッピング機能、フォーマット検出ロジックの実装"
+
+    - id: "RISK-05"
+      description: "マイグレーション失敗によるデータ損失"
+      impact: "高"
+      probability: "低"
+      mitigation: "自動バックアップ、ロールバック機能の強化"
+
+    - id: "RISK-06"
+      description: "既存のGoogle Formsコネクタとの統合問題"
+      impact: "中"
+      probability: "中"
+      mitigation: "段階的な統合、テスト駆動開発、詳細なコード分析"
+
+success_criteria:
+  technical:
+    - criterion: "Google FormsからのVASデータ取得の自動化率"
+      target: "100%"
+      measurement: "自動で取得されたレコード数 / 全レコード数"
+
+    - criterion: "PDFからのデータ抽出精度"
+      target: "90%以上"
+      measurement: "正確に抽出されたフィールド数 / 全フィールド数"
+
+    - criterion: "CSVからのデータ抽出精度"
+      target: "98%以上"
+      measurement: "正確に抽出されたフィールド数 / 全フィールド数"
+
+    - criterion: "クエリ実行時間"
+      target: "300ms以下"
+      measurement: "標準的なデータ量での平均クエリ実行時間"
+
+  business:
+    - criterion: "データ収集・処理時間の削減"
+      target: "75%削減"
+      measurement: "新システムでの処理時間 / 旧システムでの処理時間"
+
+    - criterion: "手動データ入力工数の削減"
+      target: "90%削減"
+      measurement: "新システムでの入力工数 / 旧システムでの入力工数"
+
+    - criterion: "データ分析レポート生成時間の短縮"
+      target: "60%短縮"
+      measurement: "新システムでのレポート生成時間 / 旧システムでのレポート生成時間"
+
+communication_plan:
+  meetings:
+    - name: "週次進捗会議"
+      frequency: "毎週月曜日"
+      time: "10:00-11:00"
+      participants: ["プロジェクトマネージャー", "技術リード", "各フェーズ担当者"]
+
+    - name: "技術レビュー"
+      frequency: "各フェーズ終了時"
+      time: "13:00-15:00"
+      participants: ["技術リード", "アーキテクト", "開発チーム"]
+
+    - name: "ステークホルダー報告"
+      frequency: "隔週金曜日"
+      time: "16:00-17:00"
+      participants: ["プロジェクトマネージャー", "ステークホルダー"]
+
+  documentation:
+    - tool: "GitLab Wiki"
+      purpose: "技術文書管理"
+
+    - tool: "Jira"
+      purpose: "課題管理"
+
+    - tool: "Slack"
+      purpose: "日常的なコミュニケーション"
+
+followup_plan:
+  monitoring:
+    - name: "性能モニタリング"
+      activities:
+        - "データベース性能指標の継続的監視"
+        - "クエリパフォーマンスの定期的分析"
+      frequency: "週次"
+
+  maintenance:
+    - name: "定期保守"
+      activities:
+        - "月次のデータ整合性チェック"
+        - "四半期ごとのインデックス最適化"
+      frequency: "月次/四半期"
+
+  future_extension:
+    - name: "Phase 2拡張"
+      description: "追加データソースへの対応"
+      timeline: "2025年第4四半期"
+
+    - name: "Phase 2拡張"
+      description: "高度な分析機能の追加"
+      timeline: "2025年第4四半期"
+
+    - name: "Phase 3拡張"
+      description: "AIを活用したデータ予測機能"
+      timeline: "2026年第2四半期"
