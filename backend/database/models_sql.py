@@ -329,7 +329,7 @@ class DocumentExtractionResult(Base):
     report = relationship("MonthlyBusinessPerformance", back_populates="extraction_results")
 
     def __repr__(self):
-        return f"<DocumentExtractionResult(result_id={self.result_id}, document_id={self.document_id})>"
+        return f"<DocumentExtractionResult result_id={self.result_id}, document_id={self.document_id}>"
 
 
 class PositionLevel(Base):
@@ -405,3 +405,26 @@ class CompanySizeCategory(Base):
 
     def __repr__(self):
         return f"<CompanySizeCategory(category_id={self.category_id}, name={self.category_name})>"
+
+# 企業情報モデルを追加
+class Company(Base):
+    """企業モデル（SQLAlchemy ORM）"""
+    __tablename__ = "companies"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False, index=True)
+    industry = Column(String, nullable=True)
+    founded_date = Column(DateTime, nullable=True)
+    employee_count = Column(Integer, nullable=True)
+    location = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Company id={self.id}, name={self.name}>"
+
+# エンティティとSQLモデルのマッピング（ファイルの最後に追加）
+from .models.entities import CompanyEntity
+register_orm_model(CompanyEntity, Company)

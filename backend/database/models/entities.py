@@ -121,4 +121,26 @@ class NoteEntity(BaseEntity):
 
     @property
     def entity_id(self) -> str:
-        return f"{self.user_id}-{self.startup_id}-{int(self.timestamp.timestamp())}"
+        return str(self.id) if hasattr(self, "id") else ""
+
+
+class CompanyEntity(BaseEntity):
+    """企業エンティティ"""
+    name: str = Field(..., description="企業名")
+    industry: Optional[str] = Field(None, description="業界")
+    founded_date: Optional[datetime] = Field(None, description="設立日")
+    employee_count: Optional[int] = Field(None, description="従業員数")
+    location: Optional[str] = Field(None, description="所在地")
+    website: Optional[str] = Field(None, description="ウェブサイトURL")
+    description: Optional[str] = Field(None, description="企業概要")
+
+    # クラス変数
+    model_type: ClassVar[ModelType] = ModelType.SQL  # SQL DBを使用
+
+    @classmethod
+    def get_collection_name(cls) -> str:
+        return "companies"
+
+    @property
+    def entity_id(self) -> str:
+        return str(self.id) if hasattr(self, "id") else ""

@@ -30,6 +30,8 @@ from core.config import get_settings, Settings
 from api.services.visualization import VisualizationService, get_visualization_service as get_vis_service_internal
 from service.reports import ReportService, get_report_service as get_report_service_internal
 from service.company_analysis import CompanyAnalysisService, get_company_analysis_service as get_company_service_internal
+from backend.database.connection import get_db
+from backend.services.company_service import CompanyService
 
 # 構造化ロギング用のロガーを設定
 from api.logging_utils import get_logger, log_function_call
@@ -552,3 +554,15 @@ def get_company_analysis_service() -> CompanyAnalysisService:
         return service
 
     return service_provider.get_service("company_analysis")
+
+def get_company_service(session = Depends(get_db)) -> CompanyService:
+    """
+    企業情報サービスの依存性プロバイダ
+
+    Args:
+        session: データベースセッション
+
+    Returns:
+        CompanyService: 企業情報サービスのインスタンス
+    """
+    return CompanyService(session)

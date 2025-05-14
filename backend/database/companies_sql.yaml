@@ -1,0 +1,329 @@
+# 企業モジュール統合計画
+# Startup Wellness Analyze プロジェクト
+# 作成日: 2025-05-13
+
+# プロジェクト概要
+project:
+  name: "企業モジュール DB統合"
+  description: "企業情報管理モジュールをデータベース抽象化レイヤーと統合し、モックから実装へ移行する"
+  period:
+    start_date: "2025-05-13"
+    end_date: "2025-05-27"
+    duration: "2週間"
+  owner: "バックエンドチーム"
+  status: "完了"
+  completed_date: "2025-05-13"
+
+# 目標
+objectives:
+  - id: "OBJ-01"
+    title: "データモデルの設計と実装"
+    description: "企業情報のエンティティモデル、ORMモデル、リポジトリインターフェースの実装"
+    status: "完了"
+    completed_date: "2025-05-13"
+  - id: "OBJ-02"
+    title: "リポジトリパターンの実装"
+    description: "リファクタリングされたデータベース抽象化レイヤーの活用"
+    status: "完了"
+    completed_date: "2025-05-13"
+  - id: "OBJ-03"
+    title: "サービスレイヤーの導入"
+    description: "ビジネスロジックとデータアクセスの分離"
+    status: "完了"
+    completed_date: "2025-05-13"
+  - id: "OBJ-04"
+    title: "API ルーターの更新"
+    description: "ルーターをサービスレイヤーと連携するよう修正"
+    status: "完了"
+    completed_date: "2025-05-13"
+  - id: "OBJ-05"
+    title: "テストとドキュメントの追加"
+    description: "単体テスト、統合テスト、API ドキュメントの作成"
+    status: "完了"
+    completed_date: "2025-05-13"
+
+# 実装フェーズ
+implementation_phases:
+  phase1:
+    name: "モデル定義と設計"
+    start_date: "2025-05-13"
+    end_date: "2025-05-15"
+    duration: "3日間"
+    milestone: "企業情報エンティティモデルの完成"
+    status: "完了"
+    completed_date: "2025-05-13"
+    tasks:
+      - id: "TASK-1.1"
+        name: "企業エンティティモデルの作成"
+        description: "BaseEntityを継承した企業情報モデルクラスの実装"
+        file_path: "backend/database/models/entities.py"
+        assignee: "モデル担当者"
+        duration: "4時間"
+        dependencies: []
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-1.2"
+        name: "SQLAlchemyモデルの更新"
+        description: "企業情報のSQL DBテーブル定義"
+        file_path: "backend/database/models_sql.py"
+        assignee: "DBエンジニア"
+        duration: "4時間"
+        dependencies: ["TASK-1.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-1.3"
+        name: "エンティティとORMのマッピング登録"
+        description: "エンティティクラスとORMモデルのマッピングを登録"
+        file_path: "backend/database/models_sql.py"
+        assignee: "モデル担当者"
+        duration: "1時間"
+        dependencies: ["TASK-1.1", "TASK-1.2"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-1.4"
+        name: "マイグレーションスクリプトの作成"
+        description: "companies テーブル用のマイグレーションスクリプト作成"
+        file_path: "backend/database/migrations/versions/xxxx_create_companies_table.py"
+        assignee: "DBエンジニア"
+        duration: "2時間"
+        dependencies: ["TASK-1.2"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+  phase2:
+    name: "リポジトリとサービスレイヤーの実装"
+    start_date: "2025-05-16"
+    end_date: "2025-05-20"
+    duration: "3日間"
+    milestone: "企業情報サービスの完成"
+    status: "完了"
+    completed_date: "2025-05-13"
+    tasks:
+      - id: "TASK-2.1"
+        name: "特化型企業リポジトリの作成"
+        description: "SQLRepository を拡張した企業情報に特化したリポジトリクラスの実装"
+        file_path: "backend/database/repositories/company_repository.py"
+        assignee: "バックエンドエンジニア"
+        duration: "6時間"
+        dependencies: ["TASK-1.3"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-2.2"
+        name: "企業情報サービスクラスの作成"
+        description: "ビジネスロジックとデータアクセスを分離するサービスレイヤーの実装"
+        file_path: "backend/services/company_service.py"
+        assignee: "サービス担当者"
+        duration: "8時間"
+        dependencies: ["TASK-2.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-2.3"
+        name: "依存性注入の設定"
+        description: "APIルーターで使用する依存性注入の設定"
+        file_path: "backend/api/dependencies.py"
+        assignee: "バックエンドエンジニア"
+        duration: "2時間"
+        dependencies: ["TASK-2.2"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+  phase3:
+    name: "APIルーターの更新"
+    start_date: "2025-05-21"
+    end_date: "2025-05-23"
+    duration: "3日間"
+    milestone: "企業API実装の完成"
+    status: "完了"
+    completed_date: "2025-05-13"
+    tasks:
+      - id: "TASK-3.1"
+        name: "企業情報ルーターの更新"
+        description: "モックからサービスレイヤーを使用した実装への移行"
+        file_path: "backend/api/routers/companies.py"
+        assignee: "APIエンジニア"
+        duration: "8時間"
+        dependencies: ["TASK-2.3"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-3.2"
+        name: "main.pyでのルーター登録確認"
+        description: "企業APIルーターが正しく登録されているか確認"
+        file_path: "backend/app/main.py"
+        assignee: "APIエンジニア"
+        duration: "1時間"
+        dependencies: ["TASK-3.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-3.3"
+        name: "all_routersの確認"
+        description: "企業APIルーターが正しくall_routersに含まれているか確認"
+        file_path: "backend/api/routers/__init__.py"
+        assignee: "APIエンジニア"
+        duration: "1時間"
+        dependencies: ["TASK-3.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+  phase4:
+    name: "テストとドキュメント作成"
+    start_date: "2025-05-24"
+    end_date: "2025-05-27"
+    duration: "4日間"
+    milestone: "テストとドキュメント完成"
+    status: "完了"
+    completed_date: "2025-05-13"
+    tasks:
+      - id: "TASK-4.1"
+        name: "企業リポジトリの単体テスト"
+        description: "企業リポジトリの単体テストを実装"
+        file_path: "backend/database/tests/test_company_repository.py"
+        assignee: "テスト担当者"
+        duration: "6時間"
+        dependencies: ["TASK-2.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-4.2"
+        name: "企業サービスのテスト"
+        description: "企業サービスの単体テストを実装"
+        file_path: "backend/services/tests/test_company_service.py"
+        assignee: "テスト担当者"
+        duration: "6時間"
+        dependencies: ["TASK-2.2"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-4.3"
+        name: "API統合テスト"
+        description: "企業情報APIの統合テストを実装"
+        file_path: "backend/api/tests/test_companies_api.py"
+        assignee: "テスト担当者"
+        duration: "6時間"
+        dependencies: ["TASK-3.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-4.4"
+        name: "API ドキュメントの作成"
+        description: "Swagger UI用のAPIドキュメント情報を追加"
+        file_path: "backend/api/routers/companies.py"
+        assignee: "APIエンジニア"
+        duration: "4時間"
+        dependencies: ["TASK-3.1"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+      - id: "TASK-4.5"
+        name: "README の作成"
+        description: "企業情報モジュールの README ドキュメントを作成"
+        file_path: "backend/database/docs/company_module.md"
+        assignee: "ドキュメント担当者"
+        duration: "4時間"
+        dependencies: ["TASK-3.1", "TASK-4.4"]
+        status: "完了"
+        completed_date: "2025-05-13"
+
+# リスク管理
+risks:
+  - id: "RISK-01"
+    title: "データベースマイグレーションの問題"
+    description: "既存データとの互換性問題またはマイグレーション中のエラー"
+    probability: "中"
+    impact: "高"
+    mitigation: "事前のバックアップと開発環境でのマイグレーションテスト実施"
+    status: "監視中"
+
+  - id: "RISK-02"
+    title: "パフォーマンス低下"
+    description: "データ量増加時の検索パフォーマンス低下"
+    probability: "低"
+    impact: "中"
+    mitigation: "適切なインデックス設計と初期ロードテスト実施"
+    status: "監視中"
+
+  - id: "RISK-03"
+    title: "API互換性の問題"
+    description: "既存コードがAPIの変更に対応できない可能性"
+    probability: "中"
+    impact: "中"
+    mitigation: "API互換性レイヤーの導入と段階的な移行"
+    status: "監視中"
+
+  - id: "RISK-04"
+    title: "テスト不足"
+    description: "新機能の十分なテストカバレッジ確保の難しさ"
+    probability: "低"
+    impact: "中"
+    mitigation: "詳細なテスト計画と自動テストの実装"
+    status: "対応済み"
+    resolution: "単体テスト、統合テストを実装完了"
+
+# 成功基準
+success_criteria:
+  - id: "CRIT-01"
+    title: "全APIエンドポイントの正常動作"
+    description: "全てのCRUD操作が正常に動作すること"
+    verification_method: "自動テストの実行と手動確認"
+    status: "達成"
+    verified_date: "2025-05-13"
+
+  - id: "CRIT-02"
+    title: "データ整合性の確保"
+    description: "全ての操作がデータの整合性を維持すること"
+    verification_method: "トランザクションテストと異常系テスト"
+    status: "達成"
+    verified_date: "2025-05-13"
+
+  - id: "CRIT-03"
+    title: "パフォーマンス基準の達成"
+    description: "リスト取得は100ms以内、個別取得は50ms以内で応答すること"
+    verification_method: "パフォーマンステストツールによる計測"
+    status: "達成"
+    verified_date: "2025-05-13"
+
+  - id: "CRIT-04"
+    title: "テストカバレッジ"
+    description: "コードカバレッジ80%以上を達成すること"
+    verification_method: "テストカバレッジツールによる計測"
+    status: "達成"
+    verified_date: "2025-05-13"
+
+# 依存関係
+dependencies:
+  - id: "DEP-01"
+    description: "データベース抽象化レイヤーのリファクタリング完了"
+    status: "完了"
+    impact: "このプロジェクトの前提条件"
+
+  - id: "DEP-02"
+    description: "リポジトリパターンのドキュメント完成"
+    status: "完了"
+    impact: "開発者の理解と実装の一貫性に影響"
+
+  - id: "DEP-03"
+    description: "テスト環境の整備"
+    status: "完了"
+    impact: "テストフェーズの実施に影響"
+
+# 完了報告
+completion_report:
+  completion_date: "2025-05-13"
+  duration: "1日間"
+  summary: "企業情報管理モジュールの実装が完了しました。SQLベースの実装にモックから移行し、リポジトリパターン、サービスレイヤー、テストを適切に実装しています。"
+  achievements:
+    - "企業情報のエンティティモデルとORMモデルの実装"
+    - "リポジトリとサービスレイヤーによる企業情報管理機能の実装"
+    - "APIエンドポイントの実装と単体テスト・統合テストの実装"
+    - "ドキュメンテーションの作成"
+  next_steps:
+    - "本番環境へのデプロイ"
+    - "実際のデータ移行"
+    - "ユーザーへのトレーニング"
+    - "パフォーマンスのモニタリング"
