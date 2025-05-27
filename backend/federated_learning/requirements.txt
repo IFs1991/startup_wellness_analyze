@@ -1,0 +1,63 @@
+# フェデレーテッド学習システムの依存関係
+# TDD.yamlに基づく実装に必要なライブラリ
+
+# コア依存関係
+flwr>=1.6.0
+numpy>=1.24.0
+torch>=2.0.0
+tensorflow>=2.13.0
+
+# Phase 1: セキュリティ層
+phe>=1.5.0  # Paillier暗号
+cryptography>=41.0.0  # mTLS用暗号化
+pycryptodome>=3.18.0  # シークレット共有、追加暗号化機能
+
+# 差分プライバシー
+opacus>=1.4.0  # PyTorch用差分プライバシー
+
+# データベース・永続化 (Phase 3)
+sqlalchemy>=2.0.0
+asyncpg>=0.28.0  # PostgreSQL非同期ドライバ
+alembic>=1.12.0  # データベースマイグレーション
+psycopg2-binary>=2.9.7  # PostgreSQL同期ドライバ
+redis>=4.6.0
+aioredis>=2.0.1  # Redis非同期クライアント
+
+# モデルバージョニング (Phase 3)
+mlflow>=2.7.0  # MLモデル管理
+dvc>=3.19.0  # データバージョン管理
+boto3>=1.28.0  # AWS S3用（オプション）
+
+# 分散処理・キャッシュ (Phase 3)
+celery>=5.3.0  # 分散タスクキュー
+kombu>=5.3.0  # メッセージブローカー抽象化
+flower>=2.0.1  # Celery監視
+
+# トランザクション管理 (Phase 3)
+tenacity>=8.2.0  # リトライ機構
+circuitbreaker>=1.4.0  # サーキットブレーカー
+
+# テスト関連
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+pytest-postgresql>=5.0.0  # PostgreSQLテスト用
+testcontainers>=3.7.0  # Dockerコンテナテスト
+
+# コード品質
+black>=23.7.0
+isort>=5.12.0
+flake8>=6.0.0
+mypy>=1.5.0
+
+# 監視・ログ
+prometheus-client>=0.17.0
+structlog>=23.1.0
+
+# Phase 4: 高可用性とフォルトトレランス
+aiohttp>=3.9.0  # HTTP client for health checks
+rabbitmq>=0.2.0  # RabbitMQ for job queue
+etcd3-py>=0.1.6  # etcd for service discovery (optional)
+kubernetes>=28.1.0  # Kubernetes client for failover
+psutil>=5.9.0  # System metrics collection
